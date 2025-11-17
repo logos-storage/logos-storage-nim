@@ -342,9 +342,7 @@ asyncchecksuite "Reservations module":
 
   test "OnAvailabilitySaved called when availability is created":
     var added: Availability
-    reservations.OnAvailabilitySaved = proc(
-        a: Availability
-    ) {.async: (raises: []).} =
+    reservations.OnAvailabilitySaved = proc(a: Availability) {.async: (raises: []).} =
       added = a
 
     let availability = createAvailability()
@@ -354,9 +352,7 @@ asyncchecksuite "Reservations module":
   test "OnAvailabilitySaved called when availability size is increased":
     var availability = createAvailability()
     var added: Availability
-    reservations.OnAvailabilitySaved = proc(
-        a: Availability
-    ) {.async: (raises: []).} =
+    reservations.OnAvailabilitySaved = proc(a: Availability) {.async: (raises: []).} =
       added = a
     availability.freeSize += 1
     discard await reservations.update(availability)
@@ -366,9 +362,7 @@ asyncchecksuite "Reservations module":
   test "OnAvailabilitySaved is not called when availability size is decreased":
     var availability = createAvailability()
     var called = false
-    reservations.OnAvailabilitySaved = proc(
-        a: Availability
-    ) {.async: (raises: []).} =
+    reservations.OnAvailabilitySaved = proc(a: Availability) {.async: (raises: []).} =
       called = true
     availability.freeSize -= 1.uint64
     discard await reservations.update(availability)
@@ -378,9 +372,7 @@ asyncchecksuite "Reservations module":
   test "OnAvailabilitySaved is not called when availability is disabled":
     var availability = createAvailability(enabled = false)
     var called = false
-    reservations.OnAvailabilitySaved = proc(
-        a: Availability
-    ) {.async: (raises: []).} =
+    reservations.OnAvailabilitySaved = proc(a: Availability) {.async: (raises: []).} =
       called = true
     availability.freeSize -= 1
     discard await reservations.update(availability)
