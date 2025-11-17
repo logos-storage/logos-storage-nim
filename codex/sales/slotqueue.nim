@@ -15,8 +15,7 @@ logScope:
   topics = "marketplace slotqueue"
 
 type
-  OnProcessSlot* =
-    proc(item: SlotQueueItem): Future[void] {.gcsafe, async: (raises: []).}
+  OnProcessSlot* = proc(item: SlotQueueItem): Future[void] {.async: (raises: []).}
 
   # Non-ref obj copies value when assigned, preventing accidental modification
   # of values which could cause an incorrect order (eg

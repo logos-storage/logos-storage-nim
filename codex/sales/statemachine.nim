@@ -1,5 +1,4 @@
 import pkg/questionable
-import pkg/upraises
 import ../errors
 import ../utils/asyncstatemachine
 import ../market
@@ -16,17 +15,17 @@ type
 
 method onCancelled*(
     state: SaleState, request: StorageRequest
-): ?State {.base, upraises: [].} =
+): ?State {.base, raises: [].} =
   discard
 
 method onFailed*(
     state: SaleState, request: StorageRequest
-): ?State {.base, upraises: [].} =
+): ?State {.base, raises: [].} =
   discard
 
 method onSlotFilled*(
     state: SaleState, requestId: RequestId, slotIndex: uint64
-): ?State {.base, upraises: [].} =
+): ?State {.base, raises: [].} =
   discard
 
 proc cancelledEvent*(request: StorageRequest): Event =

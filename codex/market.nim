@@ -1,5 +1,4 @@
 import pkg/chronos
-import pkg/upraises
 import pkg/questionable
 import pkg/ethers/erc20
 import ./contracts/requests
@@ -23,15 +22,15 @@ type
   ProofInvalidError* = object of MarketError
   Subscription* = ref object of RootObj
   OnRequest* =
-    proc(id: RequestId, ask: StorageAsk, expiry: uint64) {.gcsafe, upraises: [].}
-  OnFulfillment* = proc(requestId: RequestId) {.gcsafe, upraises: [].}
-  OnSlotFilled* = proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, upraises: [].}
-  OnSlotFreed* = proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, upraises: [].}
+    proc(id: RequestId, ask: StorageAsk, expiry: uint64) {.gcsafe, raises: [].}
+  OnFulfillment* = proc(requestId: RequestId) {.gcsafe, raises: [].}
+  OnSlotFilled* = proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, raises: [].}
+  OnSlotFreed* = proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, raises: [].}
   OnSlotReservationsFull* =
-    proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, upraises: [].}
-  OnRequestCancelled* = proc(requestId: RequestId) {.gcsafe, upraises: [].}
-  OnRequestFailed* = proc(requestId: RequestId) {.gcsafe, upraises: [].}
-  OnProofSubmitted* = proc(id: SlotId) {.gcsafe, upraises: [].}
+    proc(requestId: RequestId, slotIndex: uint64) {.gcsafe, raises: [].}
+  OnRequestCancelled* = proc(requestId: RequestId) {.gcsafe, raises: [].}
+  OnRequestFailed* = proc(requestId: RequestId) {.gcsafe, raises: [].}
+  OnProofSubmitted* = proc(id: SlotId) {.gcsafe, raises: [].}
   ProofChallenge* = array[32, byte]
 
   # Marketplace events -- located here due to the Market abstraction
@@ -275,7 +274,7 @@ method subscribeProofSubmission*(
 ): Future[Subscription] {.base, async.} =
   raiseAssert("not implemented")
 
-method unsubscribe*(subscription: Subscription) {.base, async, upraises: [].} =
+method unsubscribe*(subscription: Subscription) {.base, async.} =
   raiseAssert("not implemented")
 
 method queryPastSlotFilledEvents*(

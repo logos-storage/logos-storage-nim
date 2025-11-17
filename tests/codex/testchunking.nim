@@ -18,7 +18,7 @@ type CrashingStreamWrapper* = ref object of LPStream
 
 method readOnce*(
     self: CrashingStreamWrapper, pbytes: pointer, nbytes: int
-): Future[int] {.gcsafe, async: (raises: [CancelledError, LPStreamError]).} =
+): Future[int] {.async: (raises: [CancelledError, LPStreamError]).} =
   self.toRaise()
 
 asyncchecksuite "Chunking":
@@ -27,7 +27,7 @@ asyncchecksuite "Chunking":
     let contents = [1.byte, 2, 3, 4, 5, 6, 7, 8, 9, 0]
     proc reader(
         data: ChunkBuffer, len: int
-    ): Future[int] {.gcsafe, async: (raises: [ChunkerError, CancelledError]).} =
+    ): Future[int] {.async: (raises: [ChunkerError, CancelledError]).} =
       let read = min(contents.len - offset, len)
       if read == 0:
         return 0

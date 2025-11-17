@@ -75,7 +75,7 @@ asyncchecksuite "Test Node - Basic":
           batchSize = batchSize,
           proc(
               blocks: seq[bt.Block]
-          ): Future[?!void] {.gcsafe, async: (raises: [CancelledError]).} =
+          ): Future[?!void] {.async: (raises: [CancelledError]).} =
             check blocks.len > 0 and blocks.len <= batchSize
             return success(),
         )
@@ -100,7 +100,7 @@ asyncchecksuite "Test Node - Basic":
         batchSize = batchSize,
         proc(
             blocks: seq[bt.Block]
-        ): Future[?!void] {.gcsafe, async: (raises: [CancelledError]).} =
+        ): Future[?!void] {.async: (raises: [CancelledError]).} =
           return failure("Should not be called"),
       )
     )

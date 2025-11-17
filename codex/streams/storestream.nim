@@ -9,10 +9,7 @@
 
 import std/options
 
-import pkg/upraises
-
-push:
-  {.upraises: [].}
+{.push raises: [], gcsafe.}
 
 import pkg/chronos
 import pkg/stew/ptrops

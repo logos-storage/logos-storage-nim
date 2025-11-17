@@ -21,7 +21,7 @@ proc new*(
   var consumed = 0
   proc reader(
       data: ChunkBuffer, len: int
-  ): Future[int] {.gcsafe, async: (raises: [ChunkerError, CancelledError]).} =
+  ): Future[int] {.async: (raises: [ChunkerError, CancelledError]).} =
     if consumed >= dataset.len:
       return 0
 

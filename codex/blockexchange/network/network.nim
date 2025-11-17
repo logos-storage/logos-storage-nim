@@ -35,16 +35,14 @@ const
   DefaultMaxInflight* = 100
 
 type
-  WantListHandler* =
-    proc(peer: PeerId, wantList: WantList) {.gcsafe, async: (raises: []).}
+  WantListHandler* = proc(peer: PeerId, wantList: WantList) {.async: (raises: []).}
   BlocksDeliveryHandler* =
-    proc(peer: PeerId, blocks: seq[BlockDelivery]) {.gcsafe, async: (raises: []).}
+    proc(peer: PeerId, blocks: seq[BlockDelivery]) {.async: (raises: []).}
   BlockPresenceHandler* =
-    proc(peer: PeerId, precense: seq[BlockPresence]) {.gcsafe, async: (raises: []).}
-  AccountHandler* = proc(peer: PeerId, account: Account) {.gcsafe, async: (raises: []).}
-  PaymentHandler* =
-    proc(peer: PeerId, payment: SignedState) {.gcsafe, async: (raises: []).}
-  PeerEventHandler* = proc(peer: PeerId) {.gcsafe, async: (raises: [CancelledError]).}
+    proc(peer: PeerId, precense: seq[BlockPresence]) {.async: (raises: []).}
+  AccountHandler* = proc(peer: PeerId, account: Account) {.async: (raises: []).}
+  PaymentHandler* = proc(peer: PeerId, payment: SignedState) {.async: (raises: []).}
+  PeerEventHandler* = proc(peer: PeerId) {.async: (raises: [CancelledError]).}
 
   BlockExcHandlers* = object
     onWantList*: WantListHandler
@@ -347,7 +345,7 @@ method init*(self: BlockExcNetwork) {.raises: [].} =
 
   proc peerEventHandler(
       peerId: PeerId, event: PeerEvent
-  ): Future[void] {.gcsafe, async: (raises: [CancelledError]).} =
+  ): Future[void] {.async: (raises: [CancelledError]).} =
     if event.kind == PeerEventKind.Joined:
       await self.handlePeerJoined(peerId)
     elif event.kind == PeerEventKind.Left:

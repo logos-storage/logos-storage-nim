@@ -926,7 +926,7 @@ iterator splitBatches[T](sequence: seq[T], batchSize: int): seq[T] =
 
 proc taskHandler*(
     self: BlockExcEngine, peerCtx: BlockExcPeerCtx
-) {.gcsafe, async: (raises: [CancelledError, RetriesExhaustedError]).} =
+) {.async: (raises: [CancelledError, RetriesExhaustedError]).} =
   # Send to the peer blocks he wants to get,
   # if they present in our local store
 

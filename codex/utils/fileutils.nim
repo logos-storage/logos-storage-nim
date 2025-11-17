@@ -9,10 +9,7 @@
 
 ## Partially taken from nim beacon chain
 
-import pkg/upraises
-
-push:
-  {.upraises: [].}
+{.push raises: [], gcsafe.}
 
 import std/strutils
 import pkg/stew/io2

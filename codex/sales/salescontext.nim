@@ -1,6 +1,5 @@
 import pkg/questionable
 import pkg/questionable/results
-import pkg/upraises
 import pkg/libp2p/cid
 
 import ../market
@@ -24,21 +23,20 @@ type
     slotQueue*: SlotQueue
     simulateProofFailures*: int
 
-  BlocksCb* = proc(blocks: seq[bt.Block]): Future[?!void] {.
-    gcsafe, async: (raises: [CancelledError])
-  .}
+  BlocksCb* =
+    proc(blocks: seq[bt.Block]): Future[?!void] {.async: (raises: [CancelledError]).}
   OnStore* = proc(
     request: StorageRequest,
     expiry: SecondsSince1970,
     slot: uint64,
     blocksCb: BlocksCb,
     isRepairing: bool,
-  ): Future[?!void] {.gcsafe, async: (raises: [CancelledError]).}
+  ): Future[?!void] {.async: (raises: [CancelledError]).}
   OnProve* = proc(slot: Slot, challenge: ProofChallenge): Future[?!Groth16Proof] {.
-    gcsafe, async: (raises: [CancelledError])
+    async: (raises: [CancelledError])
   .}
   OnExpiryUpdate* = proc(rootCid: Cid, expiry: SecondsSince1970): Future[?!void] {.
-    gcsafe, async: (raises: [CancelledError])
+    async: (raises: [CancelledError])
   .}
   OnClear* = proc(request: StorageRequest, slotIndex: uint64) {.gcsafe, raises: [].}
   OnSale* = proc(request: StorageRequest, slotIndex: uint64) {.gcsafe, raises: [].}

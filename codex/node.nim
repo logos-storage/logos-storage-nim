@@ -81,9 +81,8 @@ type
   CodexNodeRef* = ref CodexNode
 
   OnManifest* = proc(cid: Cid, manifest: Manifest): void {.gcsafe, raises: [].}
-  BatchProc* = proc(blocks: seq[bt.Block]): Future[?!void] {.
-    gcsafe, async: (raises: [CancelledError])
-  .}
+  BatchProc* =
+    proc(blocks: seq[bt.Block]): Future[?!void] {.async: (raises: [CancelledError]).}
   OnBlockStoredProc = proc(chunk: seq[byte]): void {.gcsafe, raises: [].}
 
 func switch*(self: CodexNodeRef): Switch =

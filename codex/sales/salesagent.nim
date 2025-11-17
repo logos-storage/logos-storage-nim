@@ -2,7 +2,6 @@ import pkg/chronos
 import pkg/questionable
 import pkg/questionable/results
 import pkg/stint
-import pkg/upraises
 import ../contracts/requests
 import ../errors
 import ../logutils
@@ -113,14 +112,12 @@ proc subscribeCancellation(agent: SalesAgent) {.async.} =
 
 method onFulfilled*(
     agent: SalesAgent, requestId: RequestId
-) {.base, gcsafe, upraises: [].} =
+) {.base, gcsafe, raises: [].} =
   let cancelled = agent.data.cancelled
   if agent.data.requestId == requestId and not cancelled.isNil and not cancelled.finished:
     cancelled.cancelSoon()
 
-method onFailed*(
-    agent: SalesAgent, requestId: RequestId
-) {.base, gcsafe, upraises: [].} =
+method onFailed*(agent: SalesAgent, requestId: RequestId) {.base, gcsafe, raises: [].} =
   without request =? agent.data.request:
     return
   if agent.data.requestId == requestId:
@@ -128,7 +125,7 @@ method onFailed*(
 
 method onSlotFilled*(
     agent: SalesAgent, requestId: RequestId, slotIndex: uint64
-) {.base, gcsafe, upraises: [].} =
+) {.base, gcsafe, raises: [].} =
   if agent.data.requestId == requestId and agent.data.slotIndex == slotIndex:
     agent.schedule(slotFilledEvent(requestId, slotIndex))
 

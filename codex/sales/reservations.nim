@@ -27,9 +27,7 @@
 ## | UInt256          | totalRemainingCollateral |     |
 ## +---------------------------------------------------+
 
-import pkg/upraises
-push:
-  {.upraises: [].}
+{.push raises: [], gcsafe.}
 
 import std/sequtils
 import std/sugar
@@ -92,14 +90,10 @@ type
     repo: RepoStore
     OnAvailabilitySaved: ?OnAvailabilitySaved
 
-  GetNext* = proc(): Future[?seq[byte]] {.
-    upraises: [], gcsafe, async: (raises: [CancelledError]), closure
-  .}
-  IterDispose* =
-    proc(): Future[?!void] {.gcsafe, async: (raises: [CancelledError]), closure.}
-  OnAvailabilitySaved* = proc(availability: Availability): Future[void] {.
-    upraises: [], gcsafe, async: (raises: [])
-  .}
+  GetNext* = proc(): Future[?seq[byte]] {.async: (raises: [CancelledError]), closure.}
+  IterDispose* = proc(): Future[?!void] {.async: (raises: [CancelledError]), closure.}
+  OnAvailabilitySaved* =
+    proc(availability: Availability): Future[void] {.async: (raises: []).}
   StorableIter* = ref object
     finished*: bool
     next*: GetNext

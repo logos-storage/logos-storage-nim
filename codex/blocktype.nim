@@ -13,10 +13,7 @@ import std/hashes
 
 export tables
 
-import pkg/upraises
-
-push:
-  {.upraises: [].}
+{.push raises: [], gcsafe.}
 
 import pkg/libp2p/[cid, multicodec, multihash]
 import pkg/stew/[byteutils, endians2]

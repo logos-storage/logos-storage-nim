@@ -158,7 +158,7 @@ method provide*(
 
 method removeProvider*(
     d: Discovery, peerId: PeerId
-): Future[void] {.base, gcsafe, async: (raises: [CancelledError]).} =
+): Future[void] {.base, async: (raises: [CancelledError]).} =
   ## Remove provider from providers table
   ##
 

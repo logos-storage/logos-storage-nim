@@ -29,7 +29,7 @@ type
     Block
     Both
 
-  CidCallback* = proc(cid: Cid): Future[void] {.gcsafe, async: (raises: []).}
+  CidCallback* = proc(cid: Cid): Future[void] {.async: (raises: []).}
   BlockStore* = ref object of RootObj
     onBlockStored*: ?CidCallback
 

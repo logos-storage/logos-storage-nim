@@ -1,6 +1,5 @@
 import pkg/questionable
 import pkg/chronos
-import pkg/upraises
 import codex/utils/asyncstatemachine
 
 import ../../asynctest
@@ -36,7 +35,7 @@ method run(state: State2, machine: Machine): Future[?State] {.async: (raises: []
 method run(state: State3, machine: Machine): Future[?State] {.async: (raises: []).} =
   inc runs[2]
 
-method onMoveToNextStateEvent*(state: State): ?State {.base, upraises: [].} =
+method onMoveToNextStateEvent*(state: State): ?State {.base, raises: [].} =
   discard
 
 method onMoveToNextStateEvent(state: State2): ?State =

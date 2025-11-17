@@ -9,10 +9,7 @@
 
 # TODO: This is super inneficient and needs a rewrite, but it'll do for now
 
-import pkg/upraises
-
-push:
-  {.upraises: [].}
+{.push raises: [], gcsafe.}
 
 import pkg/questionable
 import pkg/questionable/results
@@ -31,7 +28,7 @@ type
   ChunkerError* = object of CatchableError
   ChunkBuffer* = ptr UncheckedArray[byte]
   Reader* = proc(data: ChunkBuffer, len: int): Future[int] {.
-    gcsafe, async: (raises: [ChunkerError, CancelledError])
+    async: (raises: [ChunkerError, CancelledError])
   .}
 
   # Reader that splits input data into fixed-size chunks
@@ -77,7 +74,7 @@ proc new*(
 
   proc reader(
       data: ChunkBuffer, len: int
-  ): Future[int] {.gcsafe, async: (raises: [ChunkerError, CancelledError]).} =
+  ): Future[int] {.async: (raises: [ChunkerError, CancelledError]).} =
     var res = 0
     try:
       while res < len:
@@ -105,7 +102,7 @@ proc new*(
 
   proc reader(
       data: ChunkBuffer, len: int
-  ): Future[int] {.gcsafe, async: (raises: [ChunkerError, CancelledError]).} =
+  ): Future[int] {.async: (raises: [ChunkerError, CancelledError]).} =
     var total = 0
     try:
       while total < len:

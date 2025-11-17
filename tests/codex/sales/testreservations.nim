@@ -344,7 +344,7 @@ asyncchecksuite "Reservations module":
     var added: Availability
     reservations.OnAvailabilitySaved = proc(
         a: Availability
-    ) {.gcsafe, async: (raises: []).} =
+    ) {.async: (raises: []).} =
       added = a
 
     let availability = createAvailability()
@@ -356,7 +356,7 @@ asyncchecksuite "Reservations module":
     var added: Availability
     reservations.OnAvailabilitySaved = proc(
         a: Availability
-    ) {.gcsafe, async: (raises: []).} =
+    ) {.async: (raises: []).} =
       added = a
     availability.freeSize += 1
     discard await reservations.update(availability)
@@ -368,7 +368,7 @@ asyncchecksuite "Reservations module":
     var called = false
     reservations.OnAvailabilitySaved = proc(
         a: Availability
-    ) {.gcsafe, async: (raises: []).} =
+    ) {.async: (raises: []).} =
       called = true
     availability.freeSize -= 1.uint64
     discard await reservations.update(availability)
@@ -380,7 +380,7 @@ asyncchecksuite "Reservations module":
     var called = false
     reservations.OnAvailabilitySaved = proc(
         a: Availability
-    ) {.gcsafe, async: (raises: []).} =
+    ) {.async: (raises: []).} =
       called = true
     availability.freeSize -= 1
     discard await reservations.update(availability)

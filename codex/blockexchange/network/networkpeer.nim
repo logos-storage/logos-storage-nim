@@ -24,10 +24,9 @@ logScope:
 const DefaultYieldInterval = 50.millis
 
 type
-  ConnProvider* =
-    proc(): Future[Connection] {.gcsafe, async: (raises: [CancelledError]).}
+  ConnProvider* = proc(): Future[Connection] {.async: (raises: [CancelledError]).}
 
-  RPCHandler* = proc(peer: NetworkPeer, msg: Message) {.gcsafe, async: (raises: []).}
+  RPCHandler* = proc(peer: NetworkPeer, msg: Message) {.async: (raises: []).}
 
   NetworkPeer* = ref object of RootObj
     id*: PeerId
