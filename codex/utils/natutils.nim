@@ -1,7 +1,6 @@
 {.push raises: [].}
 
-import
-  std/[tables, hashes], pkg/results, pkg/stew/shims/net as stewNet, chronos, chronicles
+import std/[net, tables, hashes], pkg/results, chronos, chronicles
 
 import pkg/libp2p
 

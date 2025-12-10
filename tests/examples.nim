@@ -38,7 +38,7 @@ proc example*[T](_: type seq[T]): seq[T] =
   newSeqWith(length, T.example)
 
 proc example*(_: type UInt256): UInt256 =
-  UInt256.fromBytes(array[32, byte].example)
+  UInt256.fromBytesBE(array[32, byte].example)
 
 proc example*[T: distinct](_: type T): T =
   type baseType = T.distinctBase

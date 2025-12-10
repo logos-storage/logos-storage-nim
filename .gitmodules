@@ -37,22 +37,17 @@
 	path = vendor/nim-nitro
 	url = https://github.com/status-im/nim-nitro.git
 	ignore = untracked
-	branch = master
+	branch = main
 [submodule "vendor/questionable"]
 	path = vendor/questionable
 	url = https://github.com/status-im/questionable.git
 	ignore = untracked
-	branch = master
-[submodule "vendor/upraises"]
-	path = vendor/upraises
-	url = https://github.com/markspanbroek/upraises.git
-	ignore = untracked
-	branch = master
+	branch = main
 [submodule "vendor/asynctest"]
 	path = vendor/asynctest
 	url = https://github.com/status-im/asynctest.git
 	ignore = untracked
-	branch = master
+	branch = main 
 [submodule "vendor/nim-presto"]
 	path = vendor/nim-presto
 	url = https://github.com/status-im/nim-presto.git
@@ -132,7 +127,7 @@
 	path = vendor/nim-websock
 	url = https://github.com/status-im/nim-websock.git
 	ignore = untracked
-	branch = master
+	branch = main
 [submodule "vendor/nim-contract-abi"]
 	path = vendor/nim-contract-abi
 	url = https://github.com/status-im/nim-contract-abi
@@ -160,7 +155,7 @@
 	path = vendor/nim-taskpools
 	url = https://github.com/status-im/nim-taskpools.git
 	ignore = untracked
-	branch = master
+	branch = stable
 [submodule "vendor/nim-leopard"]
 	path = vendor/nim-leopard
 	url = https://github.com/status-im/nim-leopard.git
@@ -225,9 +220,9 @@
 	path = vendor/nim-quic
 	url = https://github.com/vacp2p/nim-quic.git
 	ignore = untracked
-	branch = master
+	branch = main
 [submodule "vendor/nim-ngtcp2"]
 	path = vendor/nim-ngtcp2
 	url = https://github.com/vacp2p/nim-ngtcp2.git
 	ignore = untracked
-	branch = master
+	branch = main

@@ -12,6 +12,7 @@ import std/strutils
 import std/os
 import std/tables
 import std/cpuinfo
+import std/net
 
 import pkg/chronos
 import pkg/taskpools
@@ -21,7 +22,6 @@ import pkg/confutils
 import pkg/confutils/defs
 import pkg/nitro
 import pkg/stew/io2
-import pkg/stew/shims/net as stewnet
 import pkg/datastore
 import pkg/ethers except Rng
 import pkg/stew/io2
