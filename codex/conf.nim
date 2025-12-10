@@ -20,6 +20,7 @@ import std/strutils
 import std/typetraits
 
 import pkg/chronos
+import pkg/chronos/config
 import pkg/chronicles/helpers
 import pkg/chronicles/topics_registry
 import pkg/confutils/defs
@@ -35,6 +36,10 @@ import pkg/ethers
 import pkg/questionable
 import pkg/questionable/results
 import pkg/stew/base64
+
+when chronosProfiling:
+  import pkg/chroprof
+  import pkg/chroprof/collector
 
 import ./codextypes
 import ./discovery
@@ -143,6 +148,12 @@ type
       abbr: "d",
       name: "data-dir"
     .}: OutDir
+
+    profilerMaxMetrics* {.
+      desc: "Maximum number of metrics to export to Prometheus.",
+      defaultValue: 100,
+      name: "profiler-max-metrics"
+    .}: int
 
     listenAddrs* {.
       desc: "Multi Addresses to listen on",
@@ -285,6 +296,14 @@ type
     logFile* {.
       desc: "Logs to file", defaultValue: string.none, name: "log-file", hidden
     .}: Option[string]
+
+    execTimeThreshold* {.
+      desc: "Threshold for execution time",
+      defaultValue: 200,
+      defaultValueDesc: "200 milliseconds",
+      name: "exec-time-threshold",
+      abbr: "et"
+    .}: int
 
     case cmd* {.defaultValue: noCmd, command.}: StartUpCmd
     of persistence:
@@ -815,11 +834,20 @@ proc setupLogging*(conf: CodexConf) =
       defaultChroniclesStream.outputs[0].writer = writer
 
 proc setupMetrics*(config: CodexConf) =
+  let threshold = config.execTimeThreshold.milliseconds
+  when chronosProfiling:
+    notice "Enabling profiling without metrics", execTimeThreshold = threshold
+    enableProfiling(threshold)
+
   if config.metricsEnabled:
     let metricsAddress = config.metricsAddress
     notice "Starting metrics HTTP server",
       url = "http://" & $metricsAddress & ":" & $config.metricsPort & "/metrics"
     try:
+      when chronosProfiling:
+        notice "Enabling profiling with metrics", execTimeThreshold = threshold
+        enableProfilerMetrics(k = config.profilerMaxMetrics, threshold)
+
       startMetricsHttpServer($metricsAddress, config.metricsPort)
     except CatchableError as exc:
       raiseAssert exc.msg

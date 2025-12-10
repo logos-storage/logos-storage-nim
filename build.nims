@@ -55,7 +55,7 @@ proc test(name: string, srcDir = "tests/", params = "", lang = "c") =
 
 task codex, "build codex binary":
   buildBinary "codex",
-    params = "-d:chronicles_runtime_filtering -d:chronicles_log_level=TRACE"
+    params = "-d:chronicles_runtime_filtering -d:chronicles_log_level=TRACE -d:chronosProfiling=true"
 
 task toolsCirdl, "build tools/cirdl binary":
   buildBinary "tools/cirdl/cirdl"
@@ -73,7 +73,7 @@ task testIntegration, "Run integration tests":
   test "testIntegration"
   # use params to enable logging from the integration test executable
   # test "testIntegration", params = "-d:chronicles_sinks=textlines[notimestamps,stdout],textlines[dynamic] " &
-  #   "-d:chronicles_enabled_topics:integration:TRACE"  
+  #   "-d:chronicles_enabled_topics:integration:TRACE"
 
 task build, "build codex binary":
   codexTask()

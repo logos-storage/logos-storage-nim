@@ -156,6 +156,8 @@ switch("define", "nimOldCaseObjects")
 # Enable compat mode for Chronos V4
 switch("define", "chronosHandleException")
 
+switch("define", "chronosProfiling")
+
 # begin Nimble config (version 1)
 when system.fileExists("nimble.paths"):
   include "nimble.paths"

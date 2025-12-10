@@ -75,9 +75,9 @@
 	branch = master
 [submodule "vendor/nim-chronos"]
 	path = vendor/nim-chronos
-	url = https://github.com/status-im/nim-chronos.git
+	url = https://github.com/codex-storage/nim-chronos.git
 	ignore = untracked
-	branch = master
+	branch = feature/profiler-v4
 [submodule "vendor/nim-faststreams"]
 	path = vendor/nim-faststreams
 	url = https://github.com/status-im/nim-faststreams.git
@@ -221,6 +221,9 @@
 [submodule "vendor/nph"]
 	path = vendor/nph
 	url = https://github.com/arnetheduck/nph.git
+[submodule "vendor/nim-chroprof"]
+	path = vendor/nim-chroprof
+	url = https://github.com/codex-storage/nim-chroprof.git
 [submodule "vendor/nim-quic"]
 	path = vendor/nim-quic
 	url = https://github.com/vacp2p/nim-quic.git
