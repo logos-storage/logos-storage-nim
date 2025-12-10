@@ -36,7 +36,6 @@ import std/sequtils
 import std/times
 import pkg/chronos
 import pkg/datastore
-import pkg/nimcrypto
 import pkg/questionable
 import pkg/questionable/results
 import pkg/stint
@@ -52,6 +51,8 @@ import ../units
 
 export requests
 export logutils
+
+from nimcrypto import randomBytes
 
 logScope:
   topics = "marketplace sales reservations"

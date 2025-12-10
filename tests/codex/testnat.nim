@@ -1,4 +1,4 @@
-import std/[unittest, options, net], stew/shims/net as stewNet
+import std/[unittest, options, net]
 import pkg/chronos
 import pkg/libp2p/[multiaddress, multihash, multicodec]
 import pkg/results

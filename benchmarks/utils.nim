@@ -41,18 +41,17 @@ template benchmark*(name: untyped, count: int, blk: untyped) =
   )
   benchRuns[benchmarkName] = (runs.avg(), count)
 
-template printBenchMarkSummaries*(printRegular=true, printTsv=true) =
+template printBenchMarkSummaries*(printRegular = true, printTsv = true) =
   if printRegular:
     echo ""
     for k, v in benchRuns:
       echo "Benchmark average run ", v.avgTimeSec, " for ", v.count, " runs ", "for ", k
-    
+
   if printTsv:
     echo ""
     echo "name", "\t", "avgTimeSec", "\t", "count"
     for k, v in benchRuns:
       echo k, "\t", v.avgTimeSec, "\t", v.count
-
 
 import std/math
 

@@ -2,7 +2,7 @@ import std/hashes
 import std/sequtils
 import std/typetraits
 import pkg/contractabi
-import pkg/nimcrypto
+import pkg/nimcrypto/keccak
 import pkg/ethers/contracts/fields
 import pkg/questionable/results
 import pkg/stew/byteutils
