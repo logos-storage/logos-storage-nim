@@ -2,6 +2,7 @@ import os
 import strutils
 import pkg/chronos
 import pkg/chronicles
+import pkg/taskpools
 import pkg/questionable
 import pkg/confutils/defs
 import pkg/stew/io2
@@ -11,7 +12,9 @@ import ../../conf
 import ./backends
 import ./backendutils
 
-proc initializeFromConfig(config: CodexConf, utils: BackendUtils): ?!AnyBackend =
+proc initializeFromConfig(
+    config: CodexConf, utils: BackendUtils, taskpool: Taskpool
+): ?!AnyBackend =
   if not fileAccessible($config.circomR1cs, {AccessFlags.Read}) or
       not endsWith($config.circomR1cs, ".r1cs"):
     return failure("Circom R1CS file not accessible")
@@ -27,7 +30,7 @@ proc initializeFromConfig(config: CodexConf, utils: BackendUtils): ?!AnyBackend 
   trace "Initialized prover backend from cli config"
   success(
     utils.initializeCircomBackend(
-      $config.circomR1cs, $config.circomWasm, $config.circomZkey
+      $config.circomR1cs, $config.circomWasm, $config.circomZkey, taskpool
     )
   )
 
@@ -41,14 +44,14 @@ proc zkeyFilePath(config: CodexConf): string =
   config.circuitDir / "proof_main.zkey"
 
 proc initializeFromCircuitDirFiles(
-    config: CodexConf, utils: BackendUtils
+    config: CodexConf, utils: BackendUtils, taskpool: Taskpool
 ): ?!AnyBackend {.gcsafe.} =
   if fileExists(config.r1csFilePath) and fileExists(config.wasmFilePath) and
       fileExists(config.zkeyFilePath):
     trace "Initialized prover backend from local files"
     return success(
       utils.initializeCircomBackend(
-        config.r1csFilePath, config.wasmFilePath, config.zkeyFilePath
+        config.r1csFilePath, config.wasmFilePath, config.zkeyFilePath, taskpool
       )
     )
 
@@ -68,11 +71,11 @@ proc suggestDownloadTool(config: CodexConf) =
     instructions
 
 proc initializeBackend*(
-    config: CodexConf, utils: BackendUtils = BackendUtils()
+    config: CodexConf, utils: BackendUtils = BackendUtils(), taskpool: Taskpool
 ): ?!AnyBackend =
-  without backend =? initializeFromConfig(config, utils), cliErr:
+  without backend =? initializeFromConfig(config, utils, taskpool), cliErr:
     info "Could not initialize prover backend from CLI options...", msg = cliErr.msg
-    without backend =? initializeFromCircuitDirFiles(config, utils), localErr:
+    without backend =? initializeFromCircuitDirFiles(config, utils, taskpool), localErr:
       info "Could not initialize prover backend from circuit dir files...",
         msg = localErr.msg
       suggestDownloadTool(config)

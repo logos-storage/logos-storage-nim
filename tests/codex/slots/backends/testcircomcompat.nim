@@ -26,29 +26,36 @@ suite "Test Circom Compat Backend - control inputs":
   var
     circom: CircomCompat
     proofInputs: ProofInputs[Poseidon2Hash]
+    taskpool: Taskpool
 
   setup:
     let
       inputData = readFile("tests/circuits/fixtures/input.json")
       inputJson = !JsonNode.parse(inputData)
 
+    taskpool = Taskpool.new()
     proofInputs = Poseidon2Hash.jsonToProofInput(inputJson)
-    circom = CircomCompat.init(r1cs, wasm, zkey)
+    circom = CircomCompat.init(r1cs, wasm, zkey, taskpool = taskpool)
 
   teardown:
     circom.release() # this comes from the rust FFI
+    taskpool.shutdown()
 
   test "Should verify with correct inputs":
-    let proof = circom.prove(proofInputs).tryGet
+    let proof = (await circom.prove(proofInputs)).tryGet
 
-    check circom.verify(proof, proofInputs).tryGet
+    var resp = (await circom.verify(proof, proofInputs)).tryGet
+
+    check resp
 
   test "Should not verify with incorrect inputs":
     proofInputs.slotIndex = 1 # change slot index
 
-    let proof = circom.prove(proofInputs).tryGet
+    let proof = (await circom.prove(proofInputs)).tryGet
 
-    check circom.verify(proof, proofInputs).tryGet == false
+    var resp = (await circom.verify(proof, proofInputs)).tryGet
+
+    check resp == false
 
 suite "Test Circom Compat Backend":
   let
@@ -77,6 +84,7 @@ suite "Test Circom Compat Backend":
     challenge: array[32, byte]
     builder: Poseidon2Builder
     sampler: Poseidon2Sampler
+    taskpool: Taskpool
 
   setup:
     let
@@ -91,8 +99,9 @@ suite "Test Circom Compat Backend":
 
     builder = Poseidon2Builder.new(store, verifiable).tryGet
     sampler = Poseidon2Sampler.new(slotId, store, builder).tryGet
+    taskpool = Taskpool.new()
 
-    circom = CircomCompat.init(r1cs, wasm, zkey)
+    circom = CircomCompat.init(r1cs, wasm, zkey, taskpool = taskpool)
     challenge = 1234567.toF.toBytes.toArray32
 
     proofInputs = (await sampler.getProofInput(challenge, samples)).tryGet
@@ -101,15 +110,20 @@ suite "Test Circom Compat Backend":
     circom.release() # this comes from the rust FFI
     await repoTmp.destroyDb()
     await metaTmp.destroyDb()
+    taskpool.shutdown()
 
   test "Should verify with correct input":
-    var proof = circom.prove(proofInputs).tryGet
+    var proof = (await circom.prove(proofInputs)).tryGet
 
-    check circom.verify(proof, proofInputs).tryGet
+    var resp = (await circom.verify(proof, proofInputs)).tryGet
+
+    check resp == true
 
   test "Should not verify with incorrect input":
     proofInputs.slotIndex = 1 # change slot index
 
-    let proof = circom.prove(proofInputs).tryGet
+    let proof = (await circom.prove(proofInputs)).tryGet
 
-    check circom.verify(proof, proofInputs).tryGet == false
+    var resp = (await circom.verify(proof, proofInputs)).tryGet
+
+    check resp == false

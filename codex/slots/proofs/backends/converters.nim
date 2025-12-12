@@ -10,6 +10,7 @@
 {.push raises: [].}
 
 import pkg/circomcompat
+import std/atomics
 
 import ../../../contracts
 import ../../types
@@ -22,6 +23,14 @@ type
   CircomProof* = Proof
   CircomKey* = VerifyingKey
   CircomInputs* = Inputs
+  VerifyResult* = ptr bool
+  ProofPtr* = ptr Proof
+
+proc new*(_: type ProofPtr): ProofPtr =
+  cast[ptr Proof](allocShared0(sizeof(Proof)))
+
+proc new*(_: type VerifyResult): VerifyResult =
+  cast[ptr bool](allocShared0(sizeof(bool)))
 
 proc toCircomInputs*(inputs: ProofInputs[Poseidon2Hash]): CircomInputs =
   var
@@ -52,3 +61,26 @@ func toG2*(g: CircomG2): G2Point =
 
 func toGroth16Proof*(proof: CircomProof): Groth16Proof =
   Groth16Proof(a: proof.a.toG1, b: proof.b.toG2, c: proof.c.toG1)
+
+proc destroyVerifyResult*(result: VerifyResult) =
+  if result != nil:
+    deallocShared(result)
+
+proc destroyProof*(proof: ProofPtr) =
+  if proof != nil:
+    deallocShared(proof)
+
+proc copyInto*(dest: var G1, src: G1) =
+  copyMem(addr dest.x[0], addr src.x[0], 32)
+  copyMem(addr dest.y[0], addr src.y[0], 32)
+
+proc copyInto*(dest: var G2, src: G2) =
+  for i in 0 .. 1:
+    copyMem(addr dest.x[i][0], addr src.x[i][0], 32)
+    copyMem(addr dest.y[i][0], addr src.y[i][0], 32)
+
+proc copyProof*(dest: ptr Proof, src: Proof) =
+  if not isNil(dest):
+    copyInto(dest.a, src.a)
+    copyInto(dest.b, src.b)
+    copyInto(dest.c, src.c)

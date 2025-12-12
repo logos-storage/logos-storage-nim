@@ -29,6 +29,8 @@ suite "Test Prover":
   var
     store: BlockStore
     prover: Prover
+    backend: AnyBackend
+    taskpool: Taskpool
 
   setup:
     let
@@ -44,7 +46,8 @@ suite "Test Prover":
         circomZkey: InputFile("tests/circuits/fixtures/proof_main.zkey"),
         numProofSamples: samples,
       )
-      backend = config.initializeBackend().tryGet()
+    taskpool = Taskpool.new()
+    backend = config.initializeBackend(taskpool = taskpool).tryGet()
 
     store = RepoStore.new(repoDs, metaDs)
     prover = Prover.new(store, backend, config.numProofSamples)
@@ -52,6 +55,7 @@ suite "Test Prover":
   teardown:
     await repoTmp.destroyDb()
     await metaTmp.destroyDb()
+    taskpool.shutdown()
 
   test "Should sample and prove a slot":
     let (_, _, verifiable) = await createVerifiableManifest(
@@ -86,3 +90,79 @@ suite "Test Prover":
 
     check:
       (await prover.verify(proof, inputs)).tryGet == true
+
+  test "Should concurrently prove/verify":
+    const iterations = 5
+
+    var proveTasks = newSeq[Future[?!(AnyProofInputs, AnyProof)]]()
+    var verifyTasks = newSeq[Future[?!bool]]()
+
+    for i in 0 ..< iterations:
+      # create multiple prove tasks
+      let (_, _, verifiable) = await createVerifiableManifest(
+        store,
+        8, # number of blocks in the original dataset (before EC)
+        5, # ecK
+        3, # ecM
+        blockSize,
+        cellSize,
+      )
+
+      proveTasks.add(prover.prove(1, verifiable, challenge))
+
+    let proveResults = await allFinished(proveTasks)
+    # 
+    for i in 0 ..< proveResults.len:
+      var (inputs, proofs) = proveTasks[i].read().tryGet()
+      verifyTasks.add(prover.verify(proofs, inputs))
+
+    let verifyResults = await allFinished(verifyTasks)
+
+    for i in 0 ..< verifyResults.len:
+      check:
+        verifyResults[i].read().tryGet() == true
+
+  test "Should complete prove/verify task when cancelled":
+    let (_, _, verifiable) = await createVerifiableManifest(
+      store,
+      8, # number of blocks in the original dataset (before EC)
+      5, # ecK
+      3, # ecM
+      blockSize,
+      cellSize,
+    )
+
+    let (inputs, proof) = (await prover.prove(1, verifiable, challenge)).tryGet
+
+    var cancelledProof = ProofPtr.new()
+    defer:
+      destroyProof(cancelledProof)
+
+    # call asyncProve and cancel the task
+    let proveFut = backend.asyncProve(backend.normalizeInput(inputs), cancelledProof)
+    proveFut.cancel()
+
+    try:
+      discard await proveFut
+    except CatchableError as exc:
+      check exc of CancelledError
+    finally:
+      # validate the cancelledProof
+      check:
+        (await prover.verify(cancelledProof[], inputs)).tryGet == true
+
+    var verifyRes = VerifyResult.new()
+    defer:
+      destroyVerifyResult(verifyRes)
+
+    # call asyncVerify and cancel the task
+    let verifyFut = backend.asyncVerify(proof, inputs, verifyRes)
+    verifyFut.cancel()
+
+    try:
+      discard await verifyFut
+    except CatchableError as exc:
+      check exc of CancelledError
+    finally:
+      # validate the verifyResponse 
+      check verifyRes[] == true

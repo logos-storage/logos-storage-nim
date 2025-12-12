@@ -74,7 +74,7 @@ proc prove*(
     return failure(err)
 
   # prove slot
-  without proof =? self.backend.prove(proofInput), err:
+  without proof =? await self.backend.prove(proofInput), err:
     error "Unable to prove slot", err = err.msg
     return failure(err)
 
@@ -85,7 +85,11 @@ proc verify*(
 ): Future[?!bool] {.async: (raises: [CancelledError]).} =
   ## Prove a statement using backend.
   ## Returns a future that resolves to a proof.
-  self.backend.verify(proof, inputs)
+  without res =? (await self.backend.verify(proof, inputs)), err:
+    error "Unable to verify proof", err = err.msg
+    return failure(err)
+
+  return success(res)
 
 proc new*(
     _: type Prover, store: BlockStore, backend: AnyBackend, nSamples: int
