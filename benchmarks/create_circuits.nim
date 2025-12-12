@@ -5,7 +5,9 @@ import ./utils
 type
   CircuitEnv* = object
     nimCircuitCli*: string
-    circuitDirIncludes*: string
+    circuitLibDirIncludes*: string
+    circuitPoseidon2DirIncludes*: string
+    circuitCodexDirIncludes*: string
     ptauPath*: string
     ptauUrl*: Uri
     codexProjDir*: string
@@ -27,12 +29,16 @@ proc findCodexProjectDir(): string =
   result = currentSourcePath().parentDir.parentDir
 
 func default*(tp: typedesc[CircuitEnv]): CircuitEnv =
-  let codexDir = findCodexProjectDir()
+  let
+    codexDir = findCodexProjectDir()
+    baseCircuitDir = codexDir / "vendor" / "codex-storage-proofs-circuits" / "circuit"
+
   result.nimCircuitCli =
     codexDir / "vendor" / "codex-storage-proofs-circuits" / "reference" / "nim" /
     "proof_input" / "cli"
-  result.circuitDirIncludes =
-    codexDir / "vendor" / "codex-storage-proofs-circuits" / "circuit"
+  result.circuitLibDirIncludes = baseCircuitDir / "lib"
+  result.circuitPoseidon2DirIncludes = baseCircuitDir / "poseidon2"
+  result.circuitCodexDirIncludes = baseCircuitDir / "codex"
   result.ptauPath =
     codexDir / "benchmarks" / "ceremony" / "powersOfTau28_hez_final_23.ptau"
   result.ptauUrl = "https://storage.googleapis.com/zkevm/ptau".parseUri
@@ -75,7 +81,9 @@ proc check*(env: var CircuitEnv) =
     assert env.nimCircuitCli.fileExists()
 
   echo "Found NimCircuitCli: ", env.nimCircuitCli
-  echo "Found Circuit Path: ", env.circuitDirIncludes
+  echo "Found Circuit-lib Path: ", env.circuitLibDirIncludes
+  echo "Found Circuit-poseidon2 Path: ", env.circuitPoseidon2DirIncludes
+  echo "Found Circuit-codex Path: ", env.circuitCodexDirIncludes
   echo "Found PTAU file: ", env.ptauPath
 
 proc downloadPtau*(ptauPath: string, ptauUrl: Uri) =
@@ -104,7 +112,7 @@ proc generateCircomAndSamples*(args: CircuitArgs, env: CircuitEnv, name: string)
 
   if not "input.json".fileExists:
     echo "Generating Circom Files..."
-    runit fmt"{cliCmd} -v --circom={name}.circom --output=input.json"
+    runit fmt"{cliCmd} -v --field=bn254 --hash=poseidon2 --circom={name}.circom --output=input.json"
 
 proc createCircuit*(
     args: CircuitArgs,
@@ -139,7 +147,7 @@ proc createCircuit*(
     generateCircomAndSamples(args, env, name)
 
     if not wasm.fileExists or not r1cs.fileExists:
-      runit fmt"circom --r1cs --wasm --O2 -l{env.circuitDirIncludes} {name}.circom"
+      runit fmt"circom --r1cs --wasm --O2 -l{env.circuitLibDirIncludes} -l{env.circuitPoseidon2DirIncludes} -l{env.circuitCodexDirIncludes} {name}.circom"
       moveFile fmt"{name}_js" / fmt"{name}.wasm", fmt"{name}.wasm"
     echo "Found wasm: ", wasm
     echo "Found r1cs: ", r1cs
