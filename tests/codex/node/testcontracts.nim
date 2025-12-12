@@ -75,7 +75,8 @@ asyncchecksuite "Test Node - Host contracts":
     let
       manifestBlock =
         bt.Block.new(manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
-      erasure = Erasure.new(store, leoEncoderProvider, leoDecoderProvider, Taskpool.new)
+      erasure =
+        ErasureRef.new(store, leoEncoderProvider, leoDecoderProvider, Taskpool.new)
 
     manifestCid = manifestBlock.cid
 

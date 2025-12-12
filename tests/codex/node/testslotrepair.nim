@@ -96,7 +96,7 @@ asyncchecksuite "Test Node - Slot Repair":
       manifestBlock =
         bt.Block.new(manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
       erasure =
-        Erasure.new(store, leoEncoderProvider, leoDecoderProvider, cluster.taskpool)
+        ErasureRef.new(store, leoEncoderProvider, leoDecoderProvider, cluster.taskpool)
 
     (await localStore.putBlock(manifestBlock)).tryGet()
 
@@ -175,7 +175,7 @@ asyncchecksuite "Test Node - Slot Repair":
       manifestBlock =
         bt.Block.new(manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
       erasure =
-        Erasure.new(store, leoEncoderProvider, leoDecoderProvider, cluster.taskpool)
+        ErasureRef.new(store, leoEncoderProvider, leoDecoderProvider, cluster.taskpool)
 
     (await localStore.putBlock(manifestBlock)).tryGet()
 
