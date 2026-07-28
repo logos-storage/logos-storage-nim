@@ -4,7 +4,6 @@
 ## STOP_NODE: stop the provided Logos Storage node.
 
 import std/[options, strutils, net, os]
-import codexdht/discv5/spr
 import std/parseutils
 import contractabi/address
 import chronos
@@ -46,13 +45,6 @@ proc readValue*(r: var JsonReader, val: var NatConfig) =
   if res.isErr:
     raise
       newException(SerializationError, "Cannot parse the NAT config: " & res.error())
-  val = res.get()
-
-proc readValue*(r: var JsonReader, val: var SignedPeerRecord) =
-  let res = SignedPeerRecord.parse(r.readValue(string))
-  if res.isErr:
-    raise
-      newException(SerializationError, "Cannot parse the signed peer: " & res.error())
   val = res.get()
 
 proc readValue*(r: var JsonReader, val: var ThreadCount) =

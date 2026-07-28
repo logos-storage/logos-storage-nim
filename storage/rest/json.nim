@@ -1,15 +1,16 @@
 import std/importutils
+from std/times import getTime, toUnix
 
+import pkg/chronos
 import pkg/questionable
 import pkg/libp2p
 import pkg/libp2p_mix
 import pkg/libp2p_mix/curve25519
-import pkg/codexdht/discv5/node as dn
-import pkg/codexdht/discv5/routing_table as rt
 import pkg/stew/byteutils
 import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/services/autorelayservice
 import ../node
+import ../discovery
 import ../nat
 import ../conf
 import ../utils/json
@@ -27,11 +28,9 @@ type
     content* {.serialize.}: seq[RestContent]
 
   RestNode* = object
-    nodeId* {.serialize.}: RestNodeId
     peerId* {.serialize.}: PeerId
-    record* {.serialize.}: SignedPeerRecord
-    address* {.serialize.}: Option[dn.Address]
-    seen* {.serialize.}: bool
+    addresses* {.serialize.}: seq[MultiAddress]
+    lastSeen* {.serialize.}: Option[int64]
 
   RestRoutingTable* = object
     localNode* {.serialize.}: RestNode
@@ -41,9 +40,6 @@ type
     peerId* {.serialize.}: PeerId
     seqNo* {.serialize.}: uint64
     addresses* {.serialize.}: seq[AddressInfo]
-
-  RestNodeId* = object
-    id*: NodeId
 
   RestRepoStore* = object
     totalBlocks* {.serialize.}: Natural
@@ -66,17 +62,12 @@ type
     # peer addresses known by the libp2p switch
     addrs* {.serialize.}: seq[MultiAddress]
     # signed peer record (URI form)
-    spr* {.serialize.}: Option[SignedPeerRecord]
-    # provider record (the one we announce for content we provide)
-    providerRecord* {.serialize.}: Option[SignedPeerRecord]
-    # addresses contained in the provider record
-    providerAddresses* {.serialize.}: seq[MultiAddress]
-    # UDP addresses announced in the DHT
-    discoveryAddresses* {.serialize.}: seq[MultiAddress]
+    spr* {.serialize.}: string
     # libp2p public key
     libp2pPubKey* {.serialize.}: string
     # mix public key (for nodes that support mix)
     mixPubKey* {.serialize.}: Option[FieldElement]
+    # DHT routing table
     table* {.serialize.}: RestRoutingTable
     storage* {.serialize.}: VersionInfo
     # NAT reachability, relay and port-mapping status
@@ -92,33 +83,32 @@ proc init*(_: type RestContentList, content: seq[RestContent]): RestContentList 
 proc init*(_: type RestContent, cid: Cid, manifest: Manifest): RestContent =
   RestContent(cid: cid, manifest: manifest)
 
-proc init*(_: type RestNode, node: dn.Node): RestNode =
-  RestNode(
-    nodeId: RestNodeId.init(node.id),
-    peerId: node.record.data.peerId,
-    record: node.record,
-    address: node.address,
-    seen: node.seen > 0.5,
-  )
+proc init*(_: type RestNode, peerId: PeerId, addresses: seq[MultiAddress]): RestNode =
+  RestNode(peerId: peerId, addresses: addresses)
 
-proc init*(_: type RestRoutingTable, routingTable: rt.RoutingTable): RestRoutingTable =
-  var nodes: seq[RestNode] = @[]
-  for bucket in routingTable.buckets:
-    for node in bucket.nodes:
-      nodes.add(RestNode.init(node))
+proc init*(_: type RestNode, peerRecord: PeerRecord): RestNode =
+  var addrs: seq[MultiAddress]
+  for a in peerRecord.addresses:
+    addrs.add(a.address)
+  RestNode.init(peerRecord.peerId, addrs)
 
-  RestRoutingTable(localNode: RestNode.init(routingTable.localNode), nodes: nodes)
+proc init*(_: type RestNode, peer: RoutingPeer): RestNode =
+  var node = RestNode.init(peer.record)
+  let secondsSinceSeen = (Moment.now() - peer.lastSeen).seconds
+  node.lastSeen = some(getTime().toUnix() - secondsSinceSeen)
+  node
+
+proc init*(_: type RestRoutingTable, discovery: Discovery): RestRoutingTable =
+  let table = discovery.routingTable()
+  var nodes: seq[RestNode]
+  for peer in table.peers:
+    nodes.add(RestNode.init(peer))
+  RestRoutingTable(localNode: RestNode.init(table.localNode), nodes: nodes)
 
 proc init*(_: type RestPeerRecord, peerRecord: PeerRecord): RestPeerRecord =
   RestPeerRecord(
     peerId: peerRecord.peerId, seqNo: peerRecord.seqNo, addresses: peerRecord.addresses
   )
-
-proc init*(_: type RestNodeId, id: NodeId): RestNodeId =
-  RestNodeId(id: id)
-
-proc `%`*(obj: RestNodeId): JsonNode =
-  % $obj.id
 
 proc init*(
     _: type DebugInfo,
@@ -139,11 +129,8 @@ proc init*(
   DebugInfo(
     id: peerId,
     addrs: peerInfo.addrs,
-    spr: some(node.discovery.getSpr()),
-    providerRecord: node.discovery.providerRecord,
-    providerAddresses: node.discovery.providerAddrs,
-    discoveryAddresses: node.discovery.discoveryAddrs,
-    table: RestRoutingTable.init(node.discovery.protocol.routingTable),
+    spr: node.discovery.getSpr().valueOr(""),
+    table: RestRoutingTable.init(node.discovery),
     storage: VersionInfo(version: $storageVersion, revision: $storageRevision),
     # Serialization has no error contract in nim-serde, so we need to
     # handle this here.
@@ -160,7 +147,7 @@ proc init*(
         some(node.discovery.mixProto.mixNodeInfo.mixPubKey),
     nat: NatDebugInfo(
       reachability: reachabilityStr(autonat),
-      clientMode: node.discovery.protocol.clientMode,
+      clientMode: not node.discovery.isServerMode(),
       relayRunning: autoRelay.isSome and autoRelay.get.isRunning,
       portMapping: portMappingStr(natMapper),
     ),

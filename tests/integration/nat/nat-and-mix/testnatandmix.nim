@@ -8,7 +8,7 @@ import ../../storageclient
 import ../composehelper
 
 proc announcesCircuitAddr(info: JsonNode): bool =
-  info{"providerAddresses"}.getElems.anyIt("p2p-circuit" in it.getStr)
+  info{"addrs"}.getElems.anyIt("p2p-circuit" in it.getStr)
 
 asyncchecksuite "Mix queries with NATted endpoints":
   let

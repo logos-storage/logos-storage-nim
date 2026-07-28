@@ -59,7 +59,7 @@ asyncchecksuite "Test Discovery Engine":
 
     blockDiscovery.findBlockProvidersHandler = proc(
         d: MockDiscovery, cid: Cid
-    ): Future[seq[SignedPeerRecord]] {.async: (raises: [CancelledError]).} =
+    ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       check cid == blocks[0].cid
       if not want.finished:
         want.complete()
@@ -80,7 +80,7 @@ asyncchecksuite "Test Discovery Engine":
 
     blockDiscovery.findBlockProvidersHandler = proc(
         d: MockDiscovery, cid: Cid
-    ): Future[seq[SignedPeerRecord]] {.async: (raises: [CancelledError]).} =
+    ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       check cid == blocks[0].cid
       if count > 0:
         check false

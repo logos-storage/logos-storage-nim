@@ -5,7 +5,6 @@ import pkg/taskpools
 import pkg/libp2p except NATConfig
 import pkg/libp2p/errors
 
-import pkg/codexdht/discv5/routing_table
 import pkg/storage/discovery
 import pkg/storage/stores
 import pkg/storage/blocktype as bt
@@ -128,7 +127,7 @@ proc generateNodes*(
   var
     components: seq[NodesComponents] = @[]
     taskpool = Taskpool.new()
-    bootstrapNodes: seq[SignedPeerRecord] = @[]
+    bootstrapNodes: seq[(PeerId, seq[MultiAddress])] = @[]
 
   for i in 0 ..< num:
     let basePortForNode = config.basePort + 2 * i.int
@@ -171,18 +170,9 @@ proc generateNodes*(
           mdStore = TempLevelDb.new()
           store =
             RepoStore.new(repoStore.newDb(), mdStore.newDb(), clock = SystemClock.new())
-          blockDiscoveryStore = bdStore.newDb()
           discovery =
             if config.enableDiscovery:
-              Discovery.new(
-                switch.peerInfo.privateKey,
-                providerAddrs = @[listenAddr],
-                bindPort = bindPort.Port,
-                store = blockDiscoveryStore,
-                bootstrapNodes = bootstrapNodes,
-                tableIpLimits =
-                  TableIpLimits(tableIpLimit: high(uint), bucketIpLimit: high(uint)),
-              )
+              Discovery.new(switch, bootstrapNodes = bootstrapNodes)
             else:
               nullDiscovery()
 
@@ -191,17 +181,13 @@ proc generateNodes*(
       else:
         let
           store = CacheStore.new(blocks.mapIt(it))
-          discovery = Discovery.new(
-            switch.peerInfo.privateKey,
-            providerAddrs = @[listenAddr],
-            tableIpLimits =
-              TableIpLimits(tableIpLimit: high(uint), bucketIpLimit: high(uint)),
-          )
+          discovery = Discovery.new(switch)
         (store.BlockStore, newSeq[TempLevelDb](), discovery)
 
     let
       discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
-      advertiser = Advertiser.new(localStore, blockDiscovery)
+      advertiser =
+        Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
       engine = BlockExcEngine.new(
         localStore, network, discovery, advertiser, peerStore, downloadManager
       )
@@ -224,10 +210,7 @@ proc generateNodes*(
 
         if config.enableBootstrap:
           waitFor switch.peerInfo.update()
-          blockDiscovery.announceDirectAddrs(
-            switch.peerInfo.addrs, udpPort = bindPort.Port
-          )
-          bootstrapNodes.add blockDiscovery.getSpr()
+          bootstrapNodes.add((switch.peerInfo.peerId, switch.peerInfo.addrs))
 
         fullNode
       else:

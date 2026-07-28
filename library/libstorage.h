@@ -88,7 +88,6 @@ extern "C"
     //  "id": "...",
     //  "addrs": ["..."],
     //  "spr": "",
-    //  "providerAddresses": ["..."],
     //  "table": {
     //   "localNode": "",
     //   "nodes": [

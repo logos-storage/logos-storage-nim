@@ -11,6 +11,7 @@
 
 import pkg/chronos
 import pkg/libp2p/cid
+import pkg/libp2p/peerinfo
 import pkg/metrics
 import pkg/questionable
 import pkg/questionable/results
@@ -46,6 +47,7 @@ type Advertiser* = ref object of RootObj
   advertiseLocalStoreLoopSleep: Duration # Advertise loop sleep
   inFlightAdvReqs*: Table[Cid, Future[void]] # Inflight advertise requests
   addrChanged: AsyncEvent # Fired when the announced addresses change
+  peerInfo: PeerInfo
 
 proc addCidToQueue(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError]).} =
   if cid notin b.advertiseQueue:
@@ -68,17 +70,26 @@ proc advertiseBlock(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError])
   except CatchableError as e:
     error "failed to advertise block", cid, error = e.msgDetail
 
+proc reachable(b: Advertiser): bool =
+  b.peerInfo.addrs.len > 0
+
+proc onAddrChange*(b: Advertiser) =
+  b.addrChanged.fire()
+
 proc advertiseLocalStoreLoop(b: Advertiser) {.async: (raises: []).} =
   try:
     while b.advertiserRunning:
       b.addrChanged.clear()
 
-      if cidsIter =? await b.localStore.listBlocks(blockType = BlockType.Manifest):
-        trace "Advertiser begins iterating blocks..."
-        for c in cidsIter:
-          if cid =? await c:
-            await b.advertiseBlock(cid)
-        trace "Advertiser iterating blocks finished."
+      if b.reachable():
+        if cidsIter =? await b.localStore.listBlocks(blockType = BlockType.Manifest):
+          trace "Advertiser begins iterating blocks..."
+          for c in cidsIter:
+            if cid =? await c:
+              await b.advertiseBlock(cid)
+          trace "Advertiser iterating blocks finished."
+      else:
+        trace "No reachable address yet, skipping advertise sweep"
 
       discard await b.addrChanged.wait().withTimeout(b.advertiseLocalStoreLoopSleep)
   except CancelledError:
@@ -92,6 +103,9 @@ proc processQueueLoop(b: Advertiser) {.async: (raises: []).} =
       let cid = await b.advertiseQueue.get()
 
       if cid in b.inFlightAdvReqs:
+        continue
+
+      if not b.reachable():
         continue
 
       let request = b.discovery.provide(cid)
@@ -128,8 +142,6 @@ proc start*(b: Advertiser) {.async: (raises: []).} =
   b.localStore.onBlockStored = onBlock.some
 
   b.advertiserRunning = true
-  b.discovery.onAddrChange = proc() {.gcsafe, raises: [].} =
-    b.addrChanged.fire()
   for i in 0 ..< b.concurrentAdvReqs:
     let fut = b.processQueueLoop()
     b.trackedFutures.track(fut)
@@ -149,7 +161,6 @@ proc stop*(b: Advertiser) {.async: (raises: []).} =
   b.advertiserRunning = false
   # Stop incoming tasks from callback and localStore loop
   b.localStore.onBlockStored = CidCallback.none
-  b.discovery.onAddrChange = nil
   trace "Stopping advertise loop and tasks"
   await b.trackedFutures.cancelTracked()
   trace "Advertiser loop and tasks stopped"
@@ -158,6 +169,7 @@ proc new*(
     T: type Advertiser,
     localStore: BlockStore,
     discovery: Discovery,
+    peerInfo: PeerInfo,
     concurrentAdvReqs = DefaultConcurrentAdvertRequests,
     advertiseLocalStoreLoopSleep = DefaultAdvertiseLoopSleep,
 ): Advertiser =
@@ -166,6 +178,7 @@ proc new*(
   Advertiser(
     localStore: localStore,
     discovery: discovery,
+    peerInfo: peerInfo,
     concurrentAdvReqs: concurrentAdvReqs,
     advertiseQueue: newAsyncQueue[Cid](concurrentAdvReqs),
     trackedFutures: TrackedFutures.new(),

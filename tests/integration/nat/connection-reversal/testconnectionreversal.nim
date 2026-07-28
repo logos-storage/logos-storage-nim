@@ -9,11 +9,9 @@ import ../../../checktest
 import ../../storageclient
 import ../composehelper
 
-const directConnLog = "Direct connection created."
-
 proc announcesCircuitAddr(info: JsonNode): bool =
   ## A node behind the relay announces its circuit (p2p-circuit) address.
-  info{"providerAddresses"}.getElems.anyIt("p2p-circuit" in it.getStr)
+  info{"addrs"}.getElems.anyIt("p2p-circuit" in it.getStr)
 
 asyncchecksuite "NAT connection reversal":
   let
@@ -54,9 +52,11 @@ asyncchecksuite "NAT connection reversal":
     let cid = (await nodeClient.upload("hole punch me")).get
     check (await clientC.download(cid)).isOk
 
-    # B sees the relayed peer C join and dials it back directly
-    check eventuallySafe(
-      directConnLog in serviceLogs(composeFile, "node"),
-      timeout = 60_000,
-      pollInterval = 2_000,
+    # B sees C join over the relay and dials it back directly
+    let peerId = (await clientC.info()).get{"id"}.getStr
+    check eventuallyInfo(
+      nodeClient,
+      info{"connections"}.getElems.anyIt(
+        it{"peerId"}.getStr == peerId and it{"direct"}.getBool
+      ),
     )

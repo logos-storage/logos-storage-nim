@@ -2,7 +2,6 @@ import std/[sequtils, options]
 
 import pkg/chronos
 import pkg/libp2p/routing_record
-import pkg/codexdht/discv5/protocol as discv5
 
 import pkg/storage/rng
 import pkg/storage/blockexchange
@@ -46,7 +45,7 @@ asyncchecksuite "NetworkStore engine handlers":
       blocks.add(Block.new(chunk).tryGet())
 
     peerId = PeerId.example
-    blockDiscovery = Discovery.new()
+    blockDiscovery = MockDiscovery.new()
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new()
 
@@ -55,7 +54,8 @@ asyncchecksuite "NetworkStore engine handlers":
 
     discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
 
-    advertiser = Advertiser.new(localStore, blockDiscovery)
+    advertiser =
+      Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     engine = BlockExcEngine.new(
       localStore, network, discovery, advertiser, peerStore, downloadManager

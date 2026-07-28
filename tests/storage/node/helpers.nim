@@ -93,16 +93,11 @@ template setupAndTearDown*() {.dirty.} =
     localStore = RepoStore.new(localStoreRepoDs, localStoreMetaDs, clock = clock)
     await localStore.start()
 
-    blockDiscovery = Discovery.new(
-      switch.peerInfo.privateKey,
-      providerAddrs = @[
-        MultiAddress.init("/ip4/127.0.0.1/tcp/0").expect("Should return multiaddress")
-      ],
-    )
+    blockDiscovery = Discovery.new(switch)
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new()
     discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
-    advertiser = Advertiser.new(localStore, blockDiscovery)
+    advertiser = Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
     engine = BlockExcEngine.new(
       localStore, network, discovery, advertiser, peerStore, downloadManager
     )

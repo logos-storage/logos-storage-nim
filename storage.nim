@@ -110,6 +110,9 @@ when isMainModule:
 
   ## Ctrl+C handling
   proc doShutdown() =
+    if state == StorageStatus.Stopping:
+      return
+
     shutdown = server.shutdown()
     state = StorageStatus.Stopping
 

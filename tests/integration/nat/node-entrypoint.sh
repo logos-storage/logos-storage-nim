@@ -20,7 +20,6 @@ _base_config() {
     # api-bindaddr=0.0.0.0 so the published host port reaches the REST API.
     --api-bindaddr=0.0.0.0
     --listen-port=8070
-    --disc-port=8090
     --api-port=8080
     --data-dir=/data
     '--log-level=DEBUG;trace:libp2p,mix'
@@ -111,11 +110,11 @@ enable_mix() {
     info=$(_api_request "$mix_ip" "/api/storage/v1/debug/info")
     echo "$info" | jq '{
       peerId: .table.localNode.peerId,
-      multiAddr: .providerAddresses[0],
+      multiAddr: .addrs[0],
       mixPubKey: .mixPubKey,
       libp2pPubKey: .libp2pPubKey
     }' >> /tmp/mixinfo.jsonl
-    _config_opts+=("--dht-mix-proxy=$(echo "$info" | jq --raw-output .providerRecord)")
+    _config_opts+=("--dht-mix-proxy=$(echo "$info" | jq --raw-output .spr)")
   done
 
   if [[ -s /tmp/mixinfo.jsonl ]]; then

@@ -28,14 +28,18 @@ proc example*(_: type PeerContext): PeerContext =
 proc example*(_: type Cid): Cid =
   bt.Block.example.cid
 
+proc example*(_: type PeerRecord): PeerRecord =
+  let
+    key = PrivateKey.example
+    peerId = PeerId.init(key.getPublicKey().get).get
+  PeerRecord.init(peerId, @[])
+
 proc example*(_: type SignedPeerRecord): SignedPeerRecord =
   let
     key = PrivateKey.example
     peerId = PeerId.init(key.getPublicKey().get).get
     record = PeerRecord.init(peerId, @[])
-    spr = SignedPeerRecord.init(key, record).tryGet()
-
-  spr
+  SignedPeerRecord.init(key, record).tryGet()
 
 proc example*(_: type BlockAddress): BlockAddress =
   BlockAddress.init(Cid.example, 0)

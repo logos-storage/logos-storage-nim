@@ -10,7 +10,7 @@ import ../../storageclient
 import ../composehelper
 
 proc announcesCircuitAddr(info: JsonNode): bool =
-  info{"providerAddresses"}.getElems.anyIt("p2p-circuit" in it.getStr)
+  info{"addrs"}.getElems.anyIt("p2p-circuit" in it.getStr)
 
 asyncchecksuite "NAT not reachable":
   let
@@ -41,10 +41,8 @@ asyncchecksuite "NAT not reachable":
     check nat{"relayRunning"}.getBool
     check nat{"portMapping"}.getStr == "none"
     check info.announcesCircuitAddr()
-    let announced = info{"providerAddresses"}.getElems.mapIt(it.getStr)
+    let announced = info{"addrs"}.getElems.mapIt(it.getStr)
     # the announced circuit address points at the bootstrap's relay
     check announced.anyIt(
       ("/ip4/" & bootstrapIp & "/tcp/8070" in it) and ("p2p-circuit" in it)
     )
-    # relay addresses go only into the provider record, never the DHT routing record
-    check info{"discoveryAddresses"}.getElems.len == 0

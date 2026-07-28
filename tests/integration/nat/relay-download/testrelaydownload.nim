@@ -11,7 +11,7 @@ import ../composehelper
 
 proc announcesCircuitAddr(info: JsonNode): bool =
   ## A node behind the relay announces its circuit (p2p-circuit) address.
-  info{"providerAddresses"}.getElems.anyIt("p2p-circuit" in it.getStr)
+  info{"addrs"}.getElems.anyIt("p2p-circuit" in it.getStr)
 
 asyncchecksuite "NAT relay download":
   let

@@ -3,7 +3,6 @@
 import chronos
 import chronicles
 import confutils
-import codexdht/discv5/spr
 import metrics
 import ../../logosmetrics
 import ../../../storage/conf
@@ -42,7 +41,10 @@ proc getRepo(
 proc getSpr(
     storage: ptr StorageServer
 ): Future[Result[string, string]] {.async: (raises: []).} =
-  return ok(storage[].node.discovery.getSpr().toURI)
+  let spr = storage[].node.discovery.getSpr()
+  if spr.isErr:
+    return err(spr.error.msg)
+  return ok(spr.get())
 
 proc getPeerId(
     storage: ptr StorageServer

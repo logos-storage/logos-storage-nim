@@ -26,9 +26,7 @@ import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
 import pkg/confutils
 import pkg/confutils/defs
-import pkg/stew/io2
 import pkg/datastore
-import pkg/stew/io2
 
 import ./node
 import ./manifest/protocol
@@ -42,6 +40,7 @@ import ./utils/fileutils
 import ./utils/mixidentity
 import ./discovery
 import ./utils/addrutils
+import ./utils/spr
 import ./namespaces
 import ./storagetypes
 import ./logutils
@@ -89,6 +88,13 @@ proc start*(s: StorageServer) {.async.} =
 
   s.maintenance.start()
 
+  # Activate SO_REUSEPORT for hole punching in tcptransport.nim.
+  # Without that, hole punching would use an ephemeral port assigned by the OS.
+  # NotReachable has nothing to do with AutoNAT Reachability
+  if s.holePunchHandler.isSome:
+    for t in s.storageNode.switch.transports:
+      t.networkReachability = NetworkReachability.NotReachable
+
   await s.storageNode.switch.start()
 
   var realPort = Port(0)
@@ -114,13 +120,6 @@ proc start*(s: StorageServer) {.async.} =
     # We force the update to take in consideration the announcedAddrs
     await peerInfo.update()
 
-  # Activate SO_REUSEPORT for hole punching in tcptransport.nim.
-  # Without that, hole punching would use an ephemeral port assigned by the OS.
-  # NotReachable has nothing to do with AutoNAT Reachability
-  if s.holePunchHandler.isSome:
-    for t in s.storageNode.switch.transports:
-      t.networkReachability = NetworkReachability.NotReachable
-
   if s.config.mixEnabled:
     let
       switch = s.storageNode.switch
@@ -131,7 +130,7 @@ proc start*(s: StorageServer) {.async.} =
           StorageError, "Failed to load or generate Mix keys: " & error.msg
         )
       # We define a placeholder here.
-      # For nat:extip, the address will be updated when calling `announceDirectAddrs` below.
+      # For nat:extip, the address will be updated by `updateLocalMultiAddr` on node start.
       # For nat:auto, the node waits for AutoNAT to provide a reachable address or a relay address.
       # The Mix lookup will not be performed while the mixAddr value is mixUnsetMultiAddr().
       mixAddr = mixUnsetMultiAddr()
@@ -177,30 +176,9 @@ proc start*(s: StorageServer) {.async.} =
   if s.natMapper.isSome:
     s.natMapper.get.start()
 
-  # When listenPort is 0 the OS assigns a random port. For UDP, the port
-  # doesn't change so there is no need to update it.
+  # When listenPort is 0 the OS assigns a random port.
   if s.natMapper.isSome and s.config.listenPort == Port(0):
     s.natMapper.get.tcpPort = realPort
-
-  # The addresses are announced during the start process
-  # only with extIp because they should be Reachable.
-  # For other nodes, wait for AutoNat to announce addresses and update SPR.
-  if s.config.nat.hasExtIp:
-    # extip means that we assume the IP is reachable.
-    let extIpAddr = getMultiAddrWithIpAndTcpPort(s.config.nat.extIp, realPort)
-
-    # The addresses are announced during the start process
-    # only with extIp because they should be Reachable.
-    # For other nodes, wait for AutoNat to announce addresses and update SPR.
-    # Announced here and not above because Mix needs discovery.mixProto to be set.
-    s.storageNode.discovery.announceDirectAddrs(
-      @[extIpAddr], udpPort = s.config.discoveryPort
-    )
-  else:
-    # Other nodes wait for AutoNAT to announce addresses and update SPR.
-    # They start in client mode to avoid polluting DHT with NotReachable records;
-    # it will be flipped off once AutoNAT confirms reachability.
-    s.storageNode.discovery.protocol.clientMode = true
 
   await s.storageNode.start()
 
@@ -208,11 +186,11 @@ proc start*(s: StorageServer) {.async.} =
   # have connected peers for Autonat. The dials are run concurrently in case of
   # a dead autonat server that could timeout.
   proc connectAutonatServer(
-      spr: SignedPeerRecord
+      record: SignedPeerRecord
   ) {.async: (raises: [CancelledError]).} =
     try:
-      let addrs = spr.data.addresses.mapIt(it.address)
-      await s.storageNode.switch.connect(spr.data.peerId, addrs)
+      let (peerId, addresses) = record.toPeerIdAndAddrs()
+      await s.storageNode.switch.connect(peerId, addresses)
     except CancelledError as exc:
       raise exc
     except CatchableError as e:
@@ -288,8 +266,7 @@ proc stop*(s: StorageServer) {.async.} =
     )
 
 proc close*(s: StorageServer) {.async.} =
-  var futures =
-    @[s.storageNode.close(), s.repoStore.close(), s.storageNode.discovery.close()]
+  var futures = @[s.storageNode.close(), s.repoStore.close()]
 
   let res = await noCancel allDone[void](futures)
 
@@ -443,33 +420,12 @@ proc new*(
   except CatchableError as exc:
     raiseAssert("Failure in taskPool initialization:" & exc.msg)
 
-  let discoveryDir = config.dataDir / StorageDhtNamespace
-
-  if io2.createPath(discoveryDir).isErr:
-    trace "Unable to create discovery directory for block store",
-      discoveryDir = discoveryDir
-    raise (ref Defect)(
-      msg: "Unable to create discovery directory for block store: " & discoveryDir
-    )
-
-  let providersPath = config.dataDir / StorageDhtProvidersNamespace
-  let discoveryStoreRes = LevelDbDatastore.new(providersPath)
-  if discoveryStoreRes.isErr:
-    error "Failed to initialize discovery datastore",
-      path = providersPath, err = discoveryStoreRes.error.msg
-
   let
-    discoveryStore =
-      Datastore(discoveryStoreRes.expect("Should create discovery datastore!"))
-
     discovery = Discovery.new(
-      switch.peerInfo.privateKey,
-      providerAddrs = @[],
-      bindPort = config.discoveryPort,
-      bootstrapNodes = bootstrapNodes,
-      discoveryPort = config.discoveryPort,
+      switch,
+      bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
       dhtMixProxies = config.dhtMixProxies,
-      store = discoveryStore,
+      isServer = config.nat.hasExtIp or config.autonatServer,
     )
 
     network = BlockExcNetwork.new(switch)
@@ -512,7 +468,7 @@ proc new*(
 
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new(retries = config.blockRetries)
-    advertiser = Advertiser.new(repoStore, discovery)
+    advertiser = Advertiser.new(repoStore, discovery, peerInfo = switch.peerInfo)
     blockDiscovery = DiscoveryEngine.new(repoStore, peerStore, network, discovery)
     engine = BlockExcEngine.new(
       repoStore, network, blockDiscovery, advertiser, peerStore, downloadManager
@@ -531,6 +487,7 @@ proc new*(
 
   switch.mount(network)
   switch.mount(manifestProto)
+  switch.mount(discovery.kad)
 
   # NAT services
   var natMapper: Option[NatPortMapper]
@@ -541,8 +498,7 @@ proc new*(
     let relayService = AutoRelayService.new(
       maxNumRelays = config.natMaxRelays,
       client = relayClient,
-      onReservation = proc(addresses: seq[MultiAddress]) {.gcsafe, raises: [].} =
-        discovery.announceRelayReservation(addresses),
+      onReservation = nil,
       rng = random.Rng.instance().libp2pRng,
     )
 
@@ -553,7 +509,6 @@ proc new*(
       NatPortMapper(
         natConfig: config.nat,
         tcpPort: config.listenPort,
-        discoveryPort: config.discoveryPort,
         discoverTimeout: config.natPortMappingDiscoverTimeout,
         mappingTimeout: config.natPortMappingTimeout,
         recheckPeriod: config.natPortMappingRecheckPeriod,
@@ -568,8 +523,7 @@ proc new*(
       ) {.async: (raises: [CancelledError]).} =
         debug "AutoNAT status", reachability = networkReachability, confidence
         await natMapper.get.handleNatStatus(
-          networkReachability, addrs, config.discoveryPort, discovery, switch,
-          relayService,
+          networkReachability, addrs, discovery, switch, relayService
         )
     )
 

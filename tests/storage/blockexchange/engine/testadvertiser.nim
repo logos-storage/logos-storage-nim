@@ -1,6 +1,5 @@
 import pkg/chronos
 import pkg/libp2p/routing_record
-import pkg/codexdht/discv5/protocol as discv5
 
 import pkg/storage/blockexchange
 import pkg/storage/stores
@@ -37,7 +36,8 @@ asyncchecksuite "Advertiser":
     ) {.async: (raises: [CancelledError]), gcsafe.} =
       advertised.add(cid)
 
-    advertiser = Advertiser.new(localStore, blockDiscovery)
+    advertiser =
+      Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     await advertiser.start()
 
@@ -86,7 +86,7 @@ asyncchecksuite "Advertiser":
     let newStore = CacheStore.new([manifestBlk])
 
     await advertiser.stop()
-    advertiser = Advertiser.new(newStore, blockDiscovery)
+    advertiser = Advertiser.new(newStore, blockDiscovery, peerInfo = examplePeerInfo())
     await advertiser.start()
 
     check eventually manifestBlk.cid in advertised
