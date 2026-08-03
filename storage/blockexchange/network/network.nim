@@ -27,6 +27,8 @@ import ../../utils/trackedfutures
 import ./networkpeer
 import ../protocol/wantblocks
 
+import ../../mix
+
 export networkpeer, wantblocks
 
 logScope:
@@ -81,6 +83,7 @@ type
     inflightSema: AsyncSemaphore
     maxInflight: int = DefaultMaxInflight
     trackedFutures*: TrackedFutures = TrackedFutures()
+    mixTransport*: Option[MixTransport] = none(MixTransport)
 
 proc peerId*(b: BlockExcNetwork): PeerId =
   ## Return peer id
