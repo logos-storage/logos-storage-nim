@@ -39,8 +39,13 @@ proc start*(
   except LPError as exc:
     return Result[void, ref LPError].err(exc)
 
+proc connect*(
+    self: MixTransport, peerId: PeerId, multiaddr: MultiAddress
+): Future[Result[void, ref LPError]] {.async: (raw: true, raises: [CancelledError]).} =
+  self.mixTransportProtocol.connect(peerId, multiaddr)
+
 proc newMixTransport*(switch: Switch, mix: MixProtocol): MixTransport =
-  let transportProtocol = newMixTransportProtocol()
+  let transportProtocol = newMixTransportProtocol(mix)
   let self =
     MixTransport(switch: switch, mix: mix, mixTransportProtocol: transportProtocol)
   return self

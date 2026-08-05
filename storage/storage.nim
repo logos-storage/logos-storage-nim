@@ -123,7 +123,9 @@ proc enableMix(
   switch.peerInfo.addressMappers.add(mixProto.addressMapper())
   (mixProto, relayPool)
 
-proc startMixTransport*(s: StorageServer, mixProto: MixProtocol) {.async: (raises: [CancelledError, StorageError]).} =
+proc startMixTransport*(
+    s: StorageServer, mixProto: MixProtocol
+) {.async: (raises: [CancelledError, StorageError]).} =
   if not s.config.mixEnabled or mixProto.isNil:
     return
 

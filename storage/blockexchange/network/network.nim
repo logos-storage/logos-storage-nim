@@ -22,7 +22,7 @@ import ../../blocktype as bt
 import ../../logutils
 import ../types
 import ../protocol/message
-import ../../utils/trackedfutures
+import ../../utils/[trackedfutures, mixidentity]
 
 import ./networkpeer
 import ../protocol/wantblocks
@@ -250,7 +250,16 @@ proc dialPeer*(self: BlockExcNetwork, peer: PeerRecord) {.async.} =
     trace "Already connected to peer", peer = peer.peerId
     return
 
-  await self.switch.connect(peer.peerId, peer.addresses.mapIt(it.address))
+  if self.mixTransport.isSome:
+    let mixTransport = self.mixTransport.get()
+    trace "Connecting to peer via MixTransport", peer = peer.peerId
+    let mixAddr = pickMixCompatibleMultiAddr(peer.addresses.mapIt(it.address)).valueOr:
+      raise newException(StorageError, "No Mix-compatible address among listen addrs")
+    (await mixTransport.connect(peer.peerId, mixAddr)).isOkOr:
+      raise
+        newException(StorageError, "Failed to connect over Mix transport: " & error.msg)
+  else:
+    await self.switch.connect(peer.peerId, peer.addresses.mapIt(it.address))
 
 proc dropPeer*(
     self: BlockExcNetwork, peer: PeerId
@@ -369,3 +378,6 @@ proc new*(
 
   self.init()
   return self
+
+proc isMixEnabled*(self: BlockExcNetwork): bool =
+  return not self.mixTransport.isNone
