@@ -1,0 +1,17 @@
+[
+  {
+    "sourcePath": "library/libstorage.h",
+    "targetPluginId": "storage_node",
+    "targetPath": "reference/libstorage-api.md",
+    "targetFrontMatter": {
+      "title": "libstorage API Reference",
+      "sidebar_label": "API Reference"
+    },
+    "type": "c"
+  },
+  {
+    "sourcePath": "openapi.yaml",
+    "targetPluginId": "storage_api",
+    "type": "openapi"
+  }
+]

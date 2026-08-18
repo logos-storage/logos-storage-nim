@@ -1,0 +1,97 @@
+name: Generate and version API docs
+# On push to master, the `update-docs` job is run.
+# On tag push (release), the `version-docs` job is run.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    branches:
+      - master
+
+concurrency:
+  # Prenvent concurrent release runs. This happens, eg, in a double-dispatch
+  # (clicking "Run workflow" multiple times in a row) or if multiple commits are
+  # pushed in quick succession to master.
+  group: "api-docs"
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set_env.outputs.version }}
+    steps:
+      - id: set_env
+        run: |
+          # version = "v0.4.3" or "master"
+          echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tagged_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "tagged_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Dispatches an `update-docs` event to `logos-storage/logos-storage-docs` with a
+  # payload specifying header files that should be used to generate API
+  # documentation.
+  update-docs:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    outputs:
+      branch: ${{ steps.set_branch.outputs.branch }}
+    env:
+      REF: ${{ github.ref_name }}
+      VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Create branch for docs update
+        id: set_branch
+        run: |
+          BRANCH=$(printf '%s' "${REPO#*/}-${REF}" \
+            | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9.-' '-') # lowercase and replace blacklisted chars
+          BRANCH="${BRANCH#-}"; BRANCH="${BRANCH%.lock}" # remove '-' prefix and '.lock' suffix
+          git check-ref-format --normalize "refs/heads/$BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+      - name: Generate APIs in docs repo
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.DISPATCH_PAT }}
+          repository: logos-storage/logos-storage-docs
+          event-type: update-docs
+          client-payload: |-
+            {
+              "repo": "$GITHUB_REPOSITORY",
+              "ref": "$REF",
+              "branch", "${{ steps.set_branch.outputs.branch }}",
+              "sources": "docs/sources.json"
+            }
+
+  # 1. First, an `update-docs` event is dispatched (see above).
+  # 2. Then, a `version-docs` event is dispatched to
+  # `logos-storage/logos-storage-docs` with a payload that instructs Docusaurus
+  # to create a new version for the specified instance.
+  # Note: doc generation is skipped if the underlying source files have not changed. This is
+  version-docs:
+    runs-on: ubuntu-latest
+    needs: [setup, genapidocs]
+    if: needs.setup.outputs.tagged_release
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
+      BRANCH: ${{ needs.genapidocs.outputs.branch }}
+    steps:
+      - name: Generate APIs in docs repo
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.DISPATCH_PAT }}
+          repository: logos-storage/logos-storage-docs
+          event-type: version-docs
+          client-payload: |-
+            {
+              "branch": "$BRANCH",
+              "versions": [
+                {
+                  "targetPluginId": "storage_node",
+                  "version", "$VERSION",
+                }
+              ]
+            }
