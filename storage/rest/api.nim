@@ -12,6 +12,8 @@
 import std/sequtils
 import std/mimetypes
 import std/os
+import std/strutils
+import std/uri
 
 import pkg/questionable
 import pkg/questionable/results
@@ -168,17 +170,51 @@ proc setCorsHeaders(resp: HttpResponseRef, httpMethod: string, origin: string) =
   resp.setHeader("Access-Control-Allow-Methods", httpMethod & ", OPTIONS")
   resp.setHeader("Access-Control-Max-Age", "86400")
 
-proc getFilenameFromContentDisposition(contentDisposition: string): ?string =
-  if not ("filename=" in contentDisposition):
+proc getFilenameFromContentDisposition*(contentDisposition: string): ?string =
+  # RFC 6266 / RFC 5987: filename* parameter takes precedence over filename
+  let idxExt = contentDisposition.find("filename*=")
+  if idxExt != -1:
+    var val = contentDisposition[idxExt + "filename*=".len .. ^1].strip()
+    if val.len > 0:
+      let semiIdx = val.find(";")
+      if semiIdx != -1:
+        val = val[0 .. semiIdx - 1].strip()
+      if val.startsWith("\"") and val.endsWith("\"") and val.len >= 2:
+        val = val[1 .. ^2].strip()
+      let quoteIdx = val.rfind("''")
+      if quoteIdx != -1 and quoteIdx + 2 < val.len:
+        val = val[quoteIdx + 2 .. ^1]
+      try:
+        val = decodeUrl(val)
+      except CatchableError:
+        discard
+      val = val.strip(chars = {'"'})
+      if val.len > 0:
+        return val.some
+
+  let idx = contentDisposition.find("filename=")
+  if idx == -1:
     return string.none
 
-  let parts = contentDisposition.split("filename=\"")
-
-  if parts.len < 2:
+  var val = contentDisposition[idx + "filename=".len .. ^1].strip()
+  if val.len == 0:
     return string.none
 
-  let filename = parts[1].strip()
-  return filename[0 ..^ 2].some
+  if val.startsWith("\""):
+    let endQuote = val.find("\"", 1)
+    if endQuote > 1:
+      return val[1 .. endQuote - 1].some
+    else:
+      return string.none
+  else:
+    let semiIdx = val.find(";")
+    if semiIdx != -1:
+      val = val[0 .. semiIdx - 1].strip()
+    val = val.strip(chars = {'"'})
+    if val.len > 0:
+      return val.some
+    else:
+      return string.none
 
 proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRouter) =
   let allowedOrigin = router.allowedOrigin # prevents capture inside of api defintion
