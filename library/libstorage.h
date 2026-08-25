@@ -120,6 +120,13 @@ extern "C"
         StorageCallback callback,
         void *userData);
 
+    // Get the name of the network preset configured.
+    // Example "logos.test".
+    int storage_network(
+        void *ctx,
+        StorageCallback callback,
+        void *userData);
+
     // Returns node metrics in the Logos openmetrics-compatible
     // format (https://github.com/logos-co/openmetrics-module).
     int storage_get_metrics(

@@ -73,6 +73,27 @@ asyncchecksuite "Libstorage - request on a node that is not created":
       await NodeLifecycleRequest.createShared(CLOSE_NODE).process(addr created)
     check closed.isOk
 
+  test "reports the network the node was configured with":
+    let dataDir = getTempDir() / "libstorage-requests" / $getMonoTime()
+
+    defer:
+      removeDir(dataDir)
+
+    var created: StorageServer
+    let config = $ %*{"data-dir": dataDir, "network": "logos.dev"}
+    check (
+      await NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring).process(
+        addr created
+      )
+    ).isOk
+
+    let res =
+      await NodeInfoRequest.createShared(NodeInfoMsgType.NETWORK).process(addr created)
+
+    check res.isOk and res.get == "logos.dev"
+
+    check (await NodeLifecycleRequest.createShared(CLOSE_NODE).process(addr created)).isOk
+
   test "rejects a second close, the node is dropped by the first one":
     let dataDir = getTempDir() / "libstorage-requests" / $getMonoTime()
 

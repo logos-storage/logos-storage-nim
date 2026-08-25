@@ -20,6 +20,7 @@ type NodeInfoMsgType* = enum
   REPO
   SPR
   PEERID
+  NETWORK
   # Not sure this belongs here but for now OK.
   METRICS
 
@@ -48,6 +49,11 @@ proc getPeerId(
     storage: ptr StorageServer
 ): Future[Result[string, string]] {.async: (raises: []).} =
   return ok($storage[].node.switch.peerInfo.peerId)
+
+proc getNetwork(
+    storage: ptr StorageServer
+): Future[Result[string, string]] {.async: (raises: []).} =
+  return ok(storage[].config.network.name)
 
 proc process*(
     self: ptr NodeInfoRequest, storage: ptr StorageServer
@@ -78,6 +84,12 @@ proc process*(
     let res = (await getPeerId(storage))
     if res.isErr:
       error "Failed to get PEERID.", error = res.error
+      return err($res.error)
+    return res
+  of NETWORK:
+    let res = (await getNetwork(storage))
+    if res.isErr:
+      error "Failed to get NETWORK.", error = res.error
       return err($res.error)
     return res
   of METRICS:

@@ -134,7 +134,7 @@ proc storage_version(ctx: ptr StorageContext): ptr cchar {.dynlib, exportc.} =
 proc storage_revision(ctx: ptr StorageContext): ptr cchar {.dynlib, exportc.} =
   initializeLibrary()
 
-  return asNewCString(conf.storageVersion)
+  return asNewCString(conf.storageRevision)
 
 proc storage_repo(
     ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
@@ -182,6 +182,19 @@ proc storage_peer_id(
   checkLibstorageParams(ctx, callback, userData)
 
   let reqContent = NodeInfoRequest.createShared(NodeInfoMsgType.PEERID)
+  let res = storage_context.sendRequestToStorageThread(
+    ctx, RequestType.INFO, reqContent, callback, userData
+  )
+
+  return callback.okOrError(res, userData)
+
+proc storage_network(
+    ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
+): cint {.dynlib, exportc.} =
+  initializeLibrary()
+  checkLibstorageParams(ctx, callback, userData)
+
+  let reqContent = NodeInfoRequest.createShared(NodeInfoMsgType.NETWORK)
   let res = storage_context.sendRequestToStorageThread(
     ctx, RequestType.INFO, reqContent, callback, userData
   )
