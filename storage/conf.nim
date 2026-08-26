@@ -711,7 +711,7 @@ proc updateLogLevel*(logLevel: string) {.raises: [ValueError].} =
   # Updates log levels (without clearing old ones)
   let directives = logLevel.split(";")
   try:
-    setLogLevel(parseEnum[LogLevel](directives[0].toUpperAscii))
+    topics_registry.setLogLevel(parseEnum[LogLevel](directives[0].toUpperAscii))
   except ValueError:
     raise (ref ValueError)(
       msg:

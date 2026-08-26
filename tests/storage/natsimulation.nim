@@ -115,10 +115,11 @@ method dial*(
     hostname: string,
     address: MultiAddress,
     peerId: Opt[PeerId] = Opt.none(PeerId),
-): Future[Connection] {.async: (raises: [transport.TransportError, CancelledError]).} =
+    dir: Direction = Direction.Out,
+): Future[RawConn] {.async: (raises: [transport.TransportError, CancelledError]).} =
   ## establishes an outgoing TCP connection and records the remote address
   ## so it can connect back to us later
-  let conn = await self.tcp.dial(hostname, address)
+  let conn = await self.tcp.dial(hostname, address, peerId, dir)
 
   if conn.observedAddr.isSome:
     let transportAddr = initTAddress(conn.observedAddr.get)
