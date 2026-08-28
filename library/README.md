@@ -2,537 +2,157 @@
 
 Logos Storage exposes a C binding that serves as a stable contract, making it straightforward to integrate Logos Storage into other languages such as Go.
 
-The implementation was inspired by [nim-library-template](https://github.com/logos-co/nim-library-template)  
-and by the [nwaku](https://github.com/waku-org/nwaku/tree/master/library) library.
+[nim-ffi](https://github.com/logos-messaging/nim-ffi) generates the binding and supplies the FFI runtime: a worker thread, a request queue, the CBOR wire and an event thread. [logos-delivery](https://github.com/logos-messaging/logos-delivery) uses the same approach.
 
-The source code contains detailed comments to explain the threading and callback flow.  
-The diagram below summarizes the lifecycle: context creation, request execution, and shutdown.
+## Layout
+
+| File | Holds |
+| --- | --- |
+| `declare_lib.nim` | `declareLibrary("storage", Storage)` and the `Storage` alias the generated C type names follow |
+| `node_factory.nim` | `createStorage`, which turns the configuration JSON into a `StorageServer`. No FFI pragmas, so the unit tests drive it directly |
+| `events.nim` | The `{.ffiEvent.}` declarations |
+| `storage_api/*.nim` | One module per area; every entry point is a `{.ffi.}` proc |
+| `libstorage.nim` | Imports the API modules and calls `genBindings()` last |
+| `libstorage.h` | Includes the generated header and declares the synchronous entry points |
+
+## Build
+
+```bash
+make libstorage           # dynamic (.so/.dylib/.dll)
+make STATIC=1 libstorage  # static (.a)
+```
+
+The build writes `library/generated/storage.h` and its TinyCBOR helpers. Git ignores that directory, so build the library before you compile against `library/libstorage.h`.
+
+## Call model
+
+Every entry point except `storage_version` and `storage_revision` is asynchronous. A call encodes its arguments, hands them to the worker thread and returns at once; the answer arrives on the result callback.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor App as App/User
     participant Go as Go Wrapper
-    participant C as C API (libstorage.h)
-    participant Ctx as StorageContext
-    participant Thr as Worker Thread
+    participant C as C API (generated/storage.h)
+    participant Q as nim-ffi request queue
+    participant Thr as FFI thread
     participant Eng as StorageServer
 
     App->>Go: Start
-    Go->>C: storage_start_node
-    C->>Ctx: enqueue request
-    C->>Ctx: fire signal
-    Ctx->>Thr: wake worker
-    Thr->>Ctx: dequeue request
-    Thr-->>Ctx: ACK
-    Ctx-->>C: forward ACK
-    C-->>Go: RET OK 
+    Go->>C: storage_ctx_start
+    C->>Q: encode + enqueue
+    C-->>Go: 0
     Go->>App: Unblock
+    Q->>Thr: dequeue
     Thr->>Eng: execute (async)
     Eng-->>Thr: result ready
-    Thr-->>Ctx: callback
-    Ctx-->>C: forward callback
-    C-->>Go: forward callback
+    Thr-->>C: reply callback
+    C-->>Go: decoded reply
     Go-->>App: done
 ```
 
-## C API
+The result callback receives one of:
 
-C-exported interface for the Logos Storage shared library.
+- `RET_OK` (0): terminal, `reply` carries the decoded answer
+- `RET_ERR` (1): terminal, `err_msg` carries the reason
+- `RET_MISSING_CALLBACK` (2): no callback was passed
+- `NIMFFI_RET_STALE_WARN` (3): non-terminal ping every 5s while the handler runs. The generated typed wrappers swallow it; only the raw exports see it.
 
-This API provides a C-compatible interface to the internal Nim implementation of Logos Storage.
+The generated header offers two layers. Use the typed `storage_ctx_*` wrappers: they encode the request, decode the reply and hand it to you as a C struct. The raw `storage_*` exports take a CBOR buffer and exist for a host that encodes the wire itself.
 
-Unless explicitly stated otherwise, all functions are asynchronous and execute their work on a separate thread, returning results via the provided callback. The `int` return value is the synchronous status of dispatch:
-- `RET_OK`: job dispatched to the worker thread
-- `RET_ERR`: immediate failure
-- `RET_MISSING_CALLBACK`: callback is missing
+Reply values and error strings belong to the binding and live only for the duration of the callback, so copy what you keep. Request-side strings are borrowed; wrap them with `nimffi_str()`.
 
-Some functions may emit progress updates via the callback using `RET_PROGRESS`, and finally complete with `RET_OK` or `RET_ERR`.  
-
-The `msg` parameter can carry different kinds of data depending on the return code:
-
-- If ret is `RET_ERR`, msg contains an error message.
-- If ret is `RET_OK`, msg contains the response data as a string.
-- If ret is `RET_PROGRESS`, msg contains a chunk of data.
-
-The `len` parameter specifies the length of the data pointed to by msg.
-
----
-
-## Types
-
-### `StorageCallback`
+## Lifecycle
 
 ```c
-typedef void (*StorageCallback)(int callerRet, const char *msg, size_t len, void *userData);
+StorageCtx *ctx = NULL;  // filled by the create callback
+
+storage_ctx_create(nimffi_str(config_json), on_created, user_data);
+storage_ctx_start(ctx, on_reply, user_data);
+storage_ctx_stop(ctx, on_reply, user_data);
+storage_ctx_destroy(ctx);
 ```
 
----
+`storage_ctx_destroy` stops the node, closes it and joins the FFI thread pair. It is synchronous and is the only teardown path: a context lives exactly as long as its node.
 
-## Return codes
+## Entry points
+
+`storage_ctx_<name>(ctx, args..., on_reply, user_data)` for every row below. Each answers `Result[string, string]` unless stated otherwise.
+
+| Wrapper | Arguments | Returns |
+| --- | --- | --- |
+| `storage_ctx_create` | `configJson` | the context handle |
+| `storage_ctx_start` | | empty |
+| `storage_ctx_stop` | | empty |
+| `storage_ctx_destroy` | | synchronous status code |
+| `storage_ctx_repo` | | the data directory |
+| `storage_ctx_spr` | | the Signed Peer Record URI |
+| `storage_ctx_peer_id` | | the libp2p peer identity |
+| `storage_ctx_network` | | the network preset name |
+| `storage_ctx_debug` | | node information as JSON |
+| `storage_ctx_peer_debug` | `peerId` | a peer record as JSON, with `storage_enable_api_debug_peers` |
+| `storage_ctx_get_metrics` | | the metrics registry as JSON |
+| `storage_ctx_log_level` | `logLevel` | empty |
+| `storage_ctx_connect` | `peerId`, `peerAddresses` | empty |
+| `storage_ctx_upload_init` | `filepath`, `chunkSize`, `advertise` | the session id |
+| `storage_ctx_upload_chunk` | `sessionId`, `data` | empty |
+| `storage_ctx_upload_finalize` | `sessionId` | the CID |
+| `storage_ctx_upload_cancel` | `sessionId` | empty |
+| `storage_ctx_upload_file` | `sessionId` | the CID |
+| `storage_ctx_download_init` | `cid`, `chunkSize`, `local`, `advertise` | empty |
+| `storage_ctx_download_chunk` | `cid` | the chunk as `NimFfiBytes`, empty at EOF |
+| `storage_ctx_download_stream` | `cid`, `chunkSize`, `local`, `filepath` | empty |
+| `storage_ctx_download_cancel` | `cid` | empty |
+| `storage_ctx_download_manifest` | `cid`, `advertise` | the manifest as JSON |
+| `storage_ctx_list` | | every stored manifest as JSON |
+| `storage_ctx_space` | | the quota figures as JSON |
+| `storage_ctx_delete` | `cid` | empty |
+| `storage_ctx_fetch` | `cid`, `advertise` | the manifest as JSON |
+| `storage_ctx_exists` | `cid` | `"true"` or `"false"` |
+| `storage_ctx_get_advertise` | `cid` | `"true"` or `"false"` |
+| `storage_ctx_set_advertise` | `cid`, `advertise` | the new setting |
+| `storage_ctx_toggle_private_queries` | `enabled` | the previous setting |
+
+`chunkSize` defaults to the block size (`1024 * 64` bytes) when it is 0. `local` restricts a download to the local store. When `advertise` is `false`, the node does not announce the dataset to the DHT and does not serve it to peers. `download_stream` always advertises.
+
+### Synchronous entry points
+
+Declared in `libstorage.h`, not in the generated header. They need no context and no callback. The returned buffer is thread-local and lives until the next synchronous call on that thread, so copy it.
 
 ```c
-#define RET_OK 0
-#define RET_ERR 1
-#define RET_MISSING_CALLBACK 2
-#define RET_PROGRESS 3
+const char *storage_version(void);
+const char *storage_revision(void);
 ```
 
----
+## Events
 
-## Context lifecycle
-
-### `storage_new`
-
-Create a new instance of a Logos Storage node.
+Progress reaches the host through the nim-ffi event thread rather than the result callback. Register one listener per event on the context; the callback must be fast, non-blocking and thread-safe.
 
 ```c
-void *storage_new(
-    const char *configJson,
-    StorageCallback callback,
-    void *userData
-);
+uint64_t id = storage_ctx_add_on_download_chunk_listener(ctx, on_chunk, user_data);
+storage_ctx_remove_event_listener(ctx, id);
 ```
 
-- `configJson`: JSON string with configuration overwriting defaults
-- Returns an opaque context pointer used for subsequent calls
-
-Typical usage:
-- `storage_new(...)`
-- `storage_start(...)`
-- `storage_stop(...)`
-- `storage_destroy(...)`
-
----
-
-### `storage_start`
-
-Start the Logos Storage node (can be started/stopped multiple times).
-
-```c
-int storage_start(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_stop`
-
-Stop the Logos Storage node (can be started/stopped multiple times).
-
-```c
-int storage_stop(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_close`
-
-Close the node and release resources before destruction.
-
-```c
-int storage_close(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_destroy`
-
-Destroys the node instance and frees associated resources. Node must be stopped and closed.
-The call is synchronous, so it does not require a callback.
-
-```c
-int storage_destroy(void *ctx);
-```
-
----
-
-## Version
-
-### `storage_version`
-
-Get the Logos Storage version as a null-terminated string. The caller is responsible for freeing it.
-Does not require the node to be started. It is also a synchronous call, so it does not require a callback.
-
-```c
-char* storage_version(void *ctx);
-```
-
----
-
-### `storage_revision`
-
-Get the Logos Storage contracts revision as a null-terminated string. The caller is responsible for freeing it.
-Does not require the node to be started. It is also a synchronous call, so it does not require a callback.
-
-```c
-char* storage_revision(void *ctx);
-```
-
----
-
-### `storage_repo`
-
-Get the repo (data-dir) used by the node.
-
-```c
-int storage_repo(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-## Debug
-
-### `storage_debug`
-
-Retrieve debug information (JSON).
-
-```c
-int storage_debug(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_spr`
-
-Get the node's Signed Peer Record (SPR).
-
-```c
-int storage_spr(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_peer_id`
-
-Get the node's peer ID (libp2p Peer Identity).
-
-```c
-int storage_peer_id(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_peer_debug`
-
-Request debug information for a given peer ID.
-Only available if compiled with `storage_enable_api_debug_peers`.
-
-```c
-int storage_peer_debug(void *ctx, const char *peerId, StorageCallback callback, void *userData);
-```
-
----
-
-## Logging
-
-### `storage_log_level`
-
-Set the log level at run time.
-`logLevel` can be: `TRACE`, `DEBUG`, `INFO`, `NOTICE`, `WARN`, `ERROR`, `FATAL`.
-
-```c
-int storage_log_level(
-    void *ctx,
-    const char *logLevel,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-## Networking
-
-### `storage_connect`
-
-Connect to a peer by using `peerAddresses` if provided, otherwise use `peerId`.
-
-Note that the `peerId` has to be advertised in the DHT for this to work.
-
-```c
-int storage_connect(
-    void *ctx,
-    const char *peerId,
-    const char **peerAddresses,
-    size_t peerAddressesSize,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
+| Event | Payload | Fired by |
+| --- | --- | --- |
+| `on_download_chunk` | `cid`, `data` | `storage_download_stream`, once per chunk |
+| `on_upload_progress` | `sessionId`, `storedBytes` | `storage_upload_file`, once per stored block |
 
 ## Upload
 
-### `storage_upload_init`
+Two ways to store a file.
 
-Initialize an upload session for a file.
+Via chunks, where `filepath` is the data file name:
+`upload_init` opens a session, `upload_chunk` feeds it, `upload_finalize` returns the CID, `upload_cancel` drops it.
 
-- `filepath`: absolute path for file upload; for chunk uploads it's the file name. The metadata filename and mime type are derived from this value.
-- `chunkSize`: chunk size for upload (default: `1024 * 64` bytes)
-- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
-- Callback returns the `sessionId`
+Directly from disk, where `filepath` is an absolute path:
+`upload_init` opens a session, `upload_file` streams the file and returns the CID.
 
-```c
-int storage_upload_init(
-    void *ctx,
-    const char *filepath,
-    size_t chunkSize,
-    bool advertise,
-    StorageCallback callback,
-    void *userData
-);
-```
+## Download
 
----
+Via chunks: `download_init` opens the session, `download_chunk` returns the next chunk, and an empty reply means EOF. `download_cancel` drops the session.
 
-### `storage_upload_chunk`
-
-Upload a chunk for the given `sessionId`.
-
-```c
-int storage_upload_chunk(
-    void *ctx,
-    const char *sessionId,
-    const uint8_t *chunk,
-    size_t len,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_upload_finalize`
-
-Finalize an upload session identified by `sessionId`.
-Callback returns the `cid` of the uploaded content.
-
-```c
-int storage_upload_finalize(
-    void *ctx,
-    const char *sessionId,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_upload_cancel`
-
-Cancel an ongoing upload session.
-
-```c
-int storage_upload_cancel(
-    void *ctx,
-    const char *sessionId,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_upload_file`
-
-Upload the file defined as `filepath` in the init method.
-
-- Callback may be called with `RET_PROGRESS` during upload (depending on chunk size constraints)
-- Callback returns the `cid` of the uploaded content
-
-```c
-int storage_upload_file(
-    void *ctx,
-    const char *sessionId,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-## Download API
-
-### `storage_download_init`
-
-Initialize a download for `cid`.
-
-- `chunkSize`: chunk size for download (default: `1024 * 64` bytes)
-- `local`: attempt local store retrieval only
-- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
-
-```c
-int storage_download_init(
-    void *ctx,
-    const char *cid,
-    size_t chunkSize,
-    bool local,
-    bool advertise,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_download_stream`
-
-Perform a streaming download for `cid`. Init must have been called prior.
-
-- If `filepath` is provided, content is written to that file.
-- Callback may be called with `RET_PROGRESS` updates during download.
-- `local` indicates whether to attempt local store retrieval only.
-
-```c
-int storage_download_stream(
-    void *ctx,
-    const char *cid,
-    size_t chunkSize,
-    bool local,
-    const char *filepath,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_download_chunk`
-
-Download a chunk for the given `cid`. Init must have been called prior.
-Chunk returned via callback using `RET_PROGRESS`.
-
-```c
-int storage_download_chunk(
-    void *ctx,
-    const char *cid,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_download_cancel`
-
-Cancel an ongoing download for `cid`.
-
-```c
-int storage_download_cancel(
-    void *ctx,
-    const char *cid,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-### `storage_download_manifest`
-
-Retrieve the manifest for the given `cid` (JSON).
-
-- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
-
-```c
-int storage_download_manifest(
-    void *ctx,
-    const char *cid,
-    bool advertise,
-    StorageCallback callback,
-    void *userData
-);
-```
-
----
-
-## Storage operations
-
-### `storage_list`
-
-Retrieve the list of manifests stored in the node.
-
-```c
-int storage_list(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_space`
-
-Retrieve storage space information (JSON).
-
-```c
-int storage_space(void *ctx, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_delete`
-
-Delete the content identified by `cid`.
-
-```c
-int storage_delete(void *ctx, const char *cid, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_fetch`
-
-Fetch content identified by `cid` from the network into local store
-in background. The callback will not receive progress updates.
-
-- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
-
-```c
-int storage_fetch(void *ctx, const char *cid, bool advertise, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_exists`
-
-Check if content identified by `cid` exists in local store.
-
-```c
-int storage_exists(void *ctx, const char *cid, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_get_advertise`
-
-Check whether the dataset identified by `cid` is announced to the DHT and served
-to peers. The callback returns `"true"` or `"false"`.
-
-```c
-int storage_get_advertise(void *ctx, const char *cid, StorageCallback callback, void *userData);
-```
-
----
-
-### `storage_set_advertise`
-
-Announce the dataset identified by `cid` to the DHT and serve it to peers, or stop
-doing both. Records already published in the DHT are not withdrawn, they stop being
-republished and expire.
-
-```c
-int storage_set_advertise(void *ctx, const char *cid, bool advertise, StorageCallback callback, void *userData);
-```
-
-
-### `storage_set_event_callback`
-
-Not used currently. Reserved for future use to set an event callback.
-
-```c
-void storage_set_event_callback(void *ctx, StorageCallback callback, void *userData);
-```
-
----
+Via stream: `download_stream` opens the session when none exists and reads to the end. It fires `on_download_chunk` for every chunk and writes to `filepath` when it is set. It keeps the worker busy, so you cannot cancel it.
 
 ## Go wrapper
 

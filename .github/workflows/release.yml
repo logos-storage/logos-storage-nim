@@ -181,25 +181,33 @@ jobs:
           make -j${ncpu} update
           make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
+      # libstorage.h includes generated/storage.h, so the headers keep that layout.
+      - name: Stage ${{ env.c_bindings_lib_base }} headers
+        shell: bash
+        run: |
+          mkdir -p "${{ env.build_dir }}/include/generated"
+          cp library/${{ env.c_bindings_lib_base }}.h "${{ env.build_dir }}/include/"
+          cp library/generated/*.h "${{ env.build_dir }}/include/generated/"
+
       - name: Package ${{ env.c_bindings_lib_base }} Linux
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update && sudo apt-get install -y zip
           zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" ${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.so
-          zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" library/${{ env.c_bindings_lib_base }}.h
+          cd "${{ env.build_dir }}/include" && zip -r "../${{ env.c_bindings_lib }}.zip" .
 
       - name: Package ${{ env.c_bindings_lib_base }} MacOS
         if: matrix.os == 'macos'
         run: |
           zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" ${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.dylib
-          zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" library/${{ env.c_bindings_lib_base }}.h
+          cd "${{ env.build_dir }}/include" && zip -r "../${{ env.c_bindings_lib }}.zip" .
 
       - name: Package ${{ env.c_bindings_lib_base }} (Windows)
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
           7z a -tzip "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" ./${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.dll
-          7z a -tzip "${{ env.build_dir }}/${{ env.c_bindings_lib }}.zip" ./library/${{ env.c_bindings_lib_base }}.h
+          cd "${{ env.build_dir }}/include" && 7z a -tzip "../${{ env.c_bindings_lib }}.zip" .
 
       - name: Upload ${{ env.c_bindings_lib_base }} to workflow artifacts
         uses: actions/upload-artifact@v7
@@ -224,8 +232,8 @@ jobs:
             "vendor/nim-nat-traversal/vendor/libnatpmp-upstream/libnatpmp.a" \
             "vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc/build/libminiupnpc.a" \
             "vendor/nim-libbacktrace/install/usr/lib/libbacktrace.a" \
-            "vendor/nim-libplum/vendor/libplum/libplum.a" \
-            "library/${{ env.c_bindings_lib_base }}.h"
+            "vendor/nim-libplum/vendor/libplum/libplum.a"
+          cd "${{ env.build_dir }}/include" && zip -r "../${{ env.c_bindings_lib }}-static.zip" .
 
       - name: Upload ${{ env.c_bindings_lib_base }} static to workflow artifacts
         if: matrix.os == 'linux' || matrix.os == 'macos'

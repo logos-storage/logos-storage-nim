@@ -35,9 +35,23 @@ proc buildBinary(
 
   exec(cmd)
 
+const cBindingsDir = "library/generated"
+
+## `-d:ffiSrcPath` is required: the derived path needs `getcwd` at compile time.
+const cBindingsFlags =
+  " -d:ffiGenBindings -d:targetLang=c -d:ffiOutputDir=" & cBindingsDir &
+  " -d:ffiSrcPath=../libstorage.nim "
+
 proc buildLibrary(name: string, srcDir = "./", params = "", `type` = "dynamic") =
   if not dirExists "build":
     mkDir "build"
+  mkDir cBindingsDir
+
+  let common =
+    " --threads:on --opt:size --noMain --mm:refc --header --d:metrics " &
+    "--nimMainPrefix:libstorage -d:noSignalHandler " &
+    "-d:chronicles_runtime_filtering -d:chronicles_log_level=TRACE " & cBindingsFlags &
+    params & " " & srcDir & name & ".nim"
 
   if `type` == "dynamic":
     let lib_name = (
@@ -45,17 +59,9 @@ proc buildLibrary(name: string, srcDir = "./", params = "", `type` = "dynamic") 
       elif defined(macosx): name & ".dylib"
       else: name & ".so"
     )
-    exec "nim c" & " --out:build/" & lib_name &
-      " --threads:on --app:lib --opt:size --noMain --mm:refc --header --d:metrics " &
-      "--nimMainPrefix:libstorage -d:noSignalHandler " &
-      "-d:chronicles_runtime_filtering " & "-d:chronicles_log_level=TRACE " & params &
-      " " & srcDir & name & ".nim"
+    exec "nim c --out:build/" & lib_name & " --app:lib" & common
   else:
-    exec "nim c" & " --out:build/" & name &
-      ".a --threads:on --app:staticlib --opt:size --noMain --mm:refc --header --d:metrics " &
-      "--nimMainPrefix:libstorage -d:noSignalHandler " &
-      "-d:chronicles_runtime_filtering " & "-d:chronicles_log_level=TRACE " & params &
-      " " & srcDir & name & ".nim"
+    exec "nim c --out:build/" & name & ".a --app:staticlib" & common
 
 proc test(name: string, outName = name, srcDir = "tests/", params = "", lang = "c") =
   buildBinary name, outName, srcDir, params

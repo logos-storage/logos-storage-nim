@@ -203,3 +203,9 @@
 [submodule "vendor/libp2p-mix-transport"]
 	path = vendor/libp2p-mix-transport
 	url = https://github.com/logos-storage/libp2p-mix-transport
+[submodule "vendor/nim-ffi"]
+	path = vendor/nim-ffi
+	url = https://github.com/logos-messaging/nim-ffi.git
+[submodule "vendor/nim-cbor-serialization"]
+	path = vendor/nim-cbor-serialization
+	url = https://github.com/vacp2p/nim-cbor-serialization.git
