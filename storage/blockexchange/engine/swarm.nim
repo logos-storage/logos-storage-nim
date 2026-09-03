@@ -18,7 +18,7 @@ import ../types
 import ../../logutils
 import ./peertracker
 
-export peerctxstore, types
+export peerctxstore, types, options
 
 randomize()
 

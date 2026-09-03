@@ -33,7 +33,6 @@ type
   SuiteTimeoutError = object of MultiNodeSuiteError
 
 const StorageApiPort {.intdefine.}: int = 8080
-const StorageDiscPort {.intdefine.}: int = 8090
 const TestId {.strdefine.}: string = "TestId"
 const StorageLogToFile {.booldefine.}: bool = false
 const StorageLogLevel {.strdefine.}: string = ""
@@ -75,7 +74,6 @@ template multinodesuite*(suiteName: string, body: untyped) =
     var nodeConfigs: NodeConfigs
     var snapshot: JsonNode
     var lastUsedStorageApiPort = StorageApiPort
-    var lastUsedStorageDiscPort = StorageDiscPort
     var storagePortLock: AsyncLock
 
     template test(tname, startNodeConfigs, tbody) =
@@ -118,15 +116,12 @@ template multinodesuite*(suiteName: string, body: untyped) =
         when StorageLogLevel != "":
           config.addCliOption("--log-level", StorageLogLevel)
 
-        var apiPort, discPort: int
+        var apiPort: int
         withLock(storagePortLock):
           apiPort = await nextFreePort(lastUsedStorageApiPort + nodeIdx)
-          discPort = await nextFreePort(lastUsedStorageDiscPort + nodeIdx)
           config.addCliOption("--api-bindaddr", DefaultApiBindAddress)
           config.addCliOption("--api-port", $apiPort)
-          config.addCliOption("--disc-port", $discPort)
           lastUsedStorageApiPort = apiPort
-          lastUsedStorageDiscPort = discPort
 
         if bootstrapNodes.len == 0:
           # Without this flag the node would bootstrap on the default
@@ -172,6 +167,7 @@ template multinodesuite*(suiteName: string, body: untyped) =
             error "Failed to remove data dir during teardown", error = e.msg
 
       running = @[]
+      bootstrapNodes = @[]
 
     template failAndTeardownOnError(message: string, tryBody: untyped) =
       try:

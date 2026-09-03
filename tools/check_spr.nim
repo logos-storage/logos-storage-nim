@@ -1,10 +1,8 @@
 ## check_spr - bootstrap-node liveness checker.
 ##
 ## Reads the bootstrap SPRs from the shared config file (network_presets.json by
-## default) and probes each one. The probe depends on the transport advertised in
-## the record:
-##   * TCP addresses -> a libp2p connection is attempted.
-##   * UDP addresses -> a discovery v5 (DHT) ping is sent.
+## default) and probes each one: a libp2p connection, then a Kad DHT ping, so a
+## node that is reachable but not serving the DHT is reported dead.
 ## It prints a per-node report — a human-readable table (alive rows green, dead
 ## red on a terminal) by default, or JSON with `--format json` — and exits
 ## non-zero if any node is unreachable. The `--network` filter may be repeated to
@@ -23,17 +21,18 @@
 ##
 ## Run `check_spr --help` for a full description of every option.
 
-import std/[json, net, options, os, sequtils, strutils, typetraits, strformat, terminal]
+import std/[json, os, sequtils, strutils, typetraits, strformat, terminal]
 
 import pkg/chronicles
 import pkg/chronos
 import pkg/libp2p
 import pkg/libp2p/crypto/rng
-import pkg/codexdht/discv5/spr
-import pkg/codexdht/discv5/node
-import pkg/codexdht/discv5/protocol as discv5
+import pkg/libp2p/protocols/kademlia
+
+import pkg/results
 
 import ../storage/presets
+import ../storage/utils/spr
 
 const
   DefaultTimeoutSecs = 10
@@ -55,9 +54,6 @@ type Row = object
   address: string
   alive: bool
   reason: string
-
-proc hasCodec(addrs: seq[MultiAddress], codec: MultiCodec): bool =
-  addrs.anyIt(it.contains(codec).get(false))
 
 proc setupLogging() =
   ## The project's `config.nims` forces `dynamic` chronicles sinks, whose output
@@ -92,9 +88,9 @@ proc buildSwitch(): Switch =
     .withMplex()
     .build()
 
-proc checkLibp2p(
-    peerId: PeerId, addresses: seq[MultiAddress], timeout: Duration
-): Future[Verdict] {.async.} =
+proc probe(record: SignedPeerRecord, timeout: Duration): Future[Verdict] {.async.} =
+  let (peerId, addresses) = record.toPeerIdAndAddrs()
+
   let switch = buildSwitch()
   await switch.start()
   defer:
@@ -102,58 +98,21 @@ proc checkLibp2p(
 
   try:
     await switch.connect(peerId, addresses).wait(timeout)
-    return Verdict(alive: true, reason: "libp2p connection established")
   except AsyncTimeoutError:
     return Verdict(alive: false, reason: "libp2p connection timed out")
   except CatchableError as exc:
     return Verdict(alive: false, reason: "libp2p connection failed: " & exc.msg)
 
-proc checkDiscv5(
-    record: SignedPeerRecord, timeout: Duration
-): Future[Verdict] {.async.} =
-  let nodeRes = newNode(record)
-  if nodeRes.isErr:
-    return Verdict(alive: false, reason: "cannot build discv5 node: " & $nodeRes.error)
-  let targetNode = nodeRes.get()
-
-  let rng = newRng()
-  let privKey = PrivateKey.random(rng).tryGet()
-  let proto = discv5.newProtocol(
-    privKey, IPv4_any().some, none(Port), none(Port), bindPort = Port(0), rng = rng
-  )
-  # Use IPv4_any address as the enrIp param in newProtocol to avoid the
-  # warnings. It changes the SPR of the discv5 protocol ping tool (this), but
-  # does not affect the SPRs of the target.
-
+  let kad = KadDHT.new(switch, rng = newRng())
   try:
-    proto.open()
-  except CatchableError as exc:
-    return Verdict(alive: false, reason: "failed to open discv5: " & exc.msg)
-  defer:
-    await proto.closeWait()
-
-  try:
-    let pong = await discv5.ping(proto, targetNode).wait(timeout)
-    if pong.isOk:
-      return Verdict(alive: true, reason: "discv5 pong received")
-    else:
-      return Verdict(alive: false, reason: "discv5 ping failed: " & $pong.error)
+    if await kad.ping(peerId, addresses).wait(timeout):
+      return Verdict(alive: true, reason: "kad dht ping answered")
+    return Verdict(alive: false, reason: "connected, but kad dht ping was rejected")
   except AsyncTimeoutError:
-    return Verdict(alive: false, reason: "discv5 ping timed out")
+    return Verdict(alive: false, reason: "connected, but kad dht ping timed out")
   except CatchableError as exc:
-    return Verdict(alive: false, reason: "discv5 ping failed: " & exc.msg)
-
-proc probe(record: SignedPeerRecord, timeout: Duration): Future[Verdict] {.async.} =
-  let addresses = record.data.addresses.mapIt(it.address)
-  if addresses.len == 0:
-    return Verdict(alive: false, reason: "SPR contains no addresses")
-
-  if hasCodec(addresses, multiCodec("tcp")):
-    return await checkLibp2p(record.data.peerId, addresses, timeout)
-  elif hasCodec(addresses, multiCodec("udp")):
-    return await checkDiscv5(record, timeout)
-  else:
-    return Verdict(alive: false, reason: "no tcp or udp addresses to probe")
+    return
+      Verdict(alive: false, reason: "connected, but kad dht ping failed: " & exc.msg)
 
 proc probeRecords(
     source: string, networkFilters: seq[string], timeout: Duration
@@ -170,15 +129,18 @@ proc probeRecords(
         result.add Row(
           network: preset.name,
           alive: false,
-          reason: "SPR parse failed: " & parsed.error,
+          reason: "signed peer record parse failed: " & parsed.error.msg,
         )
         continue
-      let record = parsed.get
-      let v = await probe(record, timeout)
+
+      let
+        record = parsed.get()
+        (peerId, addresses) = record.toPeerIdAndAddrs()
+        v = await probe(record, timeout)
       result.add Row(
         network: preset.name,
-        peerId: $record.data.peerId,
-        address: record.data.addresses.mapIt($it.address).deduplicate.join(", "),
+        peerId: $peerId,
+        address: addresses.mapIt($it).deduplicate.join(", "),
         alive: v.alive,
         reason: v.reason,
       )
@@ -260,10 +222,10 @@ proc parseFormat(s: string): OutputFormat =
 proc printHelp() =
   echo """check_spr - bootstrap-node liveness checker.
 
-Reads bootstrap SPRs from a config file and probes each one (libp2p connect for
-TCP addresses, discv5 ping for UDP). Prints a per-node report (a table by
-default, JSON with --format json) and exits non-zero if any node is unreachable.
-A single spr: URI can be passed for an ad-hoc check.
+Reads bootstrap SPRs from a config file and probes each one with a libp2p
+connection attempt. Prints a per-node report (a table by default, JSON with
+--format json) and exits non-zero if any node is unreachable. A single spr: URI
+can be passed for an ad-hoc check.
 
 IMPORTANT: run from a host OUTSIDE the fleet VPCs (e.g. a GitHub-hosted runner),
 otherwise nodes advertising private/cloud-internal IPs appear reachable and
@@ -327,7 +289,7 @@ when isMainModule:
     of "--decode-only":
       decodeOnly = true
     else:
-      if params[i].startsWith("spr:"):
+      if params[i].startsWith(SprPrefix):
         # We could ping multiple but currently not doing it, so guard against it.
         if singleSpr.len > 0:
           quit("Error: multiple SPRs provided", QuitFailure)
@@ -341,7 +303,7 @@ when isMainModule:
   if singleSpr.len > 0:
     let parsed = SignedPeerRecord.parse(singleSpr)
     if parsed.isErr:
-      quit("Error: " & parsed.error, QuitFailure)
+      quit("Error: " & parsed.error.msg, QuitFailure)
 
     if decodeOnly:
       printRecord(parsed.get)

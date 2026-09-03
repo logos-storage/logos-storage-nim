@@ -249,7 +249,7 @@ formatIt(UInt256):
 formatIt(MultiAddress):
   $it
 formatIt(SignedPeerRecord):
-  $it
+  $it.data
 formatIt(LogFormat.textLines, array[32, byte]):
   it.short0xHexLog
 formatIt(LogFormat.json, array[32, byte]):

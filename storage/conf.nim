@@ -26,6 +26,7 @@ import pkg/chronicles/helpers
 import pkg/chronicles/topics_registry
 import pkg/confutils/defs
 import pkg/confutils/std/net
+import pkg/json_serialization
 import pkg/toml_serialization
 import pkg/toml_serialization/lexer
 import pkg/metrics
@@ -36,6 +37,7 @@ import pkg/questionable
 import pkg/questionable/results
 
 import ./storagetypes
+import ./utils/spr
 import ./discovery
 import ./logutils
 import ./stores
@@ -167,14 +169,6 @@ type
       defaultValueDesc: "auto",
       name: "nat"
     .}: NatConfig
-
-    discoveryPort* {.
-      desc: "Discovery (UDP) port",
-      defaultValue: 8090.Port,
-      defaultValueDesc: "8090",
-      abbr: "u",
-      name: "disc-port"
-    .}: Port
 
     netPrivKeyFile* {.
       desc: "Source of network (secp256k1) private key file path or name",
@@ -540,7 +534,7 @@ proc parseCmdArg*(
   let res = SignedPeerRecord.parse(uri)
   if res.isErr:
     raise newException(
-      ConfigurationError, "Cannot parse the signed peer " & uri & ": " & res.error()
+      ConfigurationError, "Cannot parse the signed peer " & uri & ": " & res.error.msg
     )
   return res.get()
 
@@ -604,6 +598,18 @@ proc readValue*(
     val = SignedPeerRecord.parseCmdArg(uri)
   except CatchableError as err:
     r.lex.raiseTomlErr(err.msg)
+
+proc readValue*(
+    r: var JsonReader, val: var SignedPeerRecord
+) {.raises: [SerializationError, IOError].} =
+  let
+    input = r.readValue(string)
+    res = SignedPeerRecord.parse(input)
+
+  if res.isErr:
+    r.raiseUnexpectedValue("Invalid SignedPeerRecord: " & res.error.msg)
+
+  val = res.get()
 
 proc readValue*(
     r: var TomlReader, val: var MultiAddress
@@ -716,7 +722,7 @@ proc updateLogLevel*(logLevel: string) {.raises: [ValueError].} =
   # Updates log levels (without clearing old ones)
   let directives = logLevel.split(";")
   try:
-    setLogLevel(parseEnum[LogLevel](directives[0].toUpperAscii))
+    topics_registry.setLogLevel(parseEnum[LogLevel](directives[0].toUpperAscii))
   except ValueError:
     raise (ref ValueError)(
       msg:

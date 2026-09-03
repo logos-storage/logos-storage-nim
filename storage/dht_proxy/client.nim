@@ -30,7 +30,7 @@ logScope:
 
 type LookupResult = object
   code: LookupCode
-  providers: seq[SignedPeerRecord]
+  providers: seq[PeerRecord]
 
 proc requestLookup(
     conn: Connection, request: LookupRequest
@@ -49,13 +49,13 @@ proc requestLookup(
         return
           failure("Failed to decode response (bytes=" & $respBytes.len & "): " & $error)
 
-    var providers = newSeqOfCap[SignedPeerRecord](resp.providers.len)
-    for sprBytes in resp.providers:
-      let res = SignedPeerRecord.decode(sprBytes)
-      if res.isOk:
-        providers.add(res.get)
+    var providers = newSeqOfCap[PeerRecord](resp.providers.len)
+    for recordBytes in resp.providers:
+      let record = PeerRecord.decode(recordBytes)
+      if record.isOk:
+        providers.add(record.get)
       else:
-        warn "Failed to decode SignedPeerRecord from response", err = $res.error
+        warn "Failed to decode PeerRecord from response", err = $record.error
     return success LookupResult(code: resp.code, providers: providers)
   except LPStreamError as exc:
     return failure("Stream error: " & exc.msg)
@@ -72,7 +72,7 @@ proc isReady(mixProto: MixProtocol): bool =
 
 proc lookupProviders*(
     mixProto: MixProtocol, proxy: PeerRecord, cid: Cid
-): Future[?!seq[SignedPeerRecord]] {.async: (raises: [CancelledError]).} =
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
   if proxy.addresses.len == 0:
     return failure("Proxy has no addresses")
 
@@ -116,7 +116,7 @@ proc lookupProviders*(
     of LookupCode.Ok:
       return success lookup.providers
     of LookupCode.NotFound:
-      return success newSeq[SignedPeerRecord]()
+      return success newSeq[PeerRecord]()
     of LookupCode.ErrDecodeFailed, LookupCode.ErrInvalidCid, LookupCode.ErrInternal,
         LookupCode.ErrResponseTooLarge, LookupCode.ErrTooBusy:
       return failure("Remote returned error: " & $lookup.code)

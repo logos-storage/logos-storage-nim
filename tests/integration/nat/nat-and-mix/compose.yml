@@ -7,9 +7,9 @@ x-addresses:
   # to make sure it plays nice with NAT traversal invariants.
   wan_subnet: &wan_subnet 7.7.7.0/24
   # Private network for leecher
-  leecher_lan_subnet: &leecher_lan_subnet 192.168.0.0/24
+  leecher_lan_subnet: &leecher_lan_subnet 10.99.3.0/24
   # Private network for seeder
-  seeder_lan_subnet: &seeder_lan_subnet 192.168.1.0/24
+  seeder_lan_subnet: &seeder_lan_subnet 10.99.4.0/24
 
   # Mix-Proxy nodes are public.
   mix_proxy_1_ip: &mix_proxy_1_ip 7.7.7.11
@@ -19,12 +19,12 @@ x-addresses:
 
   # Both leecher and seeder are behind NATs.
   leecher_router_wan_ip: &leecher_router_wan_ip 7.7.7.20
-  leecher_router_lan_ip: &leecher_router_lan_ip 192.168.0.20
-  leecher_lan_ip: &leecher_lan_ip 192.168.0.21
+  leecher_router_lan_ip: &leecher_router_lan_ip 10.99.3.20
+  leecher_lan_ip: &leecher_lan_ip 10.99.3.21
 
   seeder_router_wan_ip: &seeder_router_wan_ip 7.7.7.30
-  seeder_router_lan_ip: &seeder_router_lan_ip 192.168.1.30
-  seeder_lan_ip: &seeder_lan_ip 192.168.1.31
+  seeder_router_lan_ip: &seeder_router_lan_ip 10.99.4.30
+  seeder_lan_ip: &seeder_lan_ip 10.99.4.31
 
 networks:
   wan:

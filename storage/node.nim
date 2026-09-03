@@ -19,7 +19,7 @@ import pkg/questionable
 import pkg/questionable/results
 import pkg/chronos
 
-import pkg/libp2p/[switch, multicodec, multihash]
+import pkg/libp2p/[switch, multicodec, multihash, peerinfo]
 import pkg/libp2p/stream/bufferstream
 
 # TODO: remove once exported by libp2p
@@ -57,6 +57,7 @@ type
     clock*: Clock
     taskPool: Taskpool
     trackedFutures: TrackedFutures
+    addrObserver: PeerInfoObserver
 
   StorageNodeRef* = ref StorageNode
 
@@ -459,11 +460,24 @@ proc onExpiryUpdate(
   return await self.updateExpiry(rootCid, expiry)
 
 proc start*(self: StorageNodeRef) {.async.} =
+  self.addrObserver = proc(p: PeerInfo) {.gcsafe, raises: [].} =
+    self.discovery.updateLocalMultiAddr()
+    self.engine.advertiser.onAddrChange()
+
+    let spr = self.discovery.getSpr()
+    if spr.isErr:
+      warn "Unable to build the signed peer record", err = spr.error.msg
+      return
+
+    info "Signed peer record updated", addrs = p.addrs, spr = spr.get()
+
+  self.switch.peerInfo.addObserver(self.addrObserver)
+
   if not self.engine.isNil:
     await self.engine.start()
 
   if not self.discovery.isNil:
-    await self.discovery.start()
+    self.discovery.updateLocalMultiAddr()
 
   if not self.clock.isNil:
     await self.clock.start()
@@ -474,13 +488,13 @@ proc start*(self: StorageNodeRef) {.async.} =
 proc stop*(self: StorageNodeRef) {.async.} =
   trace "Stopping node"
 
+  self.switch.peerInfo.removeObserver(self.addrObserver)
+  self.addrObserver = nil
+
   await self.trackedFutures.cancelTracked()
 
   if not self.engine.isNil:
     await self.engine.stop()
-
-  if not self.discovery.isNil:
-    await self.discovery.stop()
 
   if not self.clock.isNil:
     await self.clock.stop()

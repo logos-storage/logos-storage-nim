@@ -23,7 +23,6 @@ import pkg/libp2p/wire
 
 import ./utils
 import ./utils/natutils
-import ./utils/addrutils
 import ./discovery
 
 logScope:
@@ -36,15 +35,12 @@ type NatConfig* = object
 
 type PortMapping* = object
   tcpMappingId: cint
-  udpMappingId: cint
   activeMappingProtocol*: MappingProtocol
   activeTcpPort*: Port
-  activeUdpPort*: Port
 
 type NatPortMapper* = ref object of RootObj
   natConfig*: NatConfig
   tcpPort*: Port
-  discoveryPort*: Port
   discoverTimeout*: int
   mappingTimeout*: int
   recheckPeriod*: int
@@ -75,39 +71,38 @@ method destroyMappingFor*(m: NatPortMapper, id: cint) {.base, gcsafe.} =
   destroyMapping(id)
 
 method hasLivePortMapping*(m: NatPortMapper): bool {.base, gcsafe.} =
-  ## True only when a mapping was created AND both the TCP and UDP mappings are
-  ## still live in the router.
+  ## True only when a mapping was created AND the TCP mapping is still live in
+  ## the router.
   if m.portMapping.isNone:
     return false
 
   let pm = m.portMapping.get
-  hasMapping(pm.tcpMappingId) and hasMapping(pm.udpMappingId)
+  hasMapping(pm.tcpMappingId)
 
 proc resetMappings(m: NatPortMapper) =
   if m.portMapping.isSome:
     let pm = m.portMapping.get
     m.destroyMappingFor(pm.tcpMappingId)
-    m.destroyMappingFor(pm.udpMappingId)
     m.portMapping = none(PortMapping)
 
 method mapNatPorts*(
     m: NatPortMapper
-): Future[Option[(Port, Port, MappingProtocol)]] {.
+): Future[Option[(Port, MappingProtocol)]] {.
     async: (raises: [CancelledError]), base, gcsafe
 .} =
   if m.stopped or m.natConfig.hasExtIp:
-    return none((Port, Port, MappingProtocol))
+    return none((Port, MappingProtocol))
 
-  # If both mappings are still live, return the stored ports without recreating.
+  # If the mapping is still live, return the stored port without recreating.
   if m.hasLivePortMapping():
     let pm = m.portMapping.get
-    return some((pm.activeTcpPort, pm.activeUdpPort, pm.activeMappingProtocol))
+    return some((pm.activeTcpPort, pm.activeMappingProtocol))
 
   if not m.plumInitialized:
     let res = m.initPlum()
     if res.isErr:
       warn "Failed to initialize plum", msg = res.error
-      return none((Port, Port, MappingProtocol))
+      return none((Port, MappingProtocol))
     m.plumInitialized = true
 
   # If there is only one mapping, something went wrong somewhere
@@ -118,35 +113,22 @@ method mapNatPorts*(
 
   if m.stopped:
     # Double check in case the node is stopping
-    return none((Port, Port, MappingProtocol))
+    return none((Port, MappingProtocol))
 
   if tcpRes.isErr:
     warn "TCP port mapping failed", msg = tcpRes.error
-    return none((Port, Port, MappingProtocol))
-
-  let udpRes = await m.createMappingFor(UDP, m.discoveryPort.uint16)
-
-  if m.stopped:
-    # Double check in case the node is stopping
-    return none((Port, Port, MappingProtocol))
-
-  if udpRes.isErr:
-    warn "UDP port mapping failed", msg = udpRes.error
-    m.destroyMappingFor(tcpRes.value.id)
-    return none((Port, Port, MappingProtocol))
+    return none((Port, MappingProtocol))
 
   m.portMapping = some(
     PortMapping(
       tcpMappingId: tcpRes.value.id,
-      udpMappingId: udpRes.value.id,
       activeMappingProtocol: tcpRes.value.mapping.mappingProtocol,
       activeTcpPort: Port(tcpRes.value.mapping.externalPort),
-      activeUdpPort: Port(udpRes.value.mapping.externalPort),
     )
   )
 
   let pm = m.portMapping.get
-  some((pm.activeTcpPort, pm.activeUdpPort, pm.activeMappingProtocol))
+  some((pm.activeTcpPort, pm.activeMappingProtocol))
 
 proc close*(m: NatPortMapper) =
   m.resetMappings()
@@ -167,7 +149,6 @@ method handleNatStatus*(
     m: NatPortMapper,
     networkReachability: NetworkReachability,
     dialBackAddr: Opt[MultiAddress],
-    discoveryPort: Port,
     discovery: Discovery,
     switch: Switch,
     autoRelayService: AutoRelayService,
@@ -184,21 +165,11 @@ method handleNatStatus*(
         await autoRelayService.stop(switch)
         debug "AutoRelayService stopped"
 
-      discovery.protocol.clientMode = false
-
-      # Here we don't rely on the port mapping because we consider
-      # that port mapped is the same as the discovery port.
-      # This can be wrong for PCP but it is an accepted limitation
-      discovery.announceDirectAddrs(@[dialBackAddr.get], udpPort = discoveryPort)
+      await discovery.setServerMode(isServer = true)
     else:
       warn "Empty dialback address in AutoNat when node is Reachable"
   of NotReachable:
-    discovery.protocol.clientMode = true
-
-    if not autoRelayService.isRunning and discovery.providerAddrs.len > 0:
-      # Remove any announced addresses, they will be replaced.
-      # If the relay is running, the addresses will be updated on reservation.
-      discovery.announceDirectAddrs(@[], udpPort = discoveryPort)
+    await discovery.setServerMode(isServer = false)
 
     if m.hasLivePortMapping():
       # The mapping is still live but the node is not reachable: keep it and let
@@ -214,9 +185,9 @@ method handleNatStatus*(
         return
 
       if maybePorts.isSome:
-        let (tcpPort, udpPort, protocol) = maybePorts.get()
+        let (tcpPort, protocol) = maybePorts.get()
 
-        info "Port mapping created successfully", tcpPort, udpPort, protocol
+        info "Port mapping created successfully", tcpPort, protocol
 
         # The announce happens once AutoNAT confirms Reachable.
 
@@ -262,22 +233,6 @@ proc findAutonatServers*(bootstrapNodes: seq[SignedPeerRecord]): seq[SignedPeerR
   ## Currently returns bootstrap nodes. In the future, any network participant
   ## confirmed reachable by AutoNAT and running as AutonatServer could be included.
   bootstrapNodes
-
-proc announceRelayReservation*(
-    discovery: Discovery, addresses: seq[MultiAddress]
-) {.gcsafe.} =
-  ## Announce the publicly dialable circuit addresses from a relay reservation.
-  ## A reservation response can also carry loopback/private addresses, which a
-  ## remote peer can never dial, so they are dropped. If none are public, the
-  ## previous announce is kept untouched.
-  let publicAddrs = addresses.filterIt(it.hasPublicRelayTransport())
-  if publicAddrs.len == 0:
-    warn "Relay reservation has no publicly dialable address, keeping previous announce",
-      addresses
-    return
-  info "Relay reservation updated", addresses = publicAddrs
-  # relay addresses are for download traffic only, not DHT routing
-  discovery.announceRelayAddrs(publicAddrs)
 
 # Hole punching logic below is adapted from libp2p's HPService
 # (libp2p/services/hpservice.nim). HPService cannot be used directly because it

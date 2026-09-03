@@ -43,8 +43,8 @@ proc handleFindProviders(
     return LookupResponse(code: LookupCode.NotFound)
 
   var encoded = newSeqOfCap[seq[byte]](providers.len)
-  for spr in providers:
-    encoded.add(spr.encode())
+  for record in providers:
+    encoded.add(record.encode())
 
   let packed = packProviders(encoded, MaxLookupResponseBytes).valueOr:
     return LookupResponse(code: error)

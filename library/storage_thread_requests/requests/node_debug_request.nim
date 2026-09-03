@@ -7,7 +7,6 @@
 
 import chronos
 import chronicles
-import codexdht/discv5/spr
 import ../../alloc
 import ../../../storage/conf
 import ../../../storage/rest/json

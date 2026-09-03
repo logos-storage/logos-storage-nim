@@ -58,22 +58,20 @@ components:
     Node:
       type: object
       required:
-       - nodeId
        - peerId
-       - record
-       - address
-       - seen
+       - addresses
       properties:
-        nodeId:
-          type: string
         peerId:
           type: string
-        record:
-          type: string
-        address:
-          type: string
-        seen:
-          type: boolean
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/MultiAddress"
+        lastSeen:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix timestamp of the last contact with this peer; absent for the local node
 
     StorageVersion:
       type: object
@@ -104,8 +102,6 @@ components:
         - id
         - addrs
         - spr
-        - providerAddresses
-        - discoveryAddresses
         - libp2pPubKey
         - table
         - storage
@@ -118,16 +114,6 @@ components:
             $ref: "#/components/schemas/MultiAddress"
         spr:
           $ref: "#/components/schemas/SPR"
-        providerRecord:
-          $ref: "#/components/schemas/SPR"
-        providerAddresses:
-          type: array
-          items:
-            $ref: "#/components/schemas/MultiAddress"
-        discoveryAddresses:
-          type: array
-          items:
-            $ref: "#/components/schemas/MultiAddress"
         libp2pPubKey:
           type: string
           description: Hex-encoded libp2p public key of the node
@@ -546,7 +532,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SPRRead"
-        "503":
+        "500":
           description: Node SPR not ready, try again later
 
   "/peerid":

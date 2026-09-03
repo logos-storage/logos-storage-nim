@@ -11,7 +11,7 @@ import ../composehelper
 
 proc announcesNothing(info: JsonNode): bool =
   ## An unreachable node with no relay has no dialable address to announce.
-  info{"providerAddresses"}.getElems.len == 0
+  info{"addrs"}.getElems.len == 0
 
 asyncchecksuite "NAT not downloadable":
   let

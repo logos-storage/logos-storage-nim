@@ -1,7 +1,6 @@
 import std/options
 import std/sequtils
 
-import pkg/codexdht/discv5/protocol
 import pkg/toml_serialization
 import pkg/unittest2
 
@@ -34,8 +33,7 @@ suite "Network presets":
     check Presets[0].description == "a preset"
 
     check Presets[0].bootstrapNodes.len == 2
-    check Presets[0].bootstrapNodes[0].toURI() == SPRs[0]
-    check Presets[0].bootstrapNodes[1].toURI() == SPRs[1]
+    check Presets[0].rawRecords == @SPRs
 
   test "should find existing presets by name":
     let

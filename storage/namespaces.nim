@@ -19,7 +19,4 @@ const
     StorageMetaNamespace & "/ttl"
   StorageBlockProofNamespace* = # Cid and Proof
     StorageMetaNamespace & "/proof"
-  StorageDhtNamespace* = "dht" # Dht namespace
-  StorageDhtProvidersNamespace* = # Dht providers namespace
-    StorageDhtNamespace & "/providers"
   StorageQuotaNamespace* = StorageMetaNamespace & "/quota" # quota's namespace

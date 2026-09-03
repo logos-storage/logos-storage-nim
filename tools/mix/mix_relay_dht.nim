@@ -6,25 +6,24 @@
 ## This file may not be copied, modified, or distributed except according to
 ## those terms.
 
-import std/[net, os, parseopt, strformat, strutils]
+import std/[net, os, parseopt, sequtils, sets, strformat, strutils]
 
 import pkg/chronos
 import pkg/chronicles
 import
-  pkg/libp2p/
-    [builders, cid, multiaddress, peerid, routing_record, signed_envelope, switch]
+  pkg/libp2p/[builders, cid, multiaddress, peerid, peerinfo, routing_record, switch]
 import pkg/libp2p/crypto/crypto
 import pkg/libp2p/crypto/secp
 import pkg/libp2p/protocols/protocol
+import pkg/libp2p/protocols/kademlia except PeerRecord
 import pkg/libp2p/stream/connection
 import pkg/libp2p_mix
 import pkg/libp2p_mix/[curve25519, mix_node]
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/results
-import pkg/codexdht/discv5/[protocol as discv5, routing_table]
-from pkg/nimcrypto import keccak256
 
 import pkg/storage/dht_proxy/protocol
+import pkg/storage/utils/spr
 
 when defined(posix):
   import std/posix
@@ -113,11 +112,8 @@ proc generateKeys(dataDir: string) =
   notice "Generated fresh identity",
     dataDir = dataDir, mixIdentity = mixIdentityPath, libp2pKey = libp2pKeyPath
 
-proc toNodeId(c: Cid): NodeId =
-  readUintBE[256](keccak256.digest(c.data.buffer).data)
-
 type DhtProxyProtocol = ref object of LPProtocol
-  dht: discv5.Protocol
+  kad: KadDHT
   inFlight: int
   maxInFlight: int
 
@@ -130,24 +126,24 @@ proc handleFindProviders(
 
   let providers =
     try:
-      (await self.dht.getProviders(c.toNodeId())).valueOr:
-        warn "discv5 getProviders failed", err = $error
-        return LookupResponse(code: LookupCode.ErrInternal)
+      await self.kad.getProviders(c.toKey())
     except CancelledError as exc:
       raise exc
     except CatchableError as exc:
-      warn "discv5 getProviders raised", err = exc.msg
+      warn "kad getProviders raised", err = exc.msg
       return LookupResponse(code: LookupCode.ErrInternal)
 
   if providers.len == 0:
     return LookupResponse(code: LookupCode.NotFound)
 
   var encoded = newSeqOfCap[seq[byte]](providers.len)
-  for rec in providers:
-    let bytes = rec.encode().valueOr:
-      warn "Failed to encode SignedPeerRecord", err = error
+  for provider in providers:
+    if provider.id.isNone:
       continue
-    encoded.add(bytes)
+
+    let peerId = PeerId.init(provider.id.get()).valueOr:
+      continue
+    encoded.add(PeerRecord.init(peerId, provider.addrs).encode())
 
   if encoded.len == 0:
     return LookupResponse(code: LookupCode.ErrInternal)
@@ -192,11 +188,9 @@ proc handleLookupRequest(
     warn "Handler error", err = exc.msg
 
 proc new(
-    T: type DhtProxyProtocol,
-    dht: discv5.Protocol,
-    maxInFlight: int = DefaultMaxInFlightLookups,
+    T: type DhtProxyProtocol, kad: KadDHT, maxInFlight: int = DefaultMaxInFlightLookups
 ): DhtProxyProtocol =
-  let self = DhtProxyProtocol(dht: dht, maxInFlight: maxInFlight)
+  let self = DhtProxyProtocol(kad: kad, maxInFlight: maxInFlight)
 
   proc handler(
       conn: Connection, proto: string
@@ -214,7 +208,6 @@ type Conf = object
   dataDir: string
   listenIp: string
   listenPort: int
-  discPort: int
   bootstrapNodes: seq[SignedPeerRecord]
   logLevel: string
   logFile: string
@@ -229,39 +222,34 @@ mix_relay_dht — standalone Mix relay + DHT proxy daemon.
 
 Usage:
   mix_relay_dht --data-dir=<dir> --listen-ip=<addr> --listen-port=<port>
-                --disc-port=<port>
                 [--bootstrap-node=<spr> ...] [--log-level=<lvl>] [--generate]
 
 Options:
-  --data-dir=<dir>         Directory holding identity files (key + mix-identity).
-  --listen-ip=<addr>       Public IPv4 to bind/announce for libp2p TCP.
-  --listen-port=<n>        libp2p TCP port (Mix relay + DHT proxy share this).
-  --disc-port=<n>          discv5 UDP port.
-  --bootstrap-node=<spr>   Repeatable. SPR of a discv5 bootstrap peer.
-  --log-level=<lvl>        TRACE | DEBUG | INFO | NOTICE | WARN | ERROR | FATAL | NONE
-                           (default: INFO)
-  --log-file=<path>        Write logs to <path> instead of stdout.
-  --generate               Generate fresh identity files if data-dir is empty.
-  --no-dht-proxy           Run as a pure Mix relay.
-                           Conflicts with --disc-port and --bootstrap-node.
-  --max-inflight=<n>       Max concurrent DHT proxy lookups (default: 100).
-  --max-connections=<n>    Max libp2p connections (in + out) (default: 160).
-  -h, --help               Show this help.
-  -v, --version            Show version and revision.
+  --data-dir=<dir>           Directory holding identity files (key + mix-identity).
+  --listen-ip=<addr>         Public IPv4 to bind/announce for libp2p TCP.
+  --listen-port=<n>          libp2p TCP port (Mix relay + DHT proxy + Kad share this).
+  --bootstrap-node=<spr>     Repeatable. Signed peer record (spr:...) of a Kad bootstrap peer.
+  --log-level=<lvl>          TRACE | DEBUG | INFO | NOTICE | WARN | ERROR | FATAL | NONE
+                             (default: INFO)
+  --log-file=<path>          Write logs to <path> instead of stdout.
+  --generate                 Generate fresh identity files if data-dir is empty.
+  --no-dht-proxy             Run as a pure Mix relay.
+                             Conflicts with --bootstrap-node.
+  --max-inflight=<n>         Max concurrent DHT proxy lookups (default: 100).
+  --max-connections=<n>      Max libp2p connections (in + out) (default: 160).
+  -h, --help                 Show this help.
+  -v, --version              Show version and revision.
 """
 
-proc parseSpr(raw: string): SignedPeerRecord =
-  var spr: SignedPeerRecord
-  if not spr.fromURI(raw):
-    fail "Invalid --bootstrap-node SPR: " & raw
-  spr
+proc parseBootstrapNode(raw: string): SignedPeerRecord =
+  SignedPeerRecord.parse(raw).valueOr:
+    fail "Invalid --bootstrap-node record: " & raw & " (" & error.msg & ")"
 
 proc parseConf(): Conf =
   result = Conf(
     dataDir: "",
     listenIp: "",
     listenPort: 0,
-    discPort: 0,
     bootstrapNodes: @[],
     logLevel: "INFO",
     logFile: "",
@@ -293,13 +281,8 @@ proc parseConf(): Conf =
           result.listenPort = parseInt(p.val)
         except ValueError:
           fail "--listen-port must be an integer, got: " & p.val
-      of "disc-port":
-        try:
-          result.discPort = parseInt(p.val)
-        except ValueError:
-          fail "--disc-port must be an integer, got: " & p.val
       of "bootstrap-node":
-        result.bootstrapNodes.add(parseSpr(p.val))
+        result.bootstrapNodes.add(parseBootstrapNode(p.val))
       of "log-level":
         try:
           discard parseEnum[LogLevel](p.val)
@@ -342,16 +325,8 @@ proc parseConf(): Conf =
   if result.listenPort < 1 or result.listenPort > 65535:
     fail "--listen-port out of range: " & $result.listenPort & " (must be 1..65535)"
 
-  if result.noDhtProxy:
-    if result.discPort != 0:
-      fail "--no-dht-proxy conflicts with --disc-port"
-    if result.bootstrapNodes.len > 0:
-      fail "--no-dht-proxy conflicts with --bootstrap-node"
-  else:
-    if result.discPort == 0:
-      fail "--disc-port=<port> is required"
-    if result.discPort < 1 or result.discPort > 65535:
-      fail "--disc-port out of range: " & $result.discPort & " (must be 1..65535)"
+  if result.noDhtProxy and result.bootstrapNodes.len > 0:
+    fail "--no-dht-proxy conflicts with --bootstrap-node"
 
 var shutdownRequested = false
 
@@ -398,33 +373,13 @@ proc runWithDhtProxy(
     conf: Conf,
     switch: Switch,
     mixProto: MixProtocol,
-    libp2pPriv: PrivateKey,
     peerId: PeerId,
-    listenIp: IpAddress,
     tcpAddr: MultiAddress,
 ) {.async: (raises: [CatchableError]).} =
-  let udpAddr = MultiAddress.init(fmt"/ip4/{$listenIp}/udp/{conf.discPort}").valueOr:
-    raise newException(ValueError, "Invalid discv5 multiaddr: " & $error)
-
-  let dhtRecord = SignedPeerRecord.init(libp2pPriv, PeerRecord.init(peerId, @[udpAddr])).valueOr:
-    raise newException(ValueError, "Failed to build DHT SPR: " & $error)
-
-  let discoveryConfig =
-    DiscoveryConfig(tableIpLimits: DefaultTableIpLimits, bitsPerHop: DefaultBitsPerHop)
-
-  let dht = newProtocol(
-    libp2pPriv,
-    bindIp = listenIp,
-    bindPort = Port(conf.discPort),
-    record = dhtRecord,
-    bootstrapRecords = conf.bootstrapNodes,
-    rng = newRng(),
-    providers =
-      ProvidersManager.new(SQLiteDatastore.new(Memory).expect("Should not fail")),
-    config = discoveryConfig,
-  )
-
-  let proxyProto = DhtProxyProtocol.new(dht, maxInFlight = conf.maxInFlight)
+  let
+    kadBootstrap = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs())
+    kad = KadDHT.new(switch, bootstrapNodes = kadBootstrap, rng = newRng())
+  let proxyProto = DhtProxyProtocol.new(kad, maxInFlight = conf.maxInFlight)
 
   try:
     await mixProto.start()
@@ -438,30 +393,31 @@ proc runWithDhtProxy(
     raise newException(CatchableError, "DhtProxyProtocol start failed: " & exc.msg)
   switch.mount(proxyProto)
 
-  try:
-    dht.open()
-    await dht.start()
-  except CatchableError as exc:
-    raise newException(CatchableError, "discv5 start failed: " & exc.msg)
+  switch.mount(kad)
 
   try:
     await switch.start()
   except CatchableError as exc:
     raise newException(CatchableError, "libp2p switch start failed: " & exc.msg)
 
-  let mixNodeRecord = SignedPeerRecord.init(
-    libp2pPriv, PeerRecord.init(peerId, @[tcpAddr])
-  ).valueOr:
-    raise newException(ValueError, "Failed to build mix node SPR: " & $error)
+  try:
+    await kad.start()
+  except CatchableError as exc:
+    raise newException(CatchableError, "Kad DHT start failed: " & exc.msg)
+
+  let spr = switch.peerInfo.toSpr()
+  if spr.isErr:
+    raise newException(
+      ValueError, "Failed to build node signed peer record: " & spr.error.msg
+    )
 
   let
-    mixNodeSprStr = mixNodeRecord.toURI()
-    dhtSprStr = dht.localNode.record.toURI()
+    nodeSprStr = spr.get()
     mixNodeSprPath = conf.dataDir / "mix_node.spr"
     dhtSprPath = conf.dataDir / "dht.spr"
 
   try:
-    writeFile(mixNodeSprPath, mixNodeSprStr)
+    writeFile(mixNodeSprPath, nodeSprStr)
   except IOError as exc:
     raise newException(
       CatchableError,
@@ -469,16 +425,16 @@ proc runWithDhtProxy(
     )
 
   try:
-    writeFile(dhtSprPath, dhtSprStr)
+    writeFile(dhtSprPath, nodeSprStr)
   except IOError as exc:
     raise newException(
       CatchableError, "Failed to write DHT SPR file " & dhtSprPath & ": " & exc.msg
     )
 
   notice "Mix relay and DHT proxy started",
-    peerId = peerId, tcp = $tcpAddr, udp = $udpAddr, dataDir = conf.dataDir
-  notice "DHT bootstrap SPR", spr = dhtSprStr, file = dhtSprPath
-  notice "Mix node SPR", spr = mixNodeSprStr, file = mixNodeSprPath
+    peerId = peerId, tcp = $tcpAddr, dataDir = conf.dataDir
+  notice "DHT bootstrap SPR", spr = nodeSprStr, file = dhtSprPath
+  notice "Mix node SPR", spr = nodeSprStr, file = mixNodeSprPath
 
   try:
     while not shutdownRequested:
@@ -486,9 +442,9 @@ proc runWithDhtProxy(
   finally:
     notice "Stopping"
     try:
-      await noCancel dht.closeWait()
+      await noCancel kad.stop()
     except CatchableError as exc:
-      warn "discv5 close error", err = exc.msg
+      warn "Kad DHT close error", err = exc.msg
     await switch.stop()
     notice "Stopped"
 
@@ -569,7 +525,7 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
   if conf.noDhtProxy:
     await runRelayOnly(conf, switch, mixProto, peerId, tcpAddr)
   else:
-    await runWithDhtProxy(conf, switch, mixProto, libp2pPriv, peerId, listenIp, tcpAddr)
+    await runWithDhtProxy(conf, switch, mixProto, peerId, tcpAddr)
 
 var logFileHandle: File
 

@@ -1,8 +1,5 @@
-from pkg/libp2p import
-  Cid, PeerId, SignedPeerRecord, MultiAddress, AddressInfo, init, `$`
+from pkg/libp2p import Cid, PeerId, MultiAddress, AddressInfo, init, `$`
 import pkg/contractabi
-import pkg/codexdht/discv5/node as dn
-import pkg/codexdht/discv5/spr as spr
 import pkg/libp2p_mix/curve25519
 import pkg/serde/json
 import pkg/stew/byteutils
@@ -19,12 +16,6 @@ func `%`*(cid: Cid): JsonNode =
   % $cid
 
 func `%`*(obj: PeerId): JsonNode =
-  % $obj
-
-proc `%`*(obj: SignedPeerRecord): JsonNode =
-  %obj.toURI
-
-func `%`*(obj: dn.Address): JsonNode =
   % $obj
 
 func `%`*(obj: AddressInfo): JsonNode =

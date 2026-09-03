@@ -9,8 +9,6 @@ import pkg/datastore/typedds
 import pkg/questionable/results
 import pkg/taskpools
 
-import pkg/codexdht/discv5/protocol as discv5
-
 import pkg/storage/logutils
 import pkg/storage/stores
 import pkg/storage/clock

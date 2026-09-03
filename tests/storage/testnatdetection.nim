@@ -27,37 +27,29 @@ import ../../storage/rng
 const
   flags = {ServerFlags.ReuseAddr}
   listenAddr = "/ip4/127.0.0.1/tcp/0"
-  discoveryPort = Port(8090)
   # ms — AutoNAT probe + confidence + reaction
   detectTimeout = 20000
   mockMappedTcpPort = Port(40000)
-  mockMappedUdpPort = Port(40001)
 
 type MockNatPortMapper = ref object of NatPortMapper
 
 method mapNatPorts*(
     m: MockNatPortMapper
-): Future[Option[(Port, Port, MappingProtocol)]] {.
-    async: (raises: [CancelledError]), gcsafe
-.} =
-  none((Port, Port, MappingProtocol))
+): Future[Option[(Port, MappingProtocol)]] {.async: (raises: [CancelledError]), gcsafe.} =
+  none((Port, MappingProtocol))
 
 # Simulates a successful PCP mapping
 type MockMappingNatPortMapper = ref object of NatPortMapper
 
 method mapNatPorts*(
     m: MockMappingNatPortMapper
-): Future[Option[(Port, Port, MappingProtocol)]] {.
-    async: (raises: [CancelledError]), gcsafe
-.} =
+): Future[Option[(Port, MappingProtocol)]] {.async: (raises: [CancelledError]), gcsafe.} =
   m.portMapping = some(
     PortMapping(
-      activeMappingProtocol: MappingProtocol.PCP,
-      activeTcpPort: mockMappedTcpPort,
-      activeUdpPort: mockMappedUdpPort,
+      activeMappingProtocol: MappingProtocol.PCP, activeTcpPort: mockMappedTcpPort
     )
   )
-  some((mockMappedTcpPort, mockMappedUdpPort, MappingProtocol.PCP))
+  some((mockMappedTcpPort, MappingProtocol.PCP))
 
 # Captures the candidate addresses the service sends and answers Reachable, so
 # the service flips to reachable and runs its address mapper — without dialing.
@@ -107,11 +99,8 @@ asyncchecksuite "NAT detection - simulated NAT":
 
     relay = AutoRelayService.new(1, relayClient, nil, Rng.instance().libp2pRng)
     autorelayservice.setup(relay, natNode)
-    disc = Discovery.new(
-      PrivateKey.random(Rng.instance().libp2pRng).get(), providerAddrs = @[]
-    )
     # nodes start in client mode until Reachable
-    disc.protocol.clientMode = true
+    disc = Discovery.new(natNode, isServer = false)
 
     # Setup real AutoNAT v2 client using nat simulation
     let autonatClient = AutonatV2Client.new(natNode.rng)
@@ -138,7 +127,7 @@ asyncchecksuite "NAT detection - simulated NAT":
       ) {.async: (raises: [CancelledError]).} =
         # One call to our handleNatStatus handler
         await MockNatPortMapper().handleNatStatus(
-          reachability, addrs, discoveryPort, disc, natNode, relay
+          reachability, addrs, disc, natNode, relay
         )
     )
 
@@ -164,43 +153,43 @@ asyncchecksuite "NAT detection - simulated NAT":
   test "node behind EIF nat ends up reachable: no relay, not in client mode":
     await setupTopology(NatRouter.new(EndpointIndependent))
     check eventually(
-      not relay.isRunning and not disc.protocol.clientMode, timeout = detectTimeout
+      not relay.isRunning and disc.isServerMode(), timeout = detectTimeout
     )
 
   test "node behind APDF nat ends up not reachable: relay running, client mode":
     await setupTopology(NatRouter.new(AddressAndPortDependent))
     check eventually(
-      relay.isRunning and disc.protocol.clientMode, timeout = detectTimeout
+      relay.isRunning and not disc.isServerMode(), timeout = detectTimeout
     )
 
   test "node behind double NAT ends up not reachable: relay running, client mode":
     await setupTopology(NatRouter.new(DoubleNat))
     check eventually(
-      relay.isRunning and disc.protocol.clientMode, timeout = detectTimeout
+      relay.isRunning and not disc.isServerMode(), timeout = detectTimeout
     )
 
   test "node recovers (relay stops) when nat switches from APDF to EIF":
     let router = NatRouter.new(AddressAndPortDependent)
     await setupTopology(router)
     check eventually(
-      relay.isRunning and disc.protocol.clientMode, timeout = detectTimeout
+      relay.isRunning and not disc.isServerMode(), timeout = detectTimeout
     )
 
     router.setFiltering(EndpointIndependent)
     check eventually(
-      not relay.isRunning and not disc.protocol.clientMode, timeout = detectTimeout
+      not relay.isRunning and disc.isServerMode(), timeout = detectTimeout
     )
 
   test "node degrades (relay starts) when nat switches from EIF to APDF":
     let router = NatRouter.new(EndpointIndependent)
     await setupTopology(router)
     check eventually(
-      not relay.isRunning and not disc.protocol.clientMode, timeout = detectTimeout
+      not relay.isRunning and disc.isServerMode(), timeout = detectTimeout
     )
 
     router.setFiltering(AddressAndPortDependent)
     check eventually(
-      relay.isRunning and disc.protocol.clientMode, timeout = detectTimeout
+      relay.isRunning and not disc.isServerMode(), timeout = detectTimeout
     )
 
 asyncchecksuite "NAT detection - dial request candidates":

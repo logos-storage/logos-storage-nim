@@ -7,10 +7,10 @@ import std/strutils
 import std/json
 
 import pkg/chronicles
-import pkg/codexdht/discv5/protocol
-import pkg/libp2p/[errors, routing_record]
+import pkg/libp2p/routing_record
 import pkg/results
-import pkg/stew/base64
+
+import ./utils/spr
 
 # A NetworkPreset is a set of bootstrap nodes (represented
 # by their signed peer records) along with some description metadata.
@@ -37,21 +37,11 @@ func describePresets(presets: openArray[NetworkPreset]): string =
   for preset in presets:
     result &= $preset & "; "
 
-proc parse*(T: type SignedPeerRecord, p: string): Result[SignedPeerRecord, string] =
-  var res: SignedPeerRecord
-  try:
-    if not res.fromURI(p):
-      return err("The uri is not a valid SignedPeerRecord: " & p)
-    return ok(res)
-  except LPError, Base64Error:
-    let e = getCurrentException()
-    return err(e.msg)
-
 proc `bootstrapNodes`*(self: NetworkPreset): seq[SignedPeerRecord] =
   for record in self.unparsedRecords:
     # Having an invalid SPR in a hardcoded config is a bug, a+
     # it should crash the node.
-    result.add(parse(SignedPeerRecord, record).tryGet())
+    result.add(SignedPeerRecord.parse(record).tryGet())
 
 # Bootstrap node SPRs live in a single source-of-truth config file at the repo
 # root. staticRead embeds it into the binary at build time, so the node remains

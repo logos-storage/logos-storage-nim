@@ -41,8 +41,7 @@ type DiscoveryEngine* = ref object of RootObj
   concurrentDiscReqs: int # Concurrent discovery requests
   discoveryQueue*: AsyncQueue[Cid] # Discovery queue
   trackedFutures*: TrackedFutures # Tracked Discovery tasks futures
-  inFlightDiscReqs*: Table[Cid, Future[seq[SignedPeerRecord]]]
-    # Inflight discovery requests
+  inFlightDiscReqs*: Table[Cid, Future[seq[PeerRecord]]] # Inflight discovery requests
 
 proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
   ## Run discovery tasks
@@ -69,11 +68,11 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
 
       if (await request.withTimeout(DefaultDiscoveryTimeout)) and
           peers =? (await request).catch:
-        let dialed = await allFinished(peers.mapIt(b.network.dialPeer(it.data)))
+        let dialed = await allFinished(peers.mapIt(b.network.dialPeer(it)))
 
         for i, f in dialed:
           if f.failed:
-            await b.discovery.removeProvider(peers[i].data.peerId)
+            trace "Failed to dial discovered provider", peer = peers[i].peerId
   except CancelledError:
     trace "Discovery task cancelled"
     return
@@ -81,28 +80,24 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
   info "Exiting discovery task runner"
 
 proc routingTableHealthLoop(b: DiscoveryEngine) {.async: (raises: []).} =
-  ## Re-seed the DHT routing table from the configured bootstrap records when
+  ## Re-seed the DHT routing table from the configured bootstrap nodes when
   ## it goes empty.
   try:
     while b.discEngineRunning:
       await sleepAsync(RoutingTableHealthInterval)
 
-      if b.discovery.protocol.nodesDiscovered() != 0:
+      if not b.discovery.routingTableEmpty():
         continue
 
-      warn "Routing table empty, re-seeding from bootstrap records",
-        bootstrap = b.discovery.protocol.bootstrapRecords.len
-
-      b.discovery.protocol.seedTable()
+      warn "Routing table empty, re-seeding from bootstrap nodes"
 
       try:
-        await b.discovery.protocol.populateTable()
-        debug "Routing table re-populated",
-          total = b.discovery.protocol.nodesDiscovered()
+        await b.discovery.reseedRoutingTable()
+        debug "Routing table re-seeded"
       except CancelledError:
         return
       except CatchableError as exc:
-        warn "Failed to re-populate routing table", exc = exc.msg
+        warn "Failed to re-seed routing table", exc = exc.msg
   except CancelledError:
     trace "Routing table health loop cancelled"
     return
@@ -130,10 +125,10 @@ proc start*(b: DiscoveryEngine) {.async: (raises: []).} =
     let fut = b.discoveryTaskLoop()
     b.trackedFutures.track(fut)
 
-  if not b.discovery.protocol.isNil and b.discovery.protocol.bootstrapRecords.len > 0:
+  if b.discovery.hasBootstrapNodes():
     b.trackedFutures.track(b.routingTableHealthLoop())
   else:
-    trace "No bootstrap records configured, routing table health watchdog disabled"
+    trace "No bootstrap nodes configured, routing table health watchdog disabled"
 
   trace "Discovery engine started"
 
@@ -171,5 +166,5 @@ proc new*(
     concurrentDiscReqs: concurrentDiscReqs,
     discoveryQueue: newAsyncQueue[Cid](concurrentDiscReqs),
     trackedFutures: TrackedFutures.new(),
-    inFlightDiscReqs: initTable[Cid, Future[seq[SignedPeerRecord]]](),
+    inFlightDiscReqs: initTable[Cid, Future[seq[PeerRecord]]](),
   )

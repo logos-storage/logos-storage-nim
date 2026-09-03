@@ -184,18 +184,18 @@ proc fetchManifest*(
 
       if providers.len > 0:
         for provider in providers:
-          let fetchFut = self.fetchManifestFromPeer(provider.data, cid)
+          let fetchFut = self.fetchManifestFromPeer(provider, cid)
 
           var blkResult: ?!bt.Block
           if (await fetchFut.withTimeout(self.fetchTimeout)):
             blkResult = await fetchFut
           else:
-            trace "Manifest fetch from peer timed out", cid, peer = provider.data.peerId
+            trace "Manifest fetch from peer timed out", cid, peer = provider.peerId
             continue
 
           without blk =? blkResult, fetchErr:
             trace "Failed to fetch manifest from peer",
-              cid, peer = provider.data.peerId, err = fetchErr.msg
+              cid, peer = provider.peerId, err = fetchErr.msg
             lastErr = fetchErr
             continue
 

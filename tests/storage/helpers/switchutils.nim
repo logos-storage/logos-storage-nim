@@ -18,3 +18,9 @@ proc newStandardSwitch*(
     .withMplex()
     .withTcpTransport(transportFlags)
     .build()
+
+proc examplePeerInfo*(): PeerInfo =
+  let switch = newStandardSwitch()
+  switch.peerInfo.addrs =
+    @[MultiAddress.init("/ip4/127.0.0.1/tcp/4001").expect("valid")]
+  switch.peerInfo

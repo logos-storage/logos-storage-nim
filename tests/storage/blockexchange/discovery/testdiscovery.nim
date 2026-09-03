@@ -61,7 +61,8 @@ asyncchecksuite "Block Advertising and Discovery":
       localStore, peerStore, network, blockDiscovery, concurrentDiscReqs = 20
     )
 
-    advertiser = Advertiser.new(localStore, blockDiscovery)
+    advertiser =
+      Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     engine = BlockExcEngine.new(
       localStore, network, discovery, advertiser, peerStore, downloadManager
@@ -86,7 +87,7 @@ asyncchecksuite "Block Advertising and Discovery":
 
     blockDiscovery.findBlockProvidersHandler = proc(
         d: MockDiscovery, cid: Cid
-    ): Future[seq[SignedPeerRecord]] {.async: (raises: [CancelledError]).} =
+    ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       let matching = blocks.filterIt(it.cid == cid)
       for blk in matching:
         let address = BlockAddress(treeCid: blk.cid, index: 0)
@@ -134,8 +135,8 @@ asyncchecksuite "Block Advertising and Discovery":
 
   test "should route queries over mix when privacy toggle is enabled":
     let
-      privateSpr = SignedPeerRecord.example
-      directSpr = SignedPeerRecord.example
+      privateRecord = PeerRecord.example
+      directRecord = PeerRecord.example
       refCid = Cid.example
 
     let
@@ -146,15 +147,15 @@ asyncchecksuite "Block Advertising and Discovery":
     discovery.mixProto = mix
     discovery.dhtMixProxies = @[SignedPeerRecord.example]
 
-    discovery.privateSpr = privateSpr
-    discovery.directSpr = directSpr
+    discovery.privateRecord = privateRecord
+    discovery.directRecord = directRecord
     discovery.refCid = refCid
 
-    check (await discovery.find(refCid)) == @[directSpr]
+    check (await discovery.find(refCid)) == @[directRecord]
     let toggleRes = discovery.togglePrivateQueries(true)
     check toggleRes.isOk
     check toggleRes.get == false
-    check (await discovery.find(refCid)) == @[privateSpr]
+    check (await discovery.find(refCid)) == @[privateRecord]
 
   test "should fail to enable private queries when MixProtocol is nil":
     let discovery = MixMockDiscovery.new()
