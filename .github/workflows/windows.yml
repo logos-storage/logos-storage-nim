@@ -1,0 +1,44 @@
+name: Windows (nix cross)
+
+# Guards the NIX CROSS outputs -- `packages.x86_64-windows.*` -- which nothing
+# else here covers.
+#
+# This does NOT duplicate the existing Windows coverage. ci.yml already builds
+# and tests this repo natively on windows-latest under MSYS2
+# (tools/scripts/ci-job-matrix.sh emits an `os: windows` job), and that proves
+# the Nim code works on Windows. It says nothing about the mingw cross target,
+# which is a different toolchain, a different libc (UCRT), and a different set
+# of vendored-C code paths -- and it is the artifact downstream consumes:
+# logos-storage-module resolves `logos-storage.packages.x86_64-windows.libstorage`
+# and links its import library.
+#
+# Everything except the two inputs below -- the Nix install and cache, the
+# target-existence guard, the cold-cache refusal, the PE-format and
+# import-closure gates, the artifact hand-off and its round-trip check, the wine
+# pre-filter and the real-Windows execution -- lives in logos-co/logos-windows-ci.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    secrets: inherit
+    with:
+      # Two derivations, because the Makefile builds one OR the other: the
+      # installPhase ships `bin/storage.exe` for the `all` target and the
+      # library for `libstorage`. Both are wanted, and for different reasons.
+      #
+      #   libstorage         -- what downstream links. A DLL alone cannot be
+      #                         executed, so on its own this job would be
+      #                         compile-only.
+      #   logos-storage-nim  -- storage.exe, the only runnable proof. It links
+      #                         the SAME Nim runtime and the same vendored C
+      #                         (leveldb, boringssl, libplum, nat-traversal),
+      #                         so running it exercises the whole cross
+      #                         toolchain rather than just compiling it.
+      targets: libstorage logos-storage-nim
+      smoke-file: .github/smoke/storage-cross.sh
