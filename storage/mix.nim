@@ -1,3 +1,3 @@
-import ./mix/mixtransport
+import pkg/libp2p_mix_transport
 
-export mixtransport
+export libp2p_mix_transport

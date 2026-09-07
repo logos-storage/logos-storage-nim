@@ -76,6 +76,9 @@ func engine*(self: StorageNodeRef): BlockExcEngine =
 func discovery*(self: StorageNodeRef): Discovery =
   return self.discovery
 
+func manifestProtocol*(self: StorageNodeRef): ManifestProtocol =
+  return self.manifestProto
+
 proc storeManifest*(
     self: StorageNodeRef, manifest: Manifest
 ): Future[?!bt.Block] {.async.} =

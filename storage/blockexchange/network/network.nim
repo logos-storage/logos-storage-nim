@@ -14,6 +14,7 @@ import std/sets
 import pkg/chronos
 
 import pkg/libp2p
+import pkg/libp2p/connmanager as lp_connmanager
 import pkg/libp2p/protocols/protocol as lp_protocol
 import pkg/questionable
 import pkg/questionable/results
@@ -22,7 +23,7 @@ import ../../blocktype as bt
 import ../../logutils
 import ../types
 import ../protocol/message
-import ../../utils/[trackedfutures, mixidentity]
+import ../../utils/trackedfutures
 
 import ./networkpeer
 import ../protocol/wantblocks
@@ -83,7 +84,11 @@ type
     inflightSema: AsyncSemaphore
     maxInflight: int = DefaultMaxInflight
     trackedFutures*: TrackedFutures = TrackedFutures()
-    mixTransport*: Option[MixTransport] = none(MixTransport)
+    mixTransport*: MixTransport
+    mixSessions: Table[PeerId, TransportSession]
+    useMixSessionEvents: bool
+    switchPeerEventHandler: lp_connmanager.PeerEventHandler
+    mixSessionEventHandler: SessionEventHandler
 
 proc peerId*(b: BlockExcNetwork): PeerId =
   ## Return peer id
@@ -205,6 +210,13 @@ proc getOrCreatePeer(self: BlockExcNetwork, peer: PeerId): NetworkPeer =
   var getConn: ConnProvider = proc(): Future[Connection] {.
       async: (raises: [CancelledError])
   .} =
+    if not self.mixTransport.isNil:
+      trace "Opening block exchange stream via MixTransport", peer
+      let stream = (await self.mixTransport.dial(peer, Codec)).valueOr:
+        trace "Unable to open MixTransport block exchange stream", peer, error
+        return nil
+      return stream
+
     try:
       trace "Getting new connection stream", peer
       return await self.switch.dial(peer, Codec)
@@ -238,6 +250,10 @@ proc sendWantBlocksRequest*(
   let networkPeer = self.getOrCreatePeer(peer)
   return await networkPeer.sendWantBlocksRequest(blockRange)
 
+proc unregisterPeer(
+  self: BlockExcNetwork, peer: PeerId
+) {.async: (raises: [CancelledError]).}
+
 proc dialPeer*(self: BlockExcNetwork, peer: PeerRecord) {.async.} =
   ## Dial a peer
   ##
@@ -250,14 +266,12 @@ proc dialPeer*(self: BlockExcNetwork, peer: PeerRecord) {.async.} =
     trace "Already connected to peer", peer = peer.peerId
     return
 
-  if self.mixTransport.isSome:
-    let mixTransport = self.mixTransport.get()
+  if not self.mixTransport.isNil:
+    let mixTransport = self.mixTransport
     trace "Connecting to peer via MixTransport", peer = peer.peerId
-    let mixAddr = pickMixCompatibleMultiAddr(peer.addresses.mapIt(it.address)).valueOr:
-      raise newException(StorageError, "No Mix-compatible address among listen addrs")
-    (await mixTransport.connect(peer.peerId, mixAddr)).isOkOr:
-      raise
-        newException(StorageError, "Failed to connect over Mix transport: " & error.msg)
+    let session = (await mixTransport.connect(peer.peerId)).valueOr:
+      raise newException(StorageError, "Failed to connect over MixTransport: " & error)
+    self.mixSessions[peer.peerId] = session
   else:
     await self.switch.connect(peer.peerId, peer.addresses.mapIt(it.address))
 
@@ -265,6 +279,19 @@ proc dropPeer*(
     self: BlockExcNetwork, peer: PeerId
 ) {.async: (raises: [CancelledError]).} =
   trace "Dropping peer", peer
+
+  if not self.mixTransport.isNil:
+    let session = self.mixSessions.getOrDefault(peer)
+    if not session.isNil:
+      await self.mixTransport.resetSession(session)
+      return
+
+    # A recipient-side Mix session is identified to BlockExchange by its
+    # anonymous session identifier. MixTransport does not currently expose a
+    # public lookup from that identifier to the owning TransportSession.
+    warn "Removing MixTransport peer without resetting its recipient session", peer
+    await self.unregisterPeer(peer)
+    return
 
   try:
     if not self.switch.isNil:
@@ -276,14 +303,28 @@ proc excludeRelays*(self: BlockExcNetwork, peers: openArray[PeerId]) =
   for p in peers:
     self.excludedPeers.incl(p)
 
+proc registerPeer(
+    self: BlockExcNetwork, peer: PeerId
+) {.async: (raises: [CancelledError]).} =
+  discard self.getOrCreatePeer(peer)
+  if not self.handlers.onPeerJoined.isNil:
+    await self.handlers.onPeerJoined(peer)
+
+proc unregisterPeer(
+    self: BlockExcNetwork, peer: PeerId
+) {.async: (raises: [CancelledError]).} =
+  trace "Cleaning up departed peer", peer
+  self.mixSessions.del(peer)
+  self.peers.del(peer)
+  if not self.handlers.onPeerDeparted.isNil:
+    await self.handlers.onPeerDeparted(peer)
+
 proc handlePeerJoined*(
     self: BlockExcNetwork, peer: PeerId
 ) {.async: (raises: [CancelledError]).} =
   if peer in self.excludedPeers:
     return
-  discard self.getOrCreatePeer(peer)
-  if not self.handlers.onPeerJoined.isNil:
-    await self.handlers.onPeerJoined(peer)
+  await self.registerPeer(peer)
 
 proc handlePeerDeparted*(
     self: BlockExcNetwork, peer: PeerId
@@ -293,10 +334,34 @@ proc handlePeerDeparted*(
 
   if peer in self.excludedPeers:
     return
-  trace "Cleaning up departed peer", peer
-  self.peers.del(peer)
-  if not self.handlers.onPeerDeparted.isNil:
-    await self.handlers.onPeerDeparted(peer)
+  await self.unregisterPeer(peer)
+
+proc attachMixTransport*(self: BlockExcNetwork, mixTransport: MixTransport) =
+  ## Use MixTransport sessions, rather than physical Switch connections, as
+  ## the peer lifecycle observed by BlockExchange.
+  doAssert self.useMixSessionEvents,
+    "BlockExcNetwork must be constructed for MixTransport session events"
+  doAssert self.mixTransport.isNil, "MixTransport is already attached"
+
+  proc sessionEventHandler(
+      event: SessionEvent
+  ): Future[void] {.async: (raises: [CancelledError]).} =
+    case event.kind
+    of SessionEventKind.Established:
+      await self.registerPeer(event.peerId)
+    of SessionEventKind.Closed:
+      await self.unregisterPeer(event.peerId)
+
+  self.mixTransport = mixTransport
+  self.mixSessionEventHandler = sessionEventHandler
+  mixTransport.addSessionEventHandler(sessionEventHandler)
+
+proc detachMixTransport*(self: BlockExcNetwork) =
+  if not self.mixTransport.isNil and not self.mixSessionEventHandler.isNil:
+    self.mixTransport.removeSessionEventHandler(self.mixSessionEventHandler)
+  self.mixSessionEventHandler = nil
+  self.mixSessions.clear()
+  self.mixTransport = nil
 
 method init*(self: BlockExcNetwork) {.raises: [].} =
   ## Perform protocol initialization
@@ -312,8 +377,10 @@ method init*(self: BlockExcNetwork) {.raises: [].} =
     else:
       warn "Unknown peer event", event
 
-  self.switch.addPeerEventHandler(peerEventHandler, PeerEventKind.Joined)
-  self.switch.addPeerEventHandler(peerEventHandler, PeerEventKind.Left)
+  self.switchPeerEventHandler = peerEventHandler
+  if not self.useMixSessionEvents:
+    self.switch.addPeerEventHandler(peerEventHandler, PeerEventKind.Joined)
+    self.switch.addPeerEventHandler(peerEventHandler, PeerEventKind.Left)
 
   proc handler(
       conn: Connection, proto: string
@@ -332,6 +399,7 @@ proc new*(
     switch: Switch,
     connProvider: ConnProvider = nil,
     maxInflight = DefaultMaxInflight,
+    useMixSessionEvents = false,
 ): BlockExcNetwork =
   ## Create a new BlockExcNetwork instance
   ##
@@ -353,6 +421,7 @@ proc new*(
     discard self.inflightSema.tryAcquire()
 
   self.maxInflight = maxInflight
+  self.useMixSessionEvents = useMixSessionEvents
 
   proc sendWantList(
       id: PeerId,
@@ -380,4 +449,4 @@ proc new*(
   return self
 
 proc isMixEnabled*(self: BlockExcNetwork): bool =
-  return not self.mixTransport.isNone
+  return not self.mixTransport.isNil

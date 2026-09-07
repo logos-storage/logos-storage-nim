@@ -22,6 +22,7 @@ import ../logutils
 import ../errors
 import ./manifest
 import ./coders
+import ../mix
 
 export manifest, coders
 
@@ -45,6 +46,7 @@ type
     retries*: int
     retryDelay*: Duration
     fetchTimeout*: Duration
+    mixTransport: MixTransport
 
   ManifestFetchStatus* = enum
     Found = 0
@@ -130,9 +132,15 @@ proc fetchManifestFromPeer(
 ): Future[?!bt.Block] {.async: (raises: [CancelledError]).} =
   var conn: Connection
   try:
-    conn = await self.switch.dial(
-      peer.peerId, peer.addresses.mapIt(it.address), ManifestProtocolCodec
-    )
+    if not self.mixTransport.isNil:
+      conn = (await self.mixTransport.dial(peer.peerId, ManifestProtocolCodec)).valueOr:
+        return failure(
+          "Error opening MixTransport manifest stream to " & $peer.peerId & ": " & error
+        )
+    else:
+      conn = await self.switch.dial(
+        peer.peerId, peer.addresses.mapIt(it.address), ManifestProtocolCodec
+      )
 
     let cidBytes = cid.data.buffer
     var reqBuf = newSeqUninit[byte](2 + cidBytes.len)
@@ -224,6 +232,16 @@ proc fetchManifest*(
     return failure("Unable to decode manifest: " & err.msg)
 
   return success manifest
+
+proc attachMixTransport*(self: ManifestProtocol, mixTransport: MixTransport) =
+  doAssert self.mixTransport.isNil, "MixTransport is already attached"
+  self.mixTransport = mixTransport
+
+proc detachMixTransport*(self: ManifestProtocol) =
+  self.mixTransport = nil
+
+func isMixEnabled*(self: ManifestProtocol): bool =
+  not self.mixTransport.isNil
 
 proc new*(
     T: type ManifestProtocol,
