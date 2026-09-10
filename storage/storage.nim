@@ -174,15 +174,6 @@ proc start*(self: StorageServer) {.async.} =
         else:
           DhtProxyProtocol.new(self.storageNode.discovery)
 
-    if self.config.nat.hasExtIp:
-      # Address mapping chains are skipped when we use extip, so
-      # we need to derive the mix address manually.
-      let mixAddress = mixProto.localMixPubInfo.toMixAddress()
-      if mixAddress.isErr:
-        error "Failed to derive mix address", err = mixAddress.error
-      else:
-        peerInfo.announcedAddrs.add(mixAddress.get)
-
     await dhtProxyProto.start()
     switch.mount(dhtProxyProto)
 
@@ -203,6 +194,19 @@ proc start*(self: StorageServer) {.async.} =
     self.natMapper.get.tcpPort = realPort
 
   await self.storageNode.start()
+
+  # Address mapping chains are skipped when we use extip, so
+  # we need to derive the mix address manually. We need to wait
+  # until AFTER storageNode.start as otherwise we'll see an
+  # uninitialized mix address.
+  if self.config.mixEnabled and self.config.nat.hasExtIp:
+    let
+      mixProto = self.storageNode.discovery.mixProto
+      mixAddress = mixProto.localMixPubInfo.toMixAddress()
+    if mixAddress.isErr:
+      error "Failed to derive mix address", err = mixAddress.error
+    else:
+      peerInfo.announcedAddrs.add(mixAddress.get)
 
   # Connect to the Autonat servers (currently bootsrap nodes) in order to
   # have connected peers for Autonat. The dials are run concurrently in case of
