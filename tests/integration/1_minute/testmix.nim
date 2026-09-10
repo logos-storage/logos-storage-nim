@@ -11,18 +11,12 @@ import ../multinodes
 import ../nat/composehelper
 
 multinodesuite "Mix startup":
-  # Paths for extip and non-extip are different, so we put tests for both in place.
+  # We can only test the extip path here as non-extip requires public addresses.
   test "should publish a mix address when Mix is enabled and nat:extip is set",
     NodeConfigs(
       clients:
         StorageConfigs.init(nodes = 2).withExtIp(1, "127.0.0.1").withMixEnabled().some
     ):
-    check eventuallyInfo(
-      clients()[1].client, info{"addrs"}.getElems.anyIt("mix-transport" in it.getStr)
-    )
-
-  test "should publish a mix address when Mix is enabled",
-    NodeConfigs(clients: StorageConfigs.init(nodes = 2).withMixEnabled().some):
     check eventuallyInfo(
       clients()[1].client, info{"addrs"}.getElems.anyIt("mix-transport" in it.getStr)
     )

@@ -119,8 +119,6 @@ proc enableMix(
   await mixProto.start()
   switch.mount(mixProto)
 
-  # We don't care much WHERE in the address the mix component appears,
-  # as long as it's there.
   switch.peerInfo.addressMappers.add(mixProto.addressMapper())
   (mixProto, relayPool)
 
@@ -176,13 +174,14 @@ proc start*(self: StorageServer) {.async.} =
         else:
           DhtProxyProtocol.new(self.storageNode.discovery)
 
-    # Address mapping chains are skipped when we use extip, so we need to derive
-    # the mix address manually.
-    let mixAddress = mixProto.localMixPubInfo.toMixAddress()
-    if mixAddress.isErr:
-      error "Failed to derive mix address", err = mixAddress.error
-    else:
-      peerInfo.announcedAddrs.add(mixAddress.get)
+    if self.config.nat.hasExtIp:
+      # Address mapping chains are skipped when we use extip, so
+      # we need to derive the mix address manually.
+      let mixAddress = mixProto.localMixPubInfo.toMixAddress()
+      if mixAddress.isErr:
+        error "Failed to derive mix address", err = mixAddress.error
+      else:
+        peerInfo.announcedAddrs.add(mixAddress.get)
 
     await dhtProxyProto.start()
     switch.mount(dhtProxyProto)
