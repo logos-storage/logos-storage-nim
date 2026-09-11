@@ -58,12 +58,14 @@ proc addressMapper*(proto: MixProtocol): AddressMapper =
   proc(
       listenAddrs: seq[MultiAddress]
   ): Future[seq[MultiAddress]] {.async: (raises: [CancelledError]).} =
+    result = listenAddrs
     # The address in nodeInfo should always be up-to-date, so we
     # just take that one.
     let mixAddress = proto.localMixPubInfo.toMixAddress().valueOr:
       error "Failed to get Mix address", err = error
       return
 
+    trace "derived new mix transport address", address = mixAddress
     result.add(mixAddress)
 
 proc dialableMixAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
