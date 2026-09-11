@@ -73,8 +73,8 @@ make coverage && make show-coverage
 
 ## Key Development Notes
 
-- **Nim version**: pinned to `v2.2.10` (see `Makefile`). Override with `NIM_COMMIT=<version>`.
-- **Memory model**: ORC (`--mm:orc`) for Nim ≥ 2.0, refc for the C library build.
+- **Nim version**: pinned to `v2.2.12` (see `Makefile`). Override with `NIM_COMMIT=<version>`.
+- **Memory model**: ORC (`--mm:refc`) for Nim ≥ 2.0, refc for the C library build.
 - **Error handling**: uses `questionable/results` (`?!T`, `?T`) throughout — avoid bare exceptions. The codebase enforces `{.push raises: [].}` broadly.
 - **Logging**: uses `chronicles` with runtime filtering. Topics are set per-module via `logScope`. Build with `-d:chronicles_log_level=TRACE` to enable all log levels.
 - **Style**: `--styleCheck:error` is enabled — identifiers must match declaration casing exactly.

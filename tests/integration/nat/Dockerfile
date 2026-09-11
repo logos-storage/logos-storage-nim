@@ -4,7 +4,7 @@
 # Build context = project root.
 FROM ubuntu:24.04
 
-ARG NIM_VERSION=2.2.10
+ARG NIM_VERSION=2.2.12
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make cmake git curl ca-certificates xz-utils \
