@@ -7,26 +7,28 @@
 ## This file may not be copied, modified, or distributed except according to
 ## those terms.
 
-import std/os
-import std/tables
 import std/cpuinfo
 import std/net
+import std/os
 import std/sequtils
+import std/tables
 
 import pkg/chronos
-import pkg/taskpools
-import pkg/presto
+import pkg/confutils
+import pkg/confutils/defs
+import pkg/datastore
 import pkg/libp2p
 import pkg/libp2p/connmanager
+import pkg/libp2p/multiaddress
 import pkg/libp2p/protocols/connectivity/autonatv2/[service, client]
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
 import pkg/libp2p/protocols/connectivity/relay/relay as relayModule
 import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
-import pkg/confutils
-import pkg/confutils/defs
-import pkg/datastore
+import pkg/libp2p_mix_transport/address/parse
+import pkg/presto
+import pkg/taskpools
 
 import ./node
 import ./manifest/protocol
@@ -78,28 +80,70 @@ func node*(self: StorageServer): StorageNodeRef =
 func repoStore*(self: StorageServer): RepoStore =
   return self.repoStore
 
-proc start*(s: StorageServer) {.async.} =
-  if s.isStarted:
+proc enableMix(
+    self: StorageServer
+): Future[(MixProtocol, MixPool)] {.
+    async: (raises: [CancelledError, StorageError, LPError])
+.} =
+  let
+    switch = self.storageNode.switch
+    (mixPub, mixPriv) = loadOrGenerateMixKeys(
+      string(self.config.dataDir) / "mix-identity"
+    ).valueOr:
+      raise
+        newException(StorageError, "Failed to load or generate Mix keys: " & error.msg)
+    # We define a placeholder here.
+    # For nat:extip, the address will be updated by `updateLocalMultiAddr` on node start.
+    # For nat:auto, the node waits for AutoNAT to provide a reachable address or a relay address.
+    # The Mix lookup will not be performed while the mixAddr value is mixUnsetMultiAddr().
+    mixAddr = mixUnsetMultiAddr()
+    mixNodeInfo = buildMixNodeInfo(
+      mixPub, mixPriv, switch.peerInfo.peerId, mixAddr, switch.peerInfo.privateKey
+    ).valueOr:
+      raise newException(StorageError, "Failed to build Mix node info: " & error.msg)
+    relayPool = (
+      if self.config.mixPoolJson.len > 0:
+        loadRelayPubInfoTableFromJson(self.config.mixPoolJson)
+      else:
+        loadRelayPubInfoTableFromFile(self.config.mixPool)
+    ).valueOr:
+      raise newException(StorageError, "Failed to load Mix relay pool: " & error.msg)
+    mixProto = MixProtocol.new(mixNodeInfo, switch)
+
+  info "Starting node with Mix relay pool", count = relayPool.len
+
+  for info in relayPool.values:
+    mixProto.nodePool.add(info)
+
+  mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(MaxLookupResponseBytes))
+  await mixProto.start()
+  switch.mount(mixProto)
+
+  switch.peerInfo.addressMappers.add(mixProto.addressMapper())
+  (mixProto, relayPool)
+
+proc start*(self: StorageServer) {.async.} =
+  if self.isStarted:
     warn "Storage server already started, skipping"
     return
 
-  trace "Starting Storage node", config = $s.config
-  await s.repoStore.start()
+  trace "Starting Storage node", config = $self.config
+  await self.repoStore.start()
 
-  s.maintenance.start()
+  self.maintenance.start()
 
   # Activate SO_REUSEPORT for hole punching in tcptransport.nim.
   # Without that, hole punching would use an ephemeral port assigned by the OS.
   # NotReachable has nothing to do with AutoNAT Reachability
-  if s.holePunchHandler.isSome:
-    for t in s.storageNode.switch.transports:
+  if self.holePunchHandler.isSome:
+    for t in self.storageNode.switch.transports:
       t.networkReachability = NetworkReachability.NotReachable
 
-  await s.storageNode.switch.start()
+  await self.storageNode.switch.start()
 
   var realPort = Port(0)
 
-  for listenAddr in s.storageNode.switch.peerInfo.listenAddrs:
+  for listenAddr in self.storageNode.switch.peerInfo.listenAddrs:
     let maybePort = getTcpPort(listenAddr)
     if maybePort.isSome:
       realPort = maybePort.get
@@ -108,79 +152,63 @@ proc start*(s: StorageServer) {.async.} =
   if realPort == Port(0):
     raise newException(StorageError, "Failed to determine the real TCP port")
 
-  if s.config.nat.hasExtIp:
+  let peerInfo = self.storageNode.switch.peerInfo
+  if self.config.nat.hasExtIp:
     # extip means that we assume the IP is reachable.
-    let extIpAddr = getMultiAddrWithIpAndTcpPort(s.config.nat.extIp, realPort)
-
+    let extIpAddr = getMultiAddrWithIpAndTcpPort(self.config.nat.extIp, realPort)
     # Feed switch.peerInfo.addrs with extIp value only.
     # For example, we want to make sure that relay servers will
     # contain only the extIp, no private addresses.
-    let peerInfo = s.storageNode.switch.peerInfo
     peerInfo.announcedAddrs = @[extIpAddr]
     # We force the update to take in consideration the announcedAddrs
     await peerInfo.update()
 
-  if s.config.mixEnabled:
+  if self.config.mixEnabled:
     let
-      switch = s.storageNode.switch
-      (mixPub, mixPriv) = loadOrGenerateMixKeys(
-        string(s.config.dataDir) / "mix-identity"
-      ).valueOr:
-        raise newException(
-          StorageError, "Failed to load or generate Mix keys: " & error.msg
-        )
-      # We define a placeholder here.
-      # For nat:extip, the address will be updated by `updateLocalMultiAddr` on node start.
-      # For nat:auto, the node waits for AutoNAT to provide a reachable address or a relay address.
-      # The Mix lookup will not be performed while the mixAddr value is mixUnsetMultiAddr().
-      mixAddr = mixUnsetMultiAddr()
-      mixNodeInfo = buildMixNodeInfo(
-        mixPub, mixPriv, switch.peerInfo.peerId, mixAddr, switch.peerInfo.privateKey
-      ).valueOr:
-        raise newException(StorageError, "Failed to build Mix node info: " & error.msg)
-      relayPool = (
-        if s.config.mixPoolJson.len > 0:
-          loadRelayPubInfoTableFromJson(s.config.mixPoolJson)
+      switch = self.storageNode.switch
+      (mixProto, relayPool) = await self.enableMix()
+
+      dhtProxyProto =
+        if cap =? self.config.dhtProxyMaxInFlight:
+          DhtProxyProtocol.new(self.storageNode.discovery, maxInFlight = cap)
         else:
-          loadRelayPubInfoTableFromFile(s.config.mixPool)
-      ).valueOr:
-        raise newException(StorageError, "Failed to load Mix relay pool: " & error.msg)
-      mixProto = MixProtocol.new(mixNodeInfo, switch)
+          DhtProxyProtocol.new(self.storageNode.discovery)
 
-    info "Starting node with Mix relay pool", count = relayPool.len
-
-    for info in relayPool.values:
-      mixProto.nodePool.add(info)
-
-    mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(MaxLookupResponseBytes))
-    await mixProto.start()
-    switch.mount(mixProto)
-
-    let dhtProxyProto =
-      if cap =? s.config.dhtProxyMaxInFlight:
-        DhtProxyProtocol.new(s.storageNode.discovery, maxInFlight = cap)
-      else:
-        DhtProxyProtocol.new(s.storageNode.discovery)
     await dhtProxyProto.start()
     switch.mount(dhtProxyProto)
 
-    s.storageNode.discovery.mixProto = mixProto
+    self.storageNode.discovery.mixProto = mixProto
 
-    if s.config.dhtMixProxies.len > 0:
-      discard s.storageNode.discovery.togglePrivateQueries(true).valueOr:
+    if self.config.dhtMixProxies.len > 0:
+      discard self.storageNode.discovery.togglePrivateQueries(true).valueOr:
         raise
           newException(StorageError, "Failed to enable private queries: " & error.msg)
 
-    s.storageNode.engine.network.excludeRelays(relayPool.keys.toSeq)
+    self.storageNode.engine.network.excludeRelays(relayPool.keys.toSeq)
 
-  if s.natMapper.isSome:
-    s.natMapper.get.start()
+  if self.natMapper.isSome:
+    self.natMapper.get.start()
 
   # When listenPort is 0 the OS assigns a random port.
-  if s.natMapper.isSome and s.config.listenPort == Port(0):
-    s.natMapper.get.tcpPort = realPort
+  if self.natMapper.isSome and self.config.listenPort == Port(0):
+    self.natMapper.get.tcpPort = realPort
 
-  await s.storageNode.start()
+  await self.storageNode.start()
+
+  # Address mapping chains are skipped when we use extip, so
+  # we need to derive the mix address manually. We need to wait
+  # until AFTER storageNode.start as otherwise we'll see an
+  # uninitialized mix address.
+  if self.config.mixEnabled and self.config.nat.hasExtIp:
+    let
+      mixProto = self.storageNode.discovery.mixProto
+      mixAddress = mixProto.localMixPubInfo.toMixAddress()
+    if mixAddress.isErr:
+      error "Failed to derive mix address", err = mixAddress.error
+    else:
+      peerInfo.announcedAddrs.add(mixAddress.get)
+      # Refresh peerInfo to reflect the newly announced mix address.
+      await peerInfo.update()
 
   # Connect to the Autonat servers (currently bootsrap nodes) in order to
   # have connected peers for Autonat. The dials are run concurrently in case of
@@ -190,7 +218,7 @@ proc start*(s: StorageServer) {.async.} =
   ) {.async: (raises: [CancelledError]).} =
     try:
       let (peerId, addresses) = record.toPeerIdAndAddrs()
-      await s.storageNode.switch.connect(peerId, addresses)
+      await self.storageNode.switch.connect(peerId, addresses)
     except CancelledError as exc:
       raise exc
     except CatchableError as e:
@@ -199,18 +227,18 @@ proc start*(s: StorageServer) {.async.} =
   # noCancel: cancelling allFutures does not cancel the
   # connectAutonatServer futures.
   await noCancel allFutures(
-    findAutonatServers(s.bootstrapNodes).mapIt(connectAutonatServer(it))
+    findAutonatServers(self.bootstrapNodes).mapIt(connectAutonatServer(it))
   )
 
   # AutoNAT is not in switch.services because we want to start it
   # after the bootstrap connections to have connected peers for the first probe.
-  if s.autonatService.isSome:
-    await s.autonatService.get.start(s.storageNode.switch)
+  if self.autonatService.isSome:
+    await self.autonatService.get.start(self.storageNode.switch)
 
-  if s.restServer != nil:
-    s.restServer.start()
+  if self.restServer != nil:
+    self.restServer.start()
 
-  s.isStarted = true
+  self.isStarted = true
 
 proc stop*(s: StorageServer) {.async.} =
   if not s.isStarted:
@@ -385,7 +413,7 @@ proc new*(
     # Since Autonat V2 uses the observed public address,
     # we can filter the private addresses to keep only the dialable
     # addresses.
-    switchBuilder = switchBuilder.withAddressPolicy(dialableAddressPolicy)
+    switchBuilder = switchBuilder.withAddressPolicy(dialableMixAddressPolicy)
 
   let switch = switchBuilder
     .withTcpTransport({ServerFlags.ReuseAddr, ServerFlags.TcpNoDelay})
