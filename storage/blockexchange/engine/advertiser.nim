@@ -9,14 +9,20 @@
 
 {.push raises: [].}
 
+import std/options
+import std/sequtils
+
 import pkg/chronos
 import pkg/libp2p/cid
 import pkg/libp2p/peerinfo
+import pkg/libp2p/protocols/connectivity/autonat/types
+import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/metrics
 import pkg/questionable
 import pkg/questionable/results
 
 import ../../utils
+import ../../utils/addrutils
 import ../../utils/exceptions
 import ../../utils/trackedfutures
 import ../../discovery
@@ -49,6 +55,7 @@ type Advertiser* = ref object of RootObj
   inFlightAdvReqs*: Table[Cid, Future[void]] # Inflight advertise requests
   addrChanged: AsyncEvent # Fired when the announced addresses change
   peerInfo: PeerInfo
+  autonat: Option[AutonatV2Service]
 
 proc addCidToQueue(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError]).} =
   if cid notin b.advertiseQueue:
@@ -72,7 +79,9 @@ proc advertiseBlock(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError])
     error "failed to advertise block", cid, error = e.msgDetail
 
 proc reachable(b: Advertiser): bool =
-  b.peerInfo.addrs.len > 0
+  let nodeReachable =
+    b.autonat.isNone or b.autonat.get.networkReachability.isReachable()
+  nodeReachable or b.peerInfo.addrs.anyIt(it.isDialableCircuitMA())
 
 proc onAddrChange*(b: Advertiser) =
   b.addrChanged.fire()
@@ -179,6 +188,7 @@ proc new*(
     localStore: BlockStore,
     discovery: Discovery,
     peerInfo: PeerInfo,
+    autonat = none(AutonatV2Service),
     concurrentAdvReqs = DefaultConcurrentAdvertRequests,
     advertiseLocalStoreLoopSleep = DefaultAdvertiseLoopSleep,
     advertiseContent = true,
@@ -190,6 +200,7 @@ proc new*(
     discovery: discovery,
     peerInfo: peerInfo,
     advertiseContent: advertiseContent,
+    autonat: autonat,
     concurrentAdvReqs: concurrentAdvReqs,
     advertiseQueue: newAsyncQueue[Cid](concurrentAdvReqs),
     trackedFutures: TrackedFutures.new(),
