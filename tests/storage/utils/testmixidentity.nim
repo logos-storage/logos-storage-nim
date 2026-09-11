@@ -1,8 +1,13 @@
 import std/tables
 
+import pkg/chronos
 import pkg/unittest2
+import pkg/libp2p/builders
+import pkg/libp2p/crypto/crypto
 import pkg/libp2p/peerid
 import pkg/libp2p/multiaddress
+import pkg/libp2p_mix
+import pkg/libp2p_mix_transport/address/parse
 import pkg/storage/utils/mixidentity {.all.}
 
 const SamplePoolJson = """
@@ -24,6 +29,55 @@ const SamplePoolJson = """
   ]
 }
 """
+
+suite "mixidentity / addressMapper":
+  setup:
+    let
+      rng = newRng()
+      switch = SwitchBuilder
+        .new()
+        .withRng(rng)
+        .withTcpTransport()
+        .withMplex()
+        .withNoise()
+        .build()
+      mix = MixProtocol.new(MixNodeInfo.generateRandom(8080, rng), switch)
+      mapper = mix.addressMapper()
+      current = MultiAddress.init("/ip4/8.8.8.8/tcp/8081").expect("current endpoint")
+
+  test "uses current addresses before the observer updates Mix":
+    # Mix still holds its old endpoint when libp2p calls the mapper. No network
+    # is needed: supplying a new endpoint reproduces the address-update order.
+    let previous = mix.localMixPubInfo.multiAddr
+    let mapped = waitFor mapper(@[current])
+    check mapped.len == 2
+    check mapped[0] == current
+    let decoded = MixPubInfo
+      .fromMixAddress(mapped[1], Opt.some(mix.localMixPubInfo.peerId))
+      .expect("advertised Mix address")
+    check decoded.multiAddr == current
+    # The mapper constructs an advertisement; it does not update Mix's state.
+    check mix.localMixPubInfo.multiAddr == previous
+
+  test "does not advertise a cached endpoint when no eligible address remains":
+    mix.setLocalMultiAddr(current).expect("set previous endpoint")
+    let unavailable = @[
+      mixUnsetMultiAddr(),
+      MultiAddress.init("/ip4/192.168.1.2/tcp/8081").expect("private endpoint"),
+      MultiAddress.init("/ip4/8.8.8.8/udp/8081").expect("unsupported endpoint"),
+    ]
+    check (waitFor mapper(unavailable)) == unavailable
+    check (waitFor mapper(@[])).len == 0
+
+  test "skips private endpoints before selecting a public endpoint":
+    let
+      privateAddr = MultiAddress.init("/ip4/192.168.1.2/tcp/8081").expect("private")
+      mapped = waitFor mapper(@[privateAddr, current])
+      decoded = MixPubInfo
+        .fromMixAddress(mapped[^1], Opt.some(mix.localMixPubInfo.peerId))
+        .expect("advertised Mix address")
+    check mapped.len == 3
+    check decoded.multiAddr == current
 
 suite "mixidentity / loadRelayPubInfoTableFromJson":
   test "empty string yields an empty table":

@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[json, os, tables]
+import std/[json, os, sequtils, tables]
 
 import pkg/chronicles
 import pkg/libp2p
@@ -56,12 +56,20 @@ proc pickMixCompatibleMultiAddr*(addrs: openArray[MultiAddress]): Opt[MultiAddre
 
 proc addressMapper*(proto: MixProtocol): AddressMapper =
   proc(
-      listenAddrs: seq[MultiAddress]
+      currentAddrs: seq[MultiAddress]
   ): Future[seq[MultiAddress]] {.async: (raises: [CancelledError]).} =
-    result = listenAddrs
-    # The address in nodeInfo should always be up-to-date, so we
-    # just take that one.
-    let mixAddress = proto.localMixPubInfo.toMixAddress().valueOr:
+    result = currentAddrs
+    let endpoint = pickMixCompatibleMultiAddr(
+      currentAddrs.filterIt(dialableAddressPolicy(it))
+    ).valueOr:
+      return
+
+    # The address-change observer updates Mix only after this mapper returns.
+    # Build the advertisement from the current mapper input, not Mix's previous
+    # endpoint. The observer remains responsible for updating Mix's own state.
+    var info = proto.localMixPubInfo
+    info.multiAddr = endpoint
+    let mixAddress = info.toMixAddress().valueOr:
       error "Failed to get Mix address", err = error
       return
 
