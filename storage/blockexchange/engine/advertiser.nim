@@ -38,7 +38,6 @@ type Advertiser* = ref object of RootObj
   discovery*: Discovery # Discovery interface
 
   advertiseContent: bool # Announce local or downloaded content
-
   advertiserRunning*: bool # Indicates if discovery is running
   concurrentAdvReqs: int # Concurrent advertise requests
 
