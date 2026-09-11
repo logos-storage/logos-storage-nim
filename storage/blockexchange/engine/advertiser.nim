@@ -37,7 +37,7 @@ type Advertiser* = ref object of RootObj
   localStore*: BlockStore # Local block store for this instance
   discovery*: Discovery # Discovery interface
 
-  advertiseContent: bool # Announce local content
+  advertiseContent: bool # Announce local or downloaded content
 
   advertiserRunning*: bool # Indicates if discovery is running
   concurrentAdvReqs: int # Concurrent advertise requests
