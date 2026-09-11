@@ -207,6 +207,8 @@ proc start*(self: StorageServer) {.async.} =
       error "Failed to derive mix address", err = mixAddress.error
     else:
       peerInfo.announcedAddrs.add(mixAddress.get)
+      # Refresh peerInfo to reflect the newly announced mix address.
+      await peerInfo.update()
 
   # Connect to the Autonat servers (currently bootsrap nodes) in order to
   # have connected peers for Autonat. The dials are run concurrently in case of

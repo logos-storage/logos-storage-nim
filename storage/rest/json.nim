@@ -128,10 +128,7 @@ proc init*(
 
   DebugInfo(
     id: peerId,
-    # libp2p overrides the addresses announced in PeerInfo when announceAddrs are set. We
-    # reflect this here.
-    addrs:
-      if peerInfo.announcedAddrs.len == 0: peerInfo.addrs else: peerInfo.announcedAddrs,
+    addrs: peerInfo.addrs,
     spr: node.discovery.getSpr().valueOr(""),
     table: RestRoutingTable.init(node.discovery),
     storage: VersionInfo(version: $storageVersion, revision: $storageRevision),
