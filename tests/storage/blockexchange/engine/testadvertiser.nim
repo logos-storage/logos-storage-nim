@@ -92,6 +92,19 @@ asyncchecksuite "Advertiser":
     check eventually manifestBlk.cid in advertised
     check manifest.treeCid notin advertised
 
+  test "Should not advertise when content advertising is disabled":
+    let newStore = CacheStore.new([manifestBlk])
+
+    await advertiser.stop()
+    advertiser = Advertiser.new(
+      newStore, blockDiscovery, peerInfo = examplePeerInfo(), advertiseContent = false
+    )
+    await advertiser.start()
+
+    (await newStore.putBlock(manifestBlk)).tryGet()
+
+    check always advertised.len == 0
+
   test "Stop should clear onBlockStored callback":
     await advertiser.stop()
 
