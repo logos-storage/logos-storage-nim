@@ -9,7 +9,7 @@ on:
 
 env:
   cache_nonce: 0 # Allows for easily busting actions/cache caches
-  nim_version: v2.2.10
+  nim_version: v2.2.12
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
