@@ -160,6 +160,7 @@ proc stop*(b: Advertiser) {.async: (raises: []).} =
   ##
 
   trace "Advertiser stop"
+
   if not b.advertiseContent:
     return
 
