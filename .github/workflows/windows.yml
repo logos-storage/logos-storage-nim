@@ -1,0 +1,24 @@
+name: Windows (nix cross)
+
+# Cross-compiled Windows artifacts are built via logos-windows-ci.
+# We use a smoke test to verify the build output.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@b154b108f97f13b796fbf56b23911dbe89c33e2e
+    secrets: inherit
+    with:
+      submodules: recursive
+      timeout-minutes: 120
+      targets: libstorage logos-storage-nim
+      smoke-file: .github/smoke/storage-cross.sh
