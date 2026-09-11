@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[json, os, sequtils, tables]
+import std/[json, os, tables]
 
 import pkg/chronicles
 import pkg/libp2p
@@ -56,20 +56,16 @@ proc pickMixCompatibleMultiAddr*(addrs: openArray[MultiAddress]): Opt[MultiAddre
 
 proc addressMapper*(proto: MixProtocol): AddressMapper =
   proc(
-      currentAddrs: seq[MultiAddress]
+      listenAddrs: seq[MultiAddress]
   ): Future[seq[MultiAddress]] {.async: (raises: [CancelledError]).} =
-    result = currentAddrs
-    let endpoint = pickMixCompatibleMultiAddr(
-      currentAddrs.filterIt(dialableAddressPolicy(it))
-    ).valueOr:
-      return
-
-    # The address-change observer updates Mix only after this mapper returns.
-    # Build the advertisement from the current mapper input, not Mix's previous
-    # endpoint. The observer remains responsible for updating Mix's own state.
-    var info = proto.localMixPubInfo
-    info.multiAddr = endpoint
-    let mixAddress = info.toMixAddress().valueOr:
+    result = listenAddrs
+    # AutoNAT and AutoRelay may register mappers after this one, so this input
+    # need not contain the final reachable endpoint. Use the endpoint saved by
+    # the observer after the previous address update. This can remain stale
+    # until another update occurs.
+    # TODO: derive the Mix advertisement after all endpoint-producing mappers,
+    # with a regression test covering a later mapper supplying the endpoint.
+    let mixAddress = proto.localMixPubInfo.toMixAddress().valueOr:
       error "Failed to get Mix address", err = error
       return
 
