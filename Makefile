@@ -72,8 +72,6 @@ export CXXFLAGS
 	clean \
 	coverage \
 	deps \
-	libbacktrace \
-	libplum \
 	test \
 	testAll \
 	testIntegration \
@@ -121,10 +119,7 @@ else
 NIM_PARAMS := $(NIM_PARAMS) -d:release
 endif
 
-deps: | deps-common nat-libs libplum
-ifneq ($(USE_LIBBACKTRACE), 0)
-deps: | libbacktrace
-endif
+deps: | deps-common nat-libs
 
 update: | update-common
 
@@ -197,37 +192,6 @@ testAll: | build deps
 		$(ENV_SCRIPT) nim testAll $(NIM_PARAMS) build.nims
 	$(MAKE) $(if $(ncpu),-j$(ncpu),) testLibstorage
 
-LIBPLUM_DIR := vendor/nim-libplum/vendor/libplum
-LIBPLUM_BUILD_DIR := $(LIBPLUM_DIR)/build
-LIBPLUM_CMAKE_FLAGS := -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
-
-libplum:
-ifeq ($(detected_OS), Windows)
-ifneq ($(MSYSTEM),)
-	cmake -B $(LIBPLUM_BUILD_DIR) $(LIBPLUM_CMAKE_FLAGS) -G"MSYS Makefiles" $(LIBPLUM_DIR) $(HANDLE_OUTPUT)
-else
-	cmake -B $(LIBPLUM_BUILD_DIR) $(LIBPLUM_CMAKE_FLAGS) $(LIBPLUM_DIR) $(HANDLE_OUTPUT)
-endif
-else
-	cmake -B $(LIBPLUM_BUILD_DIR) $(LIBPLUM_CMAKE_FLAGS) $(LIBPLUM_DIR) $(HANDLE_OUTPUT)
-endif
-	+ $(MAKE) -C $(LIBPLUM_BUILD_DIR) $(HANDLE_OUTPUT)
-	cp $(LIBPLUM_BUILD_DIR)/libplum.a $(LIBPLUM_DIR)/libplum.a
-
-# nim-libbacktrace
-LIBBACKTRACE_MAKE_FLAGS := -C vendor/nim-libbacktrace --no-print-directory BUILD_CXX_LIB=0
-libbacktrace:
-ifeq ($(detected_OS), Windows)
-# MSYS2 detection
-ifneq ($(MSYSTEM),)
-	+ $(MAKE) $(LIBBACKTRACE_MAKE_FLAGS) CMAKE_ARGS="-G'MSYS Makefiles'"
-else
-	+ $(MAKE) $(LIBBACKTRACE_MAKE_FLAGS)
-endif
-else
-	+ $(MAKE) $(LIBBACKTRACE_MAKE_FLAGS)
-endif
-
 coverage:
 	$(MAKE) NIMFLAGS="$(NIMFLAGS) --lineDir:on --passC:-fprofile-arcs --passC:-ftest-coverage --passL:-fprofile-arcs --passL:-ftest-coverage" test
 	cd nimcache/release/testStorage && rm -f *.c
@@ -249,9 +213,6 @@ coverage-script: build deps
 # usual cleaning
 clean: | clean-common
 	rm -rf build
-ifneq ($(USE_LIBBACKTRACE), 0)
-	+ $(MAKE) -C vendor/nim-libbacktrace clean $(HANDLE_OUTPUT)
-endif
 
 ############
 ## Format ##
