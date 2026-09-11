@@ -468,7 +468,9 @@ proc new*(
 
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new(retries = config.blockRetries)
-    advertiser = Advertiser.new(repoStore, discovery, peerInfo = switch.peerInfo)
+    advertiser = Advertiser.new(
+      repoStore, discovery, peerInfo = switch.peerInfo, autonat = autonatService
+    )
     blockDiscovery = DiscoveryEngine.new(repoStore, peerStore, network, discovery)
     engine = BlockExcEngine.new(
       repoStore, network, blockDiscovery, advertiser, peerStore, downloadManager
@@ -525,6 +527,7 @@ proc new*(
         await natMapper.get.handleNatStatus(
           networkReachability, addrs, discovery, switch, relayService
         )
+        engine.advertiser.onAddrChange()
     )
 
     holePunchHandler = some(setupHolePunching(switch))
