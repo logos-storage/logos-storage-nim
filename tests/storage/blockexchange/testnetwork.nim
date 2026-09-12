@@ -177,6 +177,26 @@ asyncchecksuite "Network - Senders":
 
     await done.wait(500.millis)
 
+asyncchecksuite "Network - MixTransport peer events":
+  var switch1, switch2: Switch
+
+  setup:
+    switch1 = newStandardSwitch()
+    switch2 = newStandardSwitch()
+
+  teardown:
+    await allFuturesThrowing(switch1.stop(), switch2.stop())
+
+  test "Physical Mix relay connections do not become BlockExchange peers":
+    let network = BlockExcNetwork.new(switch1, useMixSessionEvents = true)
+    switch1.mount(network)
+    await switch1.start()
+    await switch2.start()
+
+    await switch1.connect(switch2.peerInfo.peerId, switch2.peerInfo.addrs)
+
+    check switch2.peerInfo.peerId notin network.peers
+
 asyncchecksuite "Network - Test Limits":
   var
     switch1, switch2: Switch
