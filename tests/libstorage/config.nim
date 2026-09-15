@@ -9,18 +9,14 @@ import pkg/results
 
 import ../asynctest
 import ../checktest
-import ../../library/storage_thread_requests/requests/node_lifecycle_request
+import ../../library/node_factory
 
-from ../../storage/storage import StorageServer, config
+from ../../storage/storage import StorageServer, close, config
 from ../../storage/conf import DefaultApiBindAddress
 
 asyncchecksuite "Libstorage - config":
-  var server: StorageServer
-
   test "rejects malformed JSON":
-    let request =
-      NodeLifecycleRequest.createShared(CREATE_NODE, """{"log-level": "debug"""")
-    let res = await request.process(addr server)
+    let res = await createStorage("""{"log-level": "debug"""")
 
     check res.isErr
 
@@ -28,9 +24,7 @@ asyncchecksuite "Libstorage - config":
       check "unable to load configuration" in res.error
 
   test "rejects an unknown option":
-    let request =
-      NodeLifecycleRequest.createShared(CREATE_NODE, """{"unknown": "debug"}""")
-    let res = await request.process(addr server)
+    let res = await createStorage("""{"unknown": "debug"}""")
 
     check res.isErr
 
@@ -44,14 +38,12 @@ asyncchecksuite "Libstorage - config":
       removeDir(dataDir)
 
     # %* escapes the path so that it can be used in JSON.
-    let config = $ %*{"data-dir": dataDir}
-    let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
-    let res = await request.process(addr server)
+    let res = await createStorage($ %*{"data-dir": dataDir})
 
     check res.isOk
 
-    let closeRequest = NodeLifecycleRequest.createShared(CLOSE_NODE)
-    check (await closeRequest.process(addr server)).isOk
+    if res.isOk:
+      await res.get().close()
 
   test "disables the REST API by default":
     let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
@@ -59,14 +51,13 @@ asyncchecksuite "Libstorage - config":
     defer:
       removeDir(dataDir)
 
-    let config = $ %*{"data-dir": dataDir}
-    let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
-    check (await request.process(addr server)).isOk
+    let res = await createStorage($ %*{"data-dir": dataDir})
 
-    check server.config.apiBindAddress.isNone
+    check res.isOk
 
-    let closeRequest = NodeLifecycleRequest.createShared(CLOSE_NODE)
-    check (await closeRequest.process(addr server)).isOk
+    if res.isOk:
+      check res.get().config.apiBindAddress.isNone
+      await res.get().close()
 
   test "enables the REST API when the config asks for it":
     let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
@@ -74,11 +65,26 @@ asyncchecksuite "Libstorage - config":
     defer:
       removeDir(dataDir)
 
-    let config = $ %*{"data-dir": dataDir, "api-bindaddr": DefaultApiBindAddress}
-    let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
-    check (await request.process(addr server)).isOk
+    let res = await createStorage(
+      $ %*{"data-dir": dataDir, "api-bindaddr": DefaultApiBindAddress}
+    )
 
-    check server.config.apiBindAddress == DefaultApiBindAddress.some
+    check res.isOk
 
-    let closeRequest = NodeLifecycleRequest.createShared(CLOSE_NODE)
-    check (await closeRequest.process(addr server)).isOk
+    if res.isOk:
+      check res.get().config.apiBindAddress == DefaultApiBindAddress.some
+      await res.get().close()
+
+  test "keeps the network the node was configured with":
+    let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
+
+    defer:
+      removeDir(dataDir)
+
+    let res = await createStorage($ %*{"data-dir": dataDir, "network": "logos.dev"})
+
+    check res.isOk
+
+    if res.isOk:
+      check res.get().config.network.name == "logos.dev"
+      await res.get().close()

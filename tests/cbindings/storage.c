@@ -48,9 +48,8 @@
 #define END_SUITE printf(GRN "SUCCESS. Tests passed: %d\n" NC, passed + 1); \
         fflush(stdout);
 
-// We need 250 as max retries mainly for the start function in CI.
-// Other functions should be not need that many retries.
-#define MAX_RETRIES 250
+// The node start can be slow in CI, so the wait is generous.
+#define TIMEOUT_MS 25000
 
 typedef struct
 {
@@ -59,8 +58,7 @@ typedef struct
     bool done;
     int ret;
     char *msg;
-    char *chunk;
-    size_t len;
+    StorageCtx *ctx;
 } Resp;
 
 static Resp *alloc_resp(void)
@@ -68,9 +66,6 @@ static Resp *alloc_resp(void)
     Resp *r = (Resp *)calloc(1, sizeof(Resp));
     pthread_mutex_init(&r->mutex, NULL);
     pthread_cond_init(&r->cond, NULL);
-    r->done = false;
-    r->msg = NULL;
-    r->chunk = NULL;
     r->ret = -1;
     return r;
 }
@@ -82,38 +77,39 @@ static void free_resp(Resp *r)
         return;
     }
 
-    if (r->msg)
-    {
-        free(r->msg);
-    }
-
-    if (r->chunk)
-    {
-        free(r->chunk);
-    }
-
+    free(r->msg);
     pthread_cond_destroy(&r->cond);
     pthread_mutex_destroy(&r->mutex);
     free(r);
 }
 
-static int get_ret(Resp *r)
+// publish stores the outcome and wakes the caller. The mutex must be held.
+static void publish(Resp *r, int ret)
 {
-    if (!r)
-    {
-        return RET_ERR;
-    }
-
-    pthread_mutex_lock(&r->mutex);
-    int ret = r->ret;
-    pthread_mutex_unlock(&r->mutex);
-
-    return ret;
+    r->ret = ret;
+    r->done = true;
+    pthread_cond_signal(&r->cond);
 }
 
-// wait_resp waits until the async response is ready or max retries is reached.
-// The resp is initially set to -1, to any code (RET_OK, RET_ERR, RET_PROGRESS) will
-// indicate that the response is ready to be consumed.
+static char *dup_n(const char *data, size_t len)
+{
+    char *out = (char *)malloc(len + 1);
+
+    if (!out)
+    {
+        return NULL;
+    }
+
+    if (len > 0)
+    {
+        memcpy(out, data, len);
+    }
+
+    out[len] = '\0';
+
+    return out;
+}
+
 static void wait_resp(Resp *r)
 {
     if (!r)
@@ -121,12 +117,11 @@ static void wait_resp(Resp *r)
         return;
     }
 
-    const long timeout_ms = MAX_RETRIES * 100;
     struct timespec deadline;
 
     clock_gettime(CLOCK_REALTIME, &deadline);
-    deadline.tv_sec += timeout_ms / 1000;
-    deadline.tv_nsec += (timeout_ms % 1000) * 1000000;
+    deadline.tv_sec += TIMEOUT_MS / 1000;
+    deadline.tv_nsec += (TIMEOUT_MS % 1000) * 1000000;
     if (deadline.tv_nsec >= 1000000000)
     {
         deadline.tv_sec += 1;
@@ -145,9 +140,7 @@ static void wait_resp(Resp *r)
     pthread_mutex_unlock(&r->mutex);
 }
 
-// is_resp_ok checks if the async response indicates success.
-// It will wait first for the response to be ready.
-// Then it will copy the message or chunk to res if provided.
+// is_resp_ok waits for the reply, hands the payload over in res and frees the Resp.
 static int is_resp_ok(Resp *r, char **res)
 {
     if (!r)
@@ -161,22 +154,10 @@ static int is_resp_ok(Resp *r, char **res)
 
     int ret = (r->ret == RET_OK) ? RET_OK : RET_ERR;
 
-    // If a response pointer is provided, it’s safe to initialize it to NULL.
     if (res)
     {
-        *res = NULL;
-    }
-
-    // If the response contains a chunk (for a download or an upload with RET_PROGRESS),
-    // the response will be in chunk.
-    // Otherwise, the response will be in msg.
-    if (res && r->chunk)
-    {
-        *res = strdup(r->chunk);
-    }
-    else if (res && r->msg)
-    {
-        *res = strdup(r->msg);
+        *res = r->msg;
+        r->msg = NULL;
     }
 
     pthread_mutex_unlock(&r->mutex);
@@ -186,22 +167,11 @@ static int is_resp_ok(Resp *r, char **res)
     return ret;
 }
 
-// callback is the function that will be called by the storage library
-// when an async operation is completed or has progress to report.
-// - ret is the return code of the callback
-// - msg is the data returned by the callback: it can be a string or a chunk
-// - len is the size of that data
-// - userData is the bridge between the caller and the lib.
-//   The caller passes this userData to the library.
-//   When the library invokes the callback, it passes the same userData back. The callback
-//   then fills it with the received information (return code, message). Once the callback
-//   has completed, the caller can read the populated userData.
-static void callback(int ret, const char *msg, size_t len, void *userData)
+// Every Result[string, string] reply typedef shares this signature.
+static void on_str_reply(int err_code, const NimFfiStr *reply, const char *err_msg, void *user_data)
 {
-    Resp *r = (Resp *)userData;
+    Resp *r = (Resp *)user_data;
 
-    // This means that the caller did not provide a valid userData pointer.
-    // In that case, we have nothing to do but return.
     if (!r)
     {
         return;
@@ -209,72 +179,115 @@ static void callback(int ret, const char *msg, size_t len, void *userData)
 
     pthread_mutex_lock(&r->mutex);
 
-    // If the reponse already has a message, just free it first.
-    if (r->msg)
+    free(r->msg);
+    r->msg = NULL;
+
+    if (err_code == RET_OK && reply)
     {
-        free(r->msg);
-        r->msg = NULL;
-        r->len = 0;
+        r->msg = dup_n(reply->data ? reply->data : "", reply->len);
+    }
+    else if (err_msg)
+    {
+        r->msg = strdup(err_msg);
     }
 
-    // For a RET_PROGRESS with chunk, copy the chunk data directly.
-    // This is used for upload/download chunk progress.
-    if (ret == RET_PROGRESS && msg && len > 0 && r->chunk)
+    publish(r, err_code);
+    pthread_mutex_unlock(&r->mutex);
+}
+
+// on_bytes_reply serves storage_download_chunk, which answers Result[seq[byte], string].
+static void on_bytes_reply(int err_code, const NimFfiBytes *reply, const char *err_msg, void *user_data)
+{
+    Resp *r = (Resp *)user_data;
+
+    if (!r)
     {
-        memcpy(r->chunk, msg, len);
-        r->len = len;
-    }
-
-    // For terminal responses, copy the message data.
-    if (ret != RET_PROGRESS && msg && len > 0)
-    {
-        // Allocate memory for the message plus null terminator.
-        r->msg = (char *)malloc(len + 1);
-
-        // Just in case malloc fails.
-        if (!r->msg)
-        {
-            r->len = 0;
-            r->ret = RET_ERR;
-            r->done = true;
-            pthread_cond_signal(&r->cond);
-            pthread_mutex_unlock(&r->mutex);
-            return;
-        }
-
-        memcpy(r->msg, msg, len);
-
-        // Null terminate is needed here otherwise
-        // the msg will contains non valid string like "0� :g"
-        r->msg[len] = '\0';
-
-        r->len = len;
-    }
-    else if (ret != RET_PROGRESS)
-    {
-        r->msg = NULL;
-        r->len = 0;
-    }
-
-    // Progress updates are intermediate callbacks. Keep any copied chunk data,
-    // but wait for the final RET_OK/RET_ERR before completing the response.
-    if (ret == RET_PROGRESS)
-    {
-        pthread_mutex_unlock(&r->mutex);
         return;
     }
 
-    // Publish completion last so wait_resp can only observe a fully written Resp.
-    r->ret = ret;
-    r->done = true;
-    pthread_cond_signal(&r->cond);
+    pthread_mutex_lock(&r->mutex);
+
+    free(r->msg);
+    r->msg = NULL;
+
+    if (err_code == RET_OK && reply)
+    {
+        r->msg = dup_n((const char *)reply->data, reply->len);
+    }
+    else if (err_msg)
+    {
+        r->msg = strdup(err_msg);
+    }
+
+    publish(r, err_code);
     pthread_mutex_unlock(&r->mutex);
+}
+
+static void on_created(int err_code, StorageCtx *ctx, const char *err_msg, void *user_data)
+{
+    Resp *r = (Resp *)user_data;
+
+    if (!r)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&r->mutex);
+
+    r->ctx = ctx;
+
+    if (err_code != RET_OK && err_msg)
+    {
+        r->msg = strdup(err_msg);
+    }
+
+    publish(r, err_code);
+    pthread_mutex_unlock(&r->mutex);
+}
+
+// Downloaded chunks arrive on the event thread, so the accumulator has its own lock.
+static pthread_mutex_t chunks_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char chunks[4096];
+static size_t chunks_len;
+static int upload_progress_count;
+
+static void reset_chunks(void)
+{
+    pthread_mutex_lock(&chunks_mutex);
+    chunks_len = 0;
+    chunks[0] = '\0';
+    pthread_mutex_unlock(&chunks_mutex);
+}
+
+static void on_download_chunk(const OnDownloadChunkPayload *evt, void *user_data)
+{
+    if (!evt)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&chunks_mutex);
+
+    size_t room = sizeof(chunks) - 1 - chunks_len;
+    size_t n = evt->data.len < room ? evt->data.len : room;
+
+    memcpy(chunks + chunks_len, evt->data.data, n);
+    chunks_len += n;
+    chunks[chunks_len] = '\0';
+
+    pthread_mutex_unlock(&chunks_mutex);
+}
+
+static void on_upload_progress(const OnUploadProgressPayload *evt, void *user_data)
+{
+    pthread_mutex_lock(&chunks_mutex);
+    upload_progress_count += 1;
+    pthread_mutex_unlock(&chunks_mutex);
 }
 
 static int read_file(const char *filepath, char **res)
 {
     FILE *file;
-    char c;
     // Just read first 100 bytes for the test
     char content[100];
 
@@ -285,7 +298,11 @@ static int read_file(const char *filepath, char **res)
         return RET_ERR;
     }
 
-    fgets(content, 100, file);
+    if (fgets(content, 100, file) == NULL)
+    {
+        fclose(file);
+        return RET_ERR;
+    }
 
     *res = strdup(content);
 
@@ -294,42 +311,46 @@ static int read_file(const char *filepath, char **res)
     return RET_OK;
 }
 
-int setup(void **storage_ctx)
+int setup(StorageCtx **storage_ctx)
 {
-    // Initialize Nim runtime
-    extern void libstorageNimMain(void);
-    libstorageNimMain();
-
     Resp *r = alloc_resp();
     const char *cfg = "{\"log-level\":\"WARN\",\"data-dir\":\"./data-dir\"}";
-    void *ctx = storage_new(cfg, (StorageCallback)callback, r);
 
-    if (!ctx)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
+    storage_ctx_create(nimffi_str(cfg), on_created, r);
 
     wait_resp(r);
 
-    if (get_ret(r) != RET_OK)
+    if (r->ret != RET_OK || !r->ctx)
+    {
+        fprintf(stderr, "create failed: %s\n", r->msg ? r->msg : "(null)");
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    (*storage_ctx) = r->ctx;
+
+    if (storage_ctx_add_on_download_chunk_listener(r->ctx, on_download_chunk, NULL) == 0)
     {
         free_resp(r);
         return RET_ERR;
     }
 
-    (*storage_ctx) = ctx;
+    if (storage_ctx_add_on_upload_progress_listener(r->ctx, on_upload_progress, NULL) == 0)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
 
     free_resp(r);
 
     return RET_OK;
 }
 
-int start(void *storage_ctx)
+int start(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
 
-    if (storage_start(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_start(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -338,12 +359,11 @@ int start(void *storage_ctx)
     return is_resp_ok(r, NULL);
 }
 
-int cleanup(void *storage_ctx)
+int cleanup(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
 
-    // Stop node
-    if (storage_stop(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_stop(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -354,44 +374,31 @@ int cleanup(void *storage_ctx)
         return RET_ERR;
     }
 
-    r = alloc_resp();
-
-    // Close node
-    if (storage_close(storage_ctx, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    if (is_resp_ok(r, NULL) != RET_OK)
-    {
-        return RET_ERR;
-    }
-
-    // Destroy node
-    // No need to wait here as storage_destroy is synchronous
-    if (storage_destroy(storage_ctx) != RET_OK)
-    {
-        return RET_ERR;
-    }
-
-    return RET_OK;
+    // Destroy closes the node and joins the FFI thread pair, so it is synchronous.
+    return storage_ctx_destroy(storage_ctx);
 }
 
-int check_version(void *storage_ctx)
+int check_version(void)
 {
-    char *version = storage_version(storage_ctx);
+    const char *version = storage_version();
+
+    if (!version || strlen(version) == 0)
+    {
+        fprintf(stderr, "version is missing\n");
+        return RET_ERR;
+    }
+
     printf("version: %s\n", version);
-    free(version);
+
     return RET_OK;
 }
 
-int check_repo(void *storage_ctx)
+int check_repo(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_repo(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_repo(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -410,12 +417,12 @@ int check_repo(void *storage_ctx)
     return ret;
 }
 
-int check_debug(void *storage_ctx)
+int check_debug(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_debug(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_debug(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -435,12 +442,12 @@ int check_debug(void *storage_ctx)
     return ret;
 }
 
-int check_spr(void *storage_ctx)
+int check_spr(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_spr(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_spr(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -459,27 +466,11 @@ int check_spr(void *storage_ctx)
     return ret;
 }
 
-int check_peer_id(void *storage_ctx)
+int check_peer_id(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
-    char *res = NULL;
 
-    if (storage_peer_id(storage_ctx, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    return is_resp_ok(r, &res);
-}
-
-int update_log_level(void *storage_ctx, const char *log_level)
-{
-    char *res = NULL;
-
-    Resp *r = alloc_resp();
-
-    if (storage_log_level(storage_ctx, log_level, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_peer_id(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -488,15 +479,55 @@ int update_log_level(void *storage_ctx, const char *log_level)
     return is_resp_ok(r, NULL);
 }
 
-int check_upload_chunk(void *storage_ctx, const char *filepath)
+int check_network(StorageCtx *storage_ctx)
+{
+    Resp *r = alloc_resp();
+    char *res = NULL;
+
+    if (storage_ctx_network(storage_ctx, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    int ret = is_resp_ok(r, &res);
+
+    if (res == NULL || strlen(res) == 0)
+    {
+        fprintf(stderr, "network is missing\n");
+        ret = RET_ERR;
+    }
+
+    free(res);
+
+    return ret;
+}
+
+int update_log_level(StorageCtx *storage_ctx, const char *log_level)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_log_level(storage_ctx, nimffi_str(log_level), on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, NULL);
+}
+
+int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
     char *session_id = NULL;
     const char *payload = "hello world";
-    size_t chunk_size = strlen(payload);
+    NimFfiBytes chunk;
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    chunk.data = (uint8_t *)payload;
+    chunk.len = strlen(payload);
+
+    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), chunk.len, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -504,38 +535,28 @@ int check_upload_chunk(void *storage_ctx, const char *filepath)
 
     if (is_resp_ok(r, &session_id) != RET_OK)
     {
-        return RET_ERR;
-    }
-
-    uint8_t *chunk = malloc(chunk_size);
-    if (!chunk)
-    {
         free(session_id);
         return RET_ERR;
     }
-    memcpy(chunk, payload, chunk_size);
 
     r = alloc_resp();
 
-    if (storage_upload_chunk(storage_ctx, session_id, chunk, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_chunk(storage_ctx, nimffi_str(session_id), &chunk, on_str_reply, r) != RET_OK)
     {
         free(session_id);
         free_resp(r);
-        free(chunk);
         return RET_ERR;
     }
 
     if (is_resp_ok(r, NULL) != RET_OK)
     {
         free(session_id);
-        free(chunk);
         return RET_ERR;
     }
 
-    free(chunk);
     r = alloc_resp();
 
-    if (storage_upload_finalize(storage_ctx, session_id, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_finalize(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -557,13 +578,13 @@ int check_upload_chunk(void *storage_ctx, const char *filepath)
     return ret;
 }
 
-int upload_cancel(void *storage_ctx)
+int upload_cancel(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *session_id = NULL;
-    size_t chunk_size = 64 * 1024;
+    uint64_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, "hello.txt", chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, nimffi_str("hello.txt"), chunk_size, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -571,12 +592,13 @@ int upload_cancel(void *storage_ctx)
 
     if (is_resp_ok(r, &session_id) != RET_OK)
     {
+        free(session_id);
         return RET_ERR;
     }
 
     r = alloc_resp();
 
-    if (storage_upload_cancel(storage_ctx, session_id, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_cancel(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -588,13 +610,13 @@ int upload_cancel(void *storage_ctx)
     return is_resp_ok(r, NULL);
 }
 
-int check_upload_file(void *storage_ctx, const char *filepath, char **res)
+int check_upload_file(StorageCtx *storage_ctx, const char *filepath, char **res)
 {
     Resp *r = alloc_resp();
     char *session_id = NULL;
-    size_t chunk_size = 64 * 1024;
+    uint64_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), chunk_size, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -602,12 +624,13 @@ int check_upload_file(void *storage_ctx, const char *filepath, char **res)
 
     if (is_resp_ok(r, &session_id) != RET_OK)
     {
+        free(session_id);
         return RET_ERR;
     }
 
     r = alloc_resp();
 
-    if (storage_upload_file(storage_ctx, session_id, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_upload_file(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -618,54 +641,73 @@ int check_upload_file(void *storage_ctx, const char *filepath, char **res)
 
     int ret = is_resp_ok(r, res);
 
-    if (res == NULL || *res == NULL || strlen(*res) == 0)
+    if (*res == NULL || strlen(*res) == 0)
     {
         fprintf(stderr, "CID is missing\n");
         return RET_ERR;
     }
 
+    pthread_mutex_lock(&chunks_mutex);
+    if (upload_progress_count == 0)
+    {
+        fprintf(stderr, "on_upload_progress never fired\n");
+        ret = RET_ERR;
+    }
+    pthread_mutex_unlock(&chunks_mutex);
+
     return ret;
 }
 
-int check_download_stream(void *storage_ctx, const char *cid, const char *filepath)
+int download_init(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
+    uint64_t chunk_size = 64 * 1024;
+
+    if (storage_ctx_download_init(storage_ctx, nimffi_str(cid), chunk_size, true, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, NULL);
+}
+
+int check_download_stream(StorageCtx *storage_ctx, const char *cid, const char *filepath)
+{
     char *res = NULL;
-    size_t chunk_size = 64 * 1024;
-    bool local = true;
+    uint64_t chunk_size = 64 * 1024;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (download_init(storage_ctx, cid) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    reset_chunks();
+
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_download_stream(storage_ctx, nimffi_str(cid), chunk_size, true,
+                                    nimffi_str(filepath), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
     }
 
-    if (is_resp_ok(r, NULL) != RET_OK)
+    int ret = is_resp_ok(r, NULL);
+
+    // The chunks reached the host through the on_download_chunk event.
+    pthread_mutex_lock(&chunks_mutex);
+    if (strncmp(chunks, "Hello World!", strlen("Hello World!")) != 0)
     {
-        return RET_ERR;
-    }
-
-    r = alloc_resp();
-    r->chunk = malloc(chunk_size + 1);
-
-    if (storage_download_stream(storage_ctx, cid, chunk_size, local, filepath, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    int ret = is_resp_ok(r, &res);
-
-    if (res == NULL || strncmp(res, "Hello World!", strlen("Hello World!")) != 0)
-    {
-        fprintf(stderr, "downloaded content mismatch, res:%s\n", res ? res : "(null)");
+        fprintf(stderr, "streamed content mismatch, res:%s\n", chunks);
         ret = RET_ERR;
     }
+    pthread_mutex_unlock(&chunks_mutex);
 
-    if (read_file("downloaded_hello.txt", &res) != RET_OK)
+    if (read_file(filepath, &res) != RET_OK)
     {
         fprintf(stderr, "read downloaded file failed\n");
-        ret = RET_ERR;
+        return RET_ERR;
     }
 
     if (res == NULL || strncmp(res, "Hello World!", strlen("Hello World!")) != 0)
@@ -679,28 +721,18 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     return ret;
 }
 
-int check_download_chunk(void *storage_ctx, const char *cid)
+int check_download_chunk(StorageCtx *storage_ctx, const char *cid)
 {
-    Resp *r = alloc_resp();
     char *res = NULL;
-    size_t chunk_size = 64 * 1024;
-    bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    if (is_resp_ok(r, NULL) != RET_OK)
+    if (download_init(storage_ctx, cid) != RET_OK)
     {
         return RET_ERR;
     }
 
-    r = alloc_resp();
-    r->chunk = malloc(chunk_size + 1);
+    Resp *r = alloc_resp();
 
-    if (storage_download_chunk(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_download_chunk(storage_ctx, nimffi_str(cid), on_bytes_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -719,11 +751,11 @@ int check_download_chunk(void *storage_ctx, const char *cid)
     return ret;
 }
 
-int check_download_cancel(void *storage_ctx, const char *cid)
+int check_download_cancel(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_download_cancel(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_download_cancel(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -732,12 +764,12 @@ int check_download_cancel(void *storage_ctx, const char *cid)
     return is_resp_ok(r, NULL);
 }
 
-int check_download_manifest(void *storage_ctx, const char *cid)
+int check_download_manifest(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_download_manifest(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_download_manifest(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -758,12 +790,12 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     return ret;
 }
 
-int check_list(void *storage_ctx)
+int check_list(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_list(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_list(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -784,12 +816,12 @@ int check_list(void *storage_ctx)
     return ret;
 }
 
-int check_space(void *storage_ctx)
+int check_space(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_space(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_space(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -809,34 +841,24 @@ int check_space(void *storage_ctx)
     return ret;
 }
 
-int check_exists(void *storage_ctx, const char *cid, bool expected)
+int check_exists(StorageCtx *storage_ctx, const char *cid, bool expected)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_exists(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_exists(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
     }
 
     int ret = is_resp_ok(r, &res);
+    const char *want = expected ? "true" : "false";
 
-    if (expected)
+    if (res == NULL || strcmp(res, want) != 0)
     {
-        if (res == NULL || strcmp(res, "true") != 0)
-        {
-            fprintf(stderr, "exists content mismatch, res:%s\n", res ? res : "(null)");
-            ret = RET_ERR;
-        }
-    }
-    else
-    {
-        if (res == NULL || strcmp(res, "false") != 0)
-        {
-            fprintf(stderr, "exists content mismatch, res:%s\n", res ? res : "(null)");
-            ret = RET_ERR;
-        }
+        fprintf(stderr, "exists content mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
     }
 
     free(res);
@@ -844,11 +866,11 @@ int check_exists(void *storage_ctx, const char *cid, bool expected)
     return ret;
 }
 
-int check_delete(void *storage_ctx, const char *cid)
+int check_delete(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_delete(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_delete(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -857,12 +879,13 @@ int check_delete(void *storage_ctx, const char *cid)
     return is_resp_ok(r, NULL);
 }
 
-int check_toggle_private_queries(void *storage_ctx)
+int check_toggle_private_queries(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
+
     // First toggle is false -> true
-    if (storage_toggle_private_queries(storage_ctx, true, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_toggle_private_queries(storage_ctx, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -877,9 +900,11 @@ int check_toggle_private_queries(void *storage_ctx)
     }
 
     free(res);
+    res = NULL;
+
     // Second toggle is true -> false
     r = alloc_resp();
-    if (storage_toggle_private_queries(storage_ctx, false, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_toggle_private_queries(storage_ctx, false, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -897,12 +922,12 @@ int check_toggle_private_queries(void *storage_ctx)
     return RET_OK;
 }
 
-int check_get_metrics(void *storage_ctx)
+int check_get_metrics(StorageCtx *storage_ctx)
 {
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_get_metrics(storage_ctx, (StorageCallback)callback, r) != RET_OK)
+    if (storage_ctx_get_metrics(storage_ctx, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -927,31 +952,21 @@ int check_get_metrics(void *storage_ctx)
     return RET_OK;
 }
 
-// TODO: implement check_fetch
-// It is a bit complicated because it requires two nodes
-// connected together to fetch from peers.
-// A good idea would be to use connect function using addresses.
-// This test will be quite important when the block engine is re-implemented.
-int check_fetch(void *storage_ctx, const char *cid)
-{
-    return RET_OK;
-}
-
 int main(void)
 {
-    void *storage_ctx = NULL;
-    char *res = NULL;
+    StorageCtx *storage_ctx = NULL;
     char *cid = NULL;
 
     BEGIN_SUITE
 
+    RUN_TEST(check_version());
     RUN_TEST(setup(&storage_ctx));
-    RUN_TEST(check_version(storage_ctx));
     RUN_TEST(start(storage_ctx));
     RUN_TEST(check_repo(storage_ctx));
     RUN_TEST(check_debug(storage_ctx));
     RUN_TEST(check_spr(storage_ctx));
     RUN_TEST(check_peer_id(storage_ctx));
+    RUN_TEST(check_network(storage_ctx));
     RUN_TEST(check_upload_chunk(storage_ctx, "hello_world.txt"));
     RUN_TEST(upload_cancel(storage_ctx));
 

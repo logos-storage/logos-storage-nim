@@ -87,9 +87,10 @@ in stdenv.mkDerivation rec {
       mkdir -p $out/bin
       cp build/storage $out/bin/
     else
-      mkdir -p $out/lib $out/include
+      mkdir -p $out/lib $out/include/generated
       cp build/libstorage* $out/lib/
       cp library/libstorage.h $out/include/
+      cp library/generated/*.h $out/include/generated/
     fi
   '';
 
