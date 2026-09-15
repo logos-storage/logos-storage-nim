@@ -58,17 +58,21 @@ asyncchecksuite "Block Advertising and Discovery":
     (await localStore.putBlock(manifestBlock)).tryGet()
 
     discovery = DiscoveryEngine.new(
-      localStore, peerStore, network, blockDiscovery, concurrentDiscReqs = 20
+      localStore,
+      peerStore,
+      newBlockExcNetworks(network),
+      blockDiscovery,
+      concurrentDiscReqs = 20,
     )
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     engine = BlockExcEngine.new(
-      localStore, network, discovery, advertiser, peerStore, downloadManager
+      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
     )
 
-    switch.mount(network)
+    switch.mount(discovery.networks.dispatchProtocol)
 
   test "Should discover want list":
     var handles: seq[Future[?!bt.Block]]

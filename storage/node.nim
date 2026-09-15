@@ -28,6 +28,8 @@ import pkg/libp2p/signed_envelope
 
 import ./chunker
 import ./clock
+import ./downloadtransport
+export downloadtransport
 import ./blocktype as bt
 import ./manifest
 import ./merkletree
@@ -76,6 +78,9 @@ func engine*(self: StorageNodeRef): BlockExcEngine =
 func discovery*(self: StorageNodeRef): Discovery =
   return self.discovery
 
+func manifestProtocol*(self: StorageNodeRef): ManifestProtocol =
+  return self.manifestProto
+
 proc storeManifest*(
     self: StorageNodeRef, manifest: Manifest
 ): Future[?!bt.Block] {.async.} =
@@ -94,10 +99,12 @@ proc storeManifest*(
   success blk
 
 proc fetchManifest*(
-    self: StorageNodeRef, cid: Cid
+    self: StorageNodeRef,
+    cid: Cid,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   ## Fetch and decode a manifest
-  return await self.manifestProto.fetchManifest(cid)
+  return await self.manifestProto.fetchManifest(cid, transport)
 
 proc findPeer*(self: StorageNodeRef, peerId: PeerId): Future[?PeerRecord] {.async.} =
   ## Find peer using the discovery service from the given StorageNode
@@ -141,9 +148,13 @@ proc fetchDatasetAsync*(
     md: ManifestDescriptor,
     fetchLocal = true,
     selectionPolicy: SelectionPolicy = spSequential,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   let download = ?self.engine.startTreeDownloadOpaque(
-    md, selectionPolicy = selectionPolicy, fetchLocal = fetchLocal
+    md,
+    selectionPolicy = selectionPolicy,
+    fetchLocal = fetchLocal,
+    transport = transport,
   )
   try:
     trace "Starting tree download",
@@ -166,17 +177,18 @@ proc startBackgroundDownload*(
     self: StorageNodeRef,
     md: ManifestDescriptor,
     selectionPolicy: SelectionPolicy = spSequential,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!uint64] {.async: (raises: [CancelledError]).} =
   let
     treeCid = md.manifest.treeCid
-    existing = self.engine.downloadManager.getBackgroundDownload(treeCid)
+    existing = self.engine.downloadManager.getBackgroundDownload(treeCid, transport)
 
   if existing.isSome:
     return success(existing.get().id)
 
   let
     download = ?self.engine.startTreeDownloadOpaque(
-      md, selectionPolicy = selectionPolicy, isBackground = true
+      md, selectionPolicy = selectionPolicy, isBackground = true, transport = transport
     )
     downloadId = download.downloadId
 
@@ -227,7 +239,10 @@ proc streamSingleBlock(
   LPStream(stream).success
 
 proc streamEntireDataset(
-    self: StorageNodeRef, md: ManifestDescriptor, fetchLocal: bool = false
+    self: StorageNodeRef,
+    md: ManifestDescriptor,
+    fetchLocal: bool = false,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!LPStream] {.async: (raises: [CancelledError]).} =
   ## Streams the contents of the entire dataset described by the manifest.
   ##
@@ -235,8 +250,13 @@ proc streamEntireDataset(
 
   let
     treeCid = md.manifest.treeCid
-    download = ?self.engine.startTreeDownloadOpaque(md, fetchLocal = fetchLocal)
-    stream = LPStream(StoreStream.new(self.networkStore, md.manifest, pad = false))
+    download = ?self.engine.startTreeDownloadOpaque(
+      md, fetchLocal = fetchLocal, transport = transport
+    )
+    downloadStore = NetworkStore.new(
+      self.engine, self.networkStore.localStore, downloadId = some(download.downloadId)
+    )
+    stream = LPStream(StoreStream.new(downloadStore, md.manifest, pad = false))
 
   var jobs: seq[Future[void]]
 
@@ -272,7 +292,10 @@ proc streamEntireDataset(
   stream.success
 
 proc retrieve*(
-    self: StorageNodeRef, cid: Cid, local: bool = true
+    self: StorageNodeRef,
+    cid: Cid,
+    local: bool = true,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!LPStream] {.async: (raises: [CancelledError]).} =
   ## Retrieve by Cid a single block or an entire dataset described by manifest
   ##
@@ -280,14 +303,15 @@ proc retrieve*(
   if local and not await (cid in self.networkStore):
     return failure((ref BlockNotFoundError)(msg: "Block not found in local store"))
 
-  without manifest =? (await self.fetchManifest(cid)), err:
-    if err of AsyncTimeoutError:
+  without manifest =? (await self.fetchManifest(cid, transport)), err:
+    if transport == DownloadTransport.Mix or err of AsyncTimeoutError:
       return failure(err)
 
     return await self.streamSingleBlock(cid)
 
   await self.streamEntireDataset(
-    ManifestDescriptor(manifest: manifest, manifestCid: cid)
+    ManifestDescriptor(manifest: manifest, manifestCid: cid),
+    transport = transport,
   )
 
 proc deleteSingleBlock(self: StorageNodeRef, cid: Cid): Future[?!void] {.async.} =

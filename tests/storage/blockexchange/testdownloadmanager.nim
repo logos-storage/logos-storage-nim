@@ -6,6 +6,7 @@ import pkg/libp2p/peerid
 import pkg/libp2p/cid
 
 import pkg/storage/blocktype as bt
+import pkg/storage/stores
 import pkg/storage/blockexchange
 import pkg/storage/blockexchange/engine/downloadcontext {.all.}
 import pkg/storage/blockexchange/engine/activedownload {.all.}
@@ -23,6 +24,52 @@ const
   Threshold = 0.75
 
 suite "DownloadManager - Want Handles":
+  test "A scoped streaming read waits for its own download":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      directDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      mixDownload = manager.startDownload(
+        DownloadDesc(md: md, count: 1, transport: DownloadTransport.Mix)
+      )
+      address = BlockAddress.init(md.manifest.treeCid, 0)
+      blk = bt.Block.new("scoped read".toBytes).tryGet()
+      view = NetworkStore.new(
+        BlockExcEngine(downloadManager: manager),
+        CacheStore.new(),
+        downloadId = some(mixDownload.id),
+      )
+    discard directDownload.getWantHandle(address)
+    let reading = view.getBlock(address)
+    discard directDownload.completeWantHandle(address, some(blk))
+    check not reading.finished
+    discard mixDownload.completeWantHandle(address, some(blk))
+    check (await reading).tryGet() == blk
+    manager.cancelDownload(directDownload)
+    manager.cancelDownload(mixDownload)
+
+  test "Background download reuse is scoped to the selected transport":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      directDownload = manager.startDownload(
+        DownloadDesc(
+          md: md, count: 1, isBackground: true, transport: DownloadTransport.Direct
+        )
+      )
+      mixDownload = manager.startDownload(
+        DownloadDesc(
+          md: md, count: 1, isBackground: true, transport: DownloadTransport.Mix
+        )
+      )
+    check manager
+      .getBackgroundDownload(md.manifest.treeCid, DownloadTransport.Direct)
+      .get() == directDownload
+    check manager.getBackgroundDownload(md.manifest.treeCid, DownloadTransport.Mix).get() ==
+      mixDownload
+    manager.cancelDownload(directDownload)
+    manager.cancelDownload(mixDownload)
+
   test "Should add want handle":
     let
       downloadManager = DownloadManager.new()

@@ -370,8 +370,7 @@ proc addPeerIfAbsent*(
     # peer already tracked, skip if bakComplete
     return existingPeer.get().availability.kind != bakComplete
 
-  discard download.ctx.swarm.addPeer(peerId, availability)
-  return true # new peer added, send WantHave
+  return download.ctx.swarm.addPeer(peerId, availability)
 
 proc handleBatchRetry*(
     download: ActiveDownload, start: uint64, count: uint64, waitTime: Duration
