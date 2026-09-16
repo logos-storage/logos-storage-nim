@@ -927,6 +927,119 @@ int check_get_metrics(void *storage_ctx)
     return RET_OK;
 }
 
+static int read_whole_file(const char *filepath, char **res)
+{
+    FILE *file = fopen(filepath, "rb");
+
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0)
+    {
+        if (file)
+        {
+            fclose(file);
+        }
+        return RET_ERR;
+    }
+
+    long size = ftell(file);
+    rewind(file);
+    *res = (char *)calloc(1, size > 0 ? size + 1 : 1);
+
+    if (size < 0 || !*res || fread(*res, 1, size, file) != (size_t)size)
+    {
+        fclose(file);
+        return RET_ERR;
+    }
+
+    fclose(file);
+
+    return RET_OK;
+}
+
+// Uploading many blocks makes the storage thread's GC run a full collection;
+// the log file must keep receiving lines after it, through stop and close.
+int check_log_file_after_many_blocks(void)
+{
+    const char *log_path = "log-file.log";
+    const char *input_path = "log-file.bin";
+    const char *cfg = "{\"log-level\":\"INFO\",\"log-format\":\"none\","
+                      "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
+                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
+                      "\"no-bootstrap-node\":true}";
+    size_t block_size = 1024;
+    char *cid = NULL;
+    char *log = NULL;
+
+    // 16384 blocks of zeros.
+    FILE *input = fopen(input_path, "wb");
+    if (!input || fseek(input, 16 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
+    {
+        if (input)
+        {
+            fclose(input);
+        }
+        return RET_ERR;
+    }
+    fclose(input);
+
+    Resp *r = alloc_resp();
+    void *ctx = storage_new(cfg, (StorageCallback)callback, r);
+
+    if (!ctx)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    if (is_resp_ok(r, NULL) != RET_OK || start(ctx) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    char *path = realpath(input_path, NULL);
+    char *session_id = NULL;
+    r = alloc_resp();
+
+    if (!path || storage_upload_init(ctx, path, block_size, (StorageCallback)callback, r) != RET_OK ||
+        is_resp_ok(r, &session_id) != RET_OK)
+    {
+        free(path);
+        return RET_ERR;
+    }
+
+    free(path);
+    r = alloc_resp();
+
+    if (storage_upload_file(ctx, session_id, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        free(session_id);
+        return RET_ERR;
+    }
+
+    free(session_id);
+
+    if (is_resp_ok(r, &cid) != RET_OK || cleanup(ctx) != RET_OK)
+    {
+        free(cid);
+        return RET_ERR;
+    }
+
+    free(cid);
+    remove(input_path);
+
+    int ret = read_whole_file(log_path, &log);
+
+    if (ret != RET_OK || !strstr(log, "Stored data") || !strstr(log, "Stopping Storage node"))
+    {
+        fprintf(stderr, "log file is missing lines, log:\n%s\n", log ? log : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(log);
+
+    return ret;
+}
+
 // TODO: implement check_fetch
 // It is a bit complicated because it requires two nodes
 // connected together to fetch from peers.
@@ -982,6 +1095,7 @@ int main(void)
     RUN_TEST(update_log_level(storage_ctx, "TRACE"));
     RUN_TEST(check_get_metrics(storage_ctx));
     RUN_TEST(cleanup(storage_ctx));
+    RUN_TEST(check_log_file_after_many_blocks());
 
     END_SUITE
 }
