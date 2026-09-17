@@ -21,6 +21,8 @@ import ../../utils/trackedfutures
 import ../../discovery
 import ../../stores/blockstore
 import ../../logutils
+import ../../downloadtransport
+export downloadtransport
 
 logScope:
   topics = "storage discoveryengine"
@@ -32,16 +34,21 @@ const
   DefaultDiscoveryTimeout = 1.minutes
   RoutingTableHealthInterval = 30.seconds
 
+type DiscoveryKey = tuple[cid: Cid, transport: DownloadTransport]
+
 type DiscoveryEngine* = ref object of RootObj
   localStore*: BlockStore # Local block store for this instance
   peers*: PeerContextStore # Peer context store
-  network*: BlockExcNetwork # Network interface
+  networks*: BlockExcNetworks # Protocol instances available for provider dialing
   discovery*: Discovery # Discovery interface
   discEngineRunning*: bool # Indicates if discovery is running
   concurrentDiscReqs: int # Concurrent discovery requests
-  discoveryQueue*: AsyncQueue[Cid] # Discovery queue
+  discoveryQueue*: AsyncQueue[DiscoveryKey]
+  onProviders*: proc(cid: Cid, transport: DownloadTransport, peers: seq[PeerRecord]) {.
+    gcsafe, raises: []
+  .}
   trackedFutures*: TrackedFutures # Tracked Discovery tasks futures
-  inFlightDiscReqs*: Table[Cid, Future[seq[PeerRecord]]] # Inflight discovery requests
+  inFlightDiscReqs*: Table[DiscoveryKey, Future[seq[PeerRecord]]]
 
 proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
   ## Run discovery tasks
@@ -50,25 +57,33 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
 
   try:
     while b.discEngineRunning:
-      let cid = await b.discoveryQueue.get()
+      let key = await b.discoveryQueue.get()
+      let cid = key.cid
 
-      if cid in b.inFlightDiscReqs:
+      if key in b.inFlightDiscReqs:
         trace "Discovery request already in progress", cid
         continue
 
       trace "Running discovery task for cid", cid
 
       let request = b.discovery.find(cid)
-      b.inFlightDiscReqs[cid] = request
+      b.inFlightDiscReqs[key] = request
       storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
 
       defer:
-        b.inFlightDiscReqs.del(cid)
+        b.inFlightDiscReqs.del(key)
         storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
 
       if (await request.withTimeout(DefaultDiscoveryTimeout)) and
           peers =? (await request).catch:
-        let dialed = await allFinished(peers.mapIt(b.network.dialPeer(it)))
+        let network = b.networks.networkFor(key.transport)
+        if network.isNil:
+          trace "Skipping providers because selected transport is unavailable",
+            transport = key.transport
+          continue
+        let dialed = await allFinished(peers.mapIt(network.dialPeer(it)))
+        if not b.onProviders.isNil:
+          b.onProviders(cid, key.transport, peers)
 
         for i, f in dialed:
           if f.failed:
@@ -102,11 +117,16 @@ proc routingTableHealthLoop(b: DiscoveryEngine) {.async: (raises: []).} =
     trace "Routing table health loop cancelled"
     return
 
-proc queueFindBlocksReq*(b: DiscoveryEngine, cids: seq[Cid]) =
+proc queueFindBlocksReq*(
+    b: DiscoveryEngine,
+    cids: seq[Cid],
+    transport: DownloadTransport = DownloadTransport.Direct,
+) =
   for cid in cids:
-    if cid notin b.discoveryQueue:
+    let key = (cid, transport)
+    if key notin b.discoveryQueue:
       try:
-        b.discoveryQueue.putNoWait(cid)
+        b.discoveryQueue.putNoWait(key)
       except CatchableError as exc:
         warn "Exception queueing discovery request", exc = exc.msg
 
@@ -152,7 +172,7 @@ proc new*(
     T: type DiscoveryEngine,
     localStore: BlockStore,
     peers: PeerContextStore,
-    network: BlockExcNetwork,
+    networks: BlockExcNetworks,
     discovery: Discovery,
     concurrentDiscReqs = DefaultConcurrentDiscRequests,
 ): DiscoveryEngine =
@@ -161,10 +181,10 @@ proc new*(
   DiscoveryEngine(
     localStore: localStore,
     peers: peers,
-    network: network,
+    networks: networks,
     discovery: discovery,
     concurrentDiscReqs: concurrentDiscReqs,
-    discoveryQueue: newAsyncQueue[Cid](concurrentDiscReqs),
+    discoveryQueue: newAsyncQueue[DiscoveryKey](concurrentDiscReqs),
     trackedFutures: TrackedFutures.new(),
-    inFlightDiscReqs: initTable[Cid, Future[seq[PeerRecord]]](),
+    inFlightDiscReqs: initTable[DiscoveryKey, Future[seq[PeerRecord]]](),
   )

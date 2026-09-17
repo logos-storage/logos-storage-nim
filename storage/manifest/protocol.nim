@@ -22,6 +22,7 @@ import ../logutils
 import ../errors
 import ./manifest
 import ./coders
+import ../mix
 
 export manifest, coders
 
@@ -45,6 +46,7 @@ type
     retries*: int
     retryDelay*: Duration
     fetchTimeout*: Duration
+    mixTransport: MixTransport
 
   ManifestFetchStatus* = enum
     Found = 0
@@ -126,13 +128,26 @@ proc handleManifestRequest(
     warn "Error handling manifest request", exc = exc.msg
 
 proc fetchManifestFromPeer(
-    self: ManifestProtocol, peer: PeerRecord, cid: Cid
+    self: ManifestProtocol, peer: PeerRecord, cid: Cid, transport: DownloadTransport
 ): Future[?!bt.Block] {.async: (raises: [CancelledError]).} =
   var conn: Connection
   try:
-    conn = await self.switch.dial(
-      peer.peerId, peer.addresses.mapIt(it.address), ManifestProtocolCodec
-    )
+    if transport == DownloadTransport.Mix:
+      if self.mixTransport.isNil:
+        return failure("Mix transport is not enabled")
+      let addresses = mixAddresses(peer.peerId, peer.addresses.mapIt(it.address))
+      if addresses.len == 0:
+        return failure("Provider has no usable Mix address")
+      conn = (
+        await self.mixTransport.dial(peer.peerId, addresses, ManifestProtocolCodec)
+      ).valueOr:
+        return failure(
+          "Error opening MixTransport manifest stream to " & $peer.peerId & ": " & error
+        )
+    else:
+      conn = await self.switch.dial(
+        peer.peerId, peer.addresses.mapIt(it.address), ManifestProtocolCodec
+      )
 
     let cidBytes = cid.data.buffer
     var reqBuf = newSeqUninit[byte](2 + cidBytes.len)
@@ -163,8 +178,12 @@ proc fetchManifestFromPeer(
       await conn.close()
 
 proc fetchManifest*(
-    self: ManifestProtocol, cid: Cid
+    self: ManifestProtocol,
+    cid: Cid,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
+  if transport == DownloadTransport.Mix and self.mixTransport.isNil:
+    return failure("Mix transport is not enabled")
   if err =? cid.isManifest.errorOption:
     return failure "CID has invalid content type for manifest {$cid}"
 
@@ -184,7 +203,7 @@ proc fetchManifest*(
 
       if providers.len > 0:
         for provider in providers:
-          let fetchFut = self.fetchManifestFromPeer(provider, cid)
+          let fetchFut = self.fetchManifestFromPeer(provider, cid, transport)
 
           var blkResult: ?!bt.Block
           if (await fetchFut.withTimeout(self.fetchTimeout)):
@@ -224,6 +243,16 @@ proc fetchManifest*(
     return failure("Unable to decode manifest: " & err.msg)
 
   return success manifest
+
+proc attachMixTransport*(self: ManifestProtocol, mixTransport: MixTransport) =
+  doAssert self.mixTransport.isNil, "MixTransport is already attached"
+  self.mixTransport = mixTransport
+
+proc detachMixTransport*(self: ManifestProtocol) =
+  self.mixTransport = nil
+
+func isMixEnabled*(self: ManifestProtocol): bool =
+  not self.mixTransport.isNil
 
 proc new*(
     T: type ManifestProtocol,

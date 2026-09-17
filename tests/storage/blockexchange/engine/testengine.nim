@@ -52,17 +52,34 @@ asyncchecksuite "NetworkStore engine handlers":
     localStore = CacheStore.new()
     network = BlockExcNetwork()
 
-    discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
+    discovery = DiscoveryEngine.new(
+      localStore, peerStore, newBlockExcNetworks(network), blockDiscovery
+    )
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     engine = BlockExcEngine.new(
-      localStore, network, discovery, advertiser, peerStore, downloadManager
+      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
     )
 
     peerCtx = PeerContext(id: peerId)
     engine.peers.add(peerCtx)
+
+  test "Default peer selection does not install provider tracking":
+    check discovery.onProviders.isNil
+
+  test "Provider tracking is installed only when a policy needs it":
+    discard BlockExcEngine.new(
+      localStore,
+      discovery.networks,
+      discovery,
+      advertiser,
+      peerStore,
+      downloadManager,
+      mixPeerSelectionPolicy = newProviderPriorityPolicy(),
+    )
+    check not discovery.onProviders.isNil
 
   test "Should handle want list":
     let
@@ -85,7 +102,7 @@ asyncchecksuite "NetworkStore engine handlers":
         check p.kind in {BlockPresenceType.HaveRange, BlockPresenceType.Complete}
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -107,7 +124,7 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -142,7 +159,7 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -163,7 +180,7 @@ asyncchecksuite "NetworkStore engine handlers":
     ) {.async: (raises: [CancelledError]).} =
       discard
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendWantList: sendWantList))
 
     let
@@ -222,7 +239,7 @@ asyncchecksuite "NetworkStore engine handlers":
       check presence[0].ranges.len > 0
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -263,7 +280,7 @@ asyncchecksuite "NetworkStore engine handlers":
         check r.start < 2
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)

@@ -53,8 +53,9 @@ asyncchecksuite "Test Discovery Engine":
   test "Should queue discovery request":
     var
       localStore = CacheStore.new()
-      discoveryEngine =
-        DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
+      discoveryEngine = DiscoveryEngine.new(
+        localStore, peerStore, newBlockExcNetworks(network), blockDiscovery
+      )
       want = newFuture[void]()
 
     blockDiscovery.findBlockProvidersHandler = proc(
@@ -73,7 +74,11 @@ asyncchecksuite "Test Discovery Engine":
     var
       localStore = CacheStore.new()
       discoveryEngine = DiscoveryEngine.new(
-        localStore, peerStore, network, blockDiscovery, concurrentDiscReqs = 2
+        localStore,
+        peerStore,
+        newBlockExcNetworks(network),
+        blockDiscovery,
+        concurrentDiscReqs = 2,
       )
       reqs = Future[void].Raising([CancelledError]).init()
       count = 0
