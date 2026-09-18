@@ -32,12 +32,12 @@ proc findPeer*(
   return none(PeerRecord)
 
 method find*(
-    d: MockDiscovery, cid: Cid
-): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
+    d: MockDiscovery, cid: Cid, useMix: bool = false
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
   if isNil(d.findBlockProvidersHandler):
     return
 
-  return await d.findBlockProvidersHandler(d, cid)
+  return ok(await d.findBlockProvidersHandler(d, cid))
 
 method provide*(
     d: MockDiscovery, cid: Cid
@@ -63,7 +63,7 @@ proc nullDiscovery*(): MockDiscovery =
     publishBlockProvideHandler: publishBlockProvideHandler,
   )
 
-# Slightly more contrived Discovery mock to allow testing of the privacy toggle.
+# Slightly more contrived Discovery mock to allow testing of the privacy flag.
 # Since we cannot declare `method` within blocks, we have to do this contortionism
 # here.
 type MixMockDiscovery* = ref object of Discovery

@@ -137,32 +137,29 @@ asyncchecksuite "Block Advertising and Discovery":
     await sleepAsync(3.seconds)
     await engine.stop()
 
-  test "should route queries over mix when privacy toggle is enabled":
+  test "Should query via mix when requested":
     let
-      privateRecord = PeerRecord.example
-      directRecord = PeerRecord.example
-      refCid = Cid.example
-
-    let
-      # this is an invalid object, but we just need it to be non-null
-      mix = MixProtocol()
+      public = PeerRecord.example
+      private = PeerRecord.example
       discovery = MixMockDiscovery.new()
 
-    discovery.mixProto = mix
+    discovery.directRecord = public
+    discovery.privateRecord = private
+    discovery.refCid = manifestBlock.cid
+    # The lookup is mocked, but find still requires Mix to be configured.
+    discovery.mixProto = MixProtocol()
     discovery.dhtMixProxies = @[SignedPeerRecord.example]
 
-    discovery.privateRecord = privateRecord
-    discovery.directRecord = directRecord
-    discovery.refCid = refCid
+    # Better safe than sorry.
+    check public.peerId != private.peerId
 
-    check (await discovery.find(refCid)) == @[directRecord]
-    let toggleRes = discovery.togglePrivateQueries(true)
-    check toggleRes.isOk
-    check toggleRes.get == false
-    check (await discovery.find(refCid)) == @[privateRecord]
+    check (await discovery.find(manifestBlock.cid, useMix = true)).get == @[private]
+    check (await discovery.find(manifestBlock.cid)).get == @[public]
 
-  test "should fail to enable private queries when MixProtocol is nil":
+  test "should error out if mix is requested but not configured":
     let discovery = MixMockDiscovery.new()
-    discovery.dhtMixProxies = @[SignedPeerRecord.example]
-    let res = discovery.togglePrivateQueries(true)
-    check res.isErr
+    discovery.directRecord = PeerRecord.example
+    discovery.privateRecord = PeerRecord.example
+    discovery.refCid = manifestBlock.cid
+
+    check (await discovery.find(manifestBlock.cid, useMix = true)).isErr

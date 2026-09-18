@@ -48,7 +48,7 @@ type DiscoveryEngine* = ref object of RootObj
     gcsafe, raises: []
   .}
   trackedFutures*: TrackedFutures # Tracked Discovery tasks futures
-  inFlightDiscReqs*: Table[DiscoveryKey, Future[seq[PeerRecord]]]
+  inFlightDiscReqs*: Table[DiscoveryKey, Future[?!seq[PeerRecord]]]
 
 proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
   ## Run discovery tasks
@@ -75,7 +75,7 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
         storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
 
       if (await request.withTimeout(DefaultDiscoveryTimeout)) and
-          peers =? (await request).catch:
+          peers =? await request:
         let network = b.networks.networkFor(key.transport)
         if network.isNil:
           trace "Skipping providers because selected transport is unavailable",
@@ -186,5 +186,5 @@ proc new*(
     concurrentDiscReqs: concurrentDiscReqs,
     discoveryQueue: newAsyncQueue[DiscoveryKey](concurrentDiscReqs),
     trackedFutures: TrackedFutures.new(),
-    inFlightDiscReqs: initTable[DiscoveryKey, Future[seq[PeerRecord]]](),
+    inFlightDiscReqs: initTable[DiscoveryKey, Future[?!seq[PeerRecord]]](),
   )
