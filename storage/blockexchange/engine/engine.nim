@@ -967,7 +967,8 @@ proc blockPresenceHandler*(
               trace "peer has complete tree", peer = peer, treeCid = treeCid
               BlockAvailability.complete()
             of BlockPresenceType.HaveRange:
-              trace "peer has ranges", peer = peer, treeCid = treeCid, len = presence.ranges.len
+              trace "peer has ranges",
+                peer = peer, treeCid = treeCid, len = presence.ranges.len
               if presence.ranges.len > 0:
                 BlockAvailability.fromRanges(presence.ranges)
               else:
@@ -1211,7 +1212,8 @@ proc configureNetwork(
     let maxIndex = high(Natural).uint64
     var totalCount: uint64 = 0
 
-    trace "Received WantBlocks request", peer = peer, treeCid = req.treeCid, ranges = req.ranges.len
+    trace "Received WantBlocks request",
+      peer = peer, treeCid = req.treeCid, ranges = req.ranges.len
     for r in req.ranges:
       if r.count == 0 or r.start > maxIndex or r.count - 1 > maxIndex - r.start or
           r.start > uint64.high - r.count or r.count > uint64.high - totalCount:
