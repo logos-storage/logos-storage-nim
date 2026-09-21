@@ -126,6 +126,26 @@ a substantial bottleneck in this workload. It does not establish a general
 performance bound. Random routes and delay samples were not paired or seeded;
 the experiment has only three runs per configuration.
 
+### Confirmation after committing the experiment
+
+Rebuilt both binaries from Storage `441ca680` and its clean MixTransport submodule
+at `6dc5bd73c4b884e9b9f9c95b49f10c76607bde0c`, then repeated one fresh pair on
+2026-09-21. Both downloads passed byte-for-byte verification:
+
+| Variant | End-to-end time, 1 MiB |
+| --- | ---: |
+| Sequential copies | 62.292 s |
+| Concurrent copies | 47.356 s |
+
+This confirmation pair took approximately 24% less time with concurrent copies,
+consistent with the original comparison. It is a smoke confirmation, not an
+additional load or anonymity assessment. Logs and executable hashes are retained
+under:
+
+```text
+/home/mc2/code/logos-storage/logos-storage-local-harness/outputs/copy-confirmation-0FI1datu
+```
+
 ## Safety and interpretation
 
 The focused MixTransport test `tests/test_surb_copy_sending.nim` confirms that both copies
