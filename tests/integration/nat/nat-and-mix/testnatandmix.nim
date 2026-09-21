@@ -10,7 +10,7 @@ import ../composehelper
 proc announcesCircuitAddr(info: JsonNode): bool =
   info{"addrs"}.getElems.anyIt("p2p-circuit" in it.getStr)
 
-asyncchecksuite "Mix queries with NATted endpoints":
+asyncchecksuite "Private downloads over Mix with NATted endpoints":
   let
     composeFile = currentSourcePath.parentDir / "compose.yml"
     seederApiUrl = "http://127.0.0.1:18090/api/storage/v1"
@@ -52,18 +52,21 @@ asyncchecksuite "Mix queries with NATted endpoints":
         info.announcesCircuitAddr(),
     )
 
-    # Both nodes route their DHT provider queries through Mix.
-    check eventuallyInfo(seederClient, info{"privateQueries"}.getBool)
-    check eventuallyInfo(leecherClient, info{"privateQueries"}.getBool)
-
     # The leecher finds the seeder's provider record over Mix and downloads.
     let contents = "private queries for the win"
     let cid = (await seederClient.upload(contents)).get
-    check (await leecherClient.download(cid)).get == contents
+    check (await leecherClient.download(cid, private = true)).get == contents
 
     # Double-check that the leecher is selecting Mix nodes.
     check eventuallySafe(
       "Selected mix node for surbs:" in serviceLogs(composeFile, "leecher"),
+      timeout = 60_000,
+      pollInterval = 2_000,
+    )
+
+    # AND using MixTransport for connections.
+    check eventuallySafe(
+      "Connecting to peer via MixTransport" in serviceLogs(composeFile, "leecher"),
       timeout = 60_000,
       pollInterval = 2_000,
     )
