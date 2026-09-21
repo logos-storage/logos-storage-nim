@@ -134,7 +134,9 @@ method find*(
   let providers =
     if useMix:
       if d.mixProto.isNil or d.dhtMixProxies.len == 0:
-        return failure("Mix lookup requested but MixProtocol not enabled no Mix proxies configured")
+        return failure(
+          "Mix lookup requested but MixProtocol not enabled no Mix proxies configured"
+        )
       else:
         (await d.findViaMix(cid)).valueOr:
           warn "Mix lookup failed", cid, err = error.msg
