@@ -12,7 +12,6 @@ import ./requests/node_p2p_request
 import ./requests/node_upload_request
 import ./requests/node_download_request
 import ./requests/node_storage_request
-import ./requests/node_mix_request
 
 from ../../storage/storage import StorageServer
 

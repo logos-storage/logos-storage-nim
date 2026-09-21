@@ -634,7 +634,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, false, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -648,7 +648,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     r = alloc_resp();
     r->chunk = malloc(chunk_size + 1);
 
-    if (storage_download_stream(storage_ctx, cid, chunk_size, local, filepath, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_stream(storage_ctx, cid, chunk_size, local, false, filepath, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -686,7 +686,7 @@ int check_download_chunk(void *storage_ctx, const char *cid)
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, false, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -737,7 +737,7 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_download_manifest(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_manifest(storage_ctx, cid, false, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -756,6 +756,95 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     free(res);
 
     return ret;
+}
+
+static int check_error(Resp *r, const char *expected_error)
+{
+    char *res = NULL;
+    int ret = is_resp_ok(r, &res);
+    if (ret != RET_ERR)
+    {
+        fprintf(stderr, "Expected RET_ERR but got %d\n", ret);
+        free(res);
+        return RET_ERR;
+    }
+
+    if (res == NULL || strstr(res, expected_error) == NULL)
+    {
+        fprintf(stderr, "Unexpected error message: %s\n", res ? res : "(null)");
+        free(res);
+        return RET_ERR;
+    }
+
+    free(res);
+    return RET_OK;
+}
+
+int check_download_manifest_private(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_manifest(storage_ctx, cid, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    // This node has no Mix transport, so a private request must fail.
+    return check_error(r, "Mix transport is not enabled");
+}
+
+int check_download_init_private(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_init(storage_ctx, cid, 0, false, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return check_error(r, "Mix transport is not enabled");
+}
+
+int check_download_privacy_mismatch(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_init(storage_ctx, cid, 0, false, false, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+    if (is_resp_ok(r, NULL) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    // Reusing a direct session must not silently accept a private request.
+    r = alloc_resp();
+    if (storage_download_init(storage_ctx, cid, 0, false, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+    if (check_error(r, "Download privacy setting does not match") != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    r = alloc_resp();
+    if (storage_download_stream(storage_ctx, cid, 0, false, true, "", (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+    if (check_error(r, "Download privacy setting does not match") != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    return check_download_cancel(storage_ctx, cid);
 }
 
 int check_list(void *storage_ctx)
@@ -930,6 +1019,9 @@ int main(void)
     RUN_TEST(check_download_chunk(storage_ctx, cid));
     RUN_TEST(check_download_cancel(storage_ctx, cid));
     RUN_TEST(check_download_manifest(storage_ctx, cid));
+    RUN_TEST(check_download_manifest_private(storage_ctx, cid));
+    RUN_TEST(check_download_init_private(storage_ctx, cid));
+    RUN_TEST(check_download_privacy_mismatch(storage_ctx, cid));
     RUN_TEST(check_list(storage_ctx));
     RUN_TEST(check_space(storage_ctx));
     RUN_TEST(check_exists(storage_ctx, cid, true));

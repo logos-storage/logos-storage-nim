@@ -37,7 +37,6 @@ import ./storage_thread_requests/requests/node_p2p_request
 import ./storage_thread_requests/requests/node_upload_request
 import ./storage_thread_requests/requests/node_download_request
 import ./storage_thread_requests/requests/node_storage_request
-import ./storage_thread_requests/requests/node_mix_request
 import ./ffi_types
 
 from ../storage/conf import storageVersion
@@ -397,6 +396,7 @@ proc storage_download_init(
     cid: cstring,
     chunkSize: csize_t,
     local: bool,
+    isPrivate: bool,
     callback: StorageCallback,
     userData: pointer,
 ): cint {.dynlib, exportc.} =
@@ -404,7 +404,11 @@ proc storage_download_init(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.INIT, cid = cid, chunkSize = chunkSize, local = local
+    NodeDownloadMsgType.INIT,
+    cid = cid,
+    chunkSize = chunkSize,
+    local = local,
+    isPrivate = isPrivate,
   )
 
   let res = storage_context.sendRequestToStorageThread(
@@ -470,12 +474,18 @@ proc storage_download_cancel(
   return callback.okOrError(res, userData)
 
 proc storage_download_manifest(
-    ctx: ptr StorageContext, cid: cstring, callback: StorageCallback, userData: pointer
+    ctx: ptr StorageContext,
+    cid: cstring,
+    isPrivate: bool,
+    callback: StorageCallback,
+    userData: pointer,
 ): cint {.dynlib, exportc.} =
   initializeLibrary()
   checkLibstorageParams(ctx, callback, userData)
 
-  let req = NodeDownloadRequest.createShared(NodeDownloadMsgType.MANIFEST, cid = cid)
+  let req = NodeDownloadRequest.createShared(
+    NodeDownloadMsgType.MANIFEST, cid = cid, isPrivate = isPrivate
+  )
 
   let res = storage_context.sendRequestToStorageThread(
     ctx, RequestType.DOWNLOAD, req, callback, userData
