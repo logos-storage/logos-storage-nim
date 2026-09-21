@@ -96,9 +96,8 @@ template setupAndTearDown*() {.dirty.} =
     blockDiscovery = Discovery.new(switch)
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new()
-    discovery = DiscoveryEngine.new(
-      localStore, peerStore, newBlockExcNetworks(network), blockDiscovery
-    )
+    discovery =
+      DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
     advertiser = Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
     engine = BlockExcEngine.new(
       localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager

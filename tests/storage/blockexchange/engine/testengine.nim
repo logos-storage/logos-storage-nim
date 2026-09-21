@@ -52,9 +52,8 @@ asyncchecksuite "NetworkStore engine handlers":
     localStore = CacheStore.new()
     network = BlockExcNetwork()
 
-    discovery = DiscoveryEngine.new(
-      localStore, peerStore, newBlockExcNetworks(network), blockDiscovery
-    )
+    discovery =
+      DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())

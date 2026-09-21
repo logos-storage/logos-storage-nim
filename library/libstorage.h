@@ -231,20 +231,6 @@ extern "C"
         StorageCallback callback,
         void *userData);
 
-    // When set to true, runs all of the subsequent DHT **queries** over
-    // the Logos mix network. Note that this affects queries only, not
-    // advertisements.
-    //
-    // This is a **temporary** API and will likely be gone by mainnet.
-    //
-    // The callback returns a string containing the previous value for
-    // private queries ("true" if they were enabled, or "false" otherwise).
-    int storage_toggle_private_queries(
-        void *ctx,
-        bool enabled,
-        StorageCallback callback,
-        void *userData);
-
     // Initialize a download for `cid`.
     // `chunkSize` defines the size of each chunk to be used during download.
     // The default value is the default block size 1024 * 64 bytes.

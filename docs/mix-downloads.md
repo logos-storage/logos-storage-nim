@@ -197,7 +197,7 @@ proc new*(
     directNetwork = BlockExcNetwork.new(switch)
     networks = newBlockExcNetworks(directNetwork)
     # Store and supporting service construction omitted.
-    blockDiscovery = DiscoveryEngine.new(repoStore, peerStore, networks, discovery)
+    blockDiscovery = DiscoveryEngine.new(peerStore, networks, discovery)
     engine = BlockExcEngine.new(
       repoStore, networks, blockDiscovery, advertiser, peerStore, downloadManager
     )
