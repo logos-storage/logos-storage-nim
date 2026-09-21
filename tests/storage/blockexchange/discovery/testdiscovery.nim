@@ -58,11 +58,7 @@ asyncchecksuite "Block Advertising and Discovery":
     (await localStore.putBlock(manifestBlock)).tryGet()
 
     discovery = DiscoveryEngine.new(
-      localStore,
-      peerStore,
-      newBlockExcNetworks(network),
-      blockDiscovery,
-      concurrentDiscReqs = 20,
+      peerStore, newBlockExcNetworks(network), blockDiscovery, concurrentDiscReqs = 20
     )
 
     advertiser =
@@ -90,7 +86,7 @@ asyncchecksuite "Block Advertising and Discovery":
       return
 
     blockDiscovery.findBlockProvidersHandler = proc(
-        d: MockDiscovery, cid: Cid
+        d: MockDiscovery, cid: Cid, useMix: bool = false
     ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       let matching = blocks.filterIt(it.cid == cid)
       for blk in matching:

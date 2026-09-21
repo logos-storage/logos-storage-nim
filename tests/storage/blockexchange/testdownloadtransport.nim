@@ -130,7 +130,7 @@ asyncchecksuite "Download transport selection":
           networks = newBlockExcNetworks(network)
           peers = PeerContextStore.new()
           manager = DownloadManager.new()
-          discoveryEngine = DiscoveryEngine.new(store, peers, networks, discovery)
+          discoveryEngine = DiscoveryEngine.new(peers, networks, discovery)
           advertiser =
             Advertiser.new(store, discovery, peerInfo = switches[index].peerInfo)
           engine = BlockExcEngine.new(
@@ -141,7 +141,7 @@ asyncchecksuite "Download transport selection":
           )
           transport = newMixTransport(mixes[index])
         discovery.findBlockProvidersHandler = proc(
-            d: MockDiscovery, cid: Cid
+            d: MockDiscovery, cid: Cid, useMix: bool = false
         ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
           return @[provider]
         engine.enableMixNetwork(transport)
@@ -192,9 +192,9 @@ asyncchecksuite "Download transport selection":
       # even when an earlier request established a Mix session with that peer.
       let directOnlyDiscovery = MockDiscovery.new()
       directOnlyDiscovery.findBlockProvidersHandler = proc(
-          d: MockDiscovery, cid: Cid
+          d: MockDiscovery, cid: Cid, useMix: bool = false
       ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
-        return success(@[PeerRecord.init(provider.peerId, @[infos[^1].multiAddr])])
+        return @[PeerRecord.init(provider.peerId, @[infos[^1].multiAddr])]
       let directOnlyManifest = ManifestProtocol.new(
         switches[0], CacheStore.new(), directOnlyDiscovery, retries = 1
       )
