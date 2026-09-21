@@ -524,7 +524,7 @@ proc new*(
       peerInfo = switch.peerInfo,
       advertiseContent = config.advertiseContent,
     )
-    blockDiscovery = DiscoveryEngine.new(repoStore, peerStore, networks, discovery)
+    blockDiscovery = DiscoveryEngine.new(peerStore, networks, discovery)
     engine = BlockExcEngine.new(
       repoStore, networks, blockDiscovery, advertiser, peerStore, downloadManager
     )
