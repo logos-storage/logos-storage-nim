@@ -648,7 +648,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     r = alloc_resp();
     r->chunk = malloc(chunk_size + 1);
 
-    if (storage_download_stream(storage_ctx, cid, chunk_size, local, false, filepath, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_stream(storage_ctx, cid, chunk_size, filepath, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -824,17 +824,6 @@ int check_download_privacy_mismatch(void *storage_ctx, const char *cid)
     // Reusing a direct session must not silently accept a private request.
     r = alloc_resp();
     if (storage_download_init(storage_ctx, cid, 0, false, true, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-    if (check_error(r, "Download privacy setting does not match") != RET_OK)
-    {
-        return RET_ERR;
-    }
-
-    r = alloc_resp();
-    if (storage_download_stream(storage_ctx, cid, 0, false, true, "", (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
