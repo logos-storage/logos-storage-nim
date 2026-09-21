@@ -195,12 +195,6 @@ proc start*(self: StorageServer) {.async.} =
     switch.mount(dhtProxyProto)
 
     self.storageNode.discovery.mixProto = mixProto
-
-    if self.config.dhtMixProxies.len > 0:
-      discard self.storageNode.discovery.togglePrivateQueries(true).valueOr:
-        raise
-          newException(StorageError, "Failed to enable private queries: " & error.msg)
-
     self.storageNode.engine.networks.direct.excludeRelays(relayPool.keys.toSeq)
 
     await self.startMixTransport(mixProto)

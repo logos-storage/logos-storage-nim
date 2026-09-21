@@ -14,9 +14,9 @@ import pkg/questionable/results
 import pkg/storage/discovery
 
 type MockDiscovery* = ref object of Discovery
-  findBlockProvidersHandler*: proc(d: MockDiscovery, cid: Cid): Future[seq[PeerRecord]] {.
-    async: (raises: [CancelledError])
-  .}
+  findBlockProvidersHandler*: proc(
+    d: MockDiscovery, cid: Cid, useMix: bool = false
+  ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).}
 
   publishBlockProvideHandler*:
     proc(d: MockDiscovery, cid: Cid): Future[void] {.async: (raises: [CancelledError]).}
@@ -37,7 +37,7 @@ method find*(
   if isNil(d.findBlockProvidersHandler):
     return
 
-  return ok(await d.findBlockProvidersHandler(d, cid))
+  return ok(await d.findBlockProvidersHandler(d, cid, useMix))
 
 method provide*(
     d: MockDiscovery, cid: Cid
@@ -49,7 +49,7 @@ method provide*(
 
 proc nullDiscovery*(): MockDiscovery =
   proc findBlockProvidersHandler(
-      d: MockDiscovery, cid: Cid
+      d: MockDiscovery, cid: Cid, useMix: bool = false
   ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
     return @[]
 

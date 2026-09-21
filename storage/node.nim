@@ -310,8 +310,7 @@ proc retrieve*(
     return await self.streamSingleBlock(cid)
 
   await self.streamEntireDataset(
-    ManifestDescriptor(manifest: manifest, manifestCid: cid),
-    transport = transport,
+    ManifestDescriptor(manifest: manifest, manifestCid: cid), transport = transport
   )
 
 proc deleteSingleBlock(self: StorageNodeRef, cid: Cid): Future[?!void] {.async.} =
@@ -474,9 +473,6 @@ proc iterateManifests*(self: StorageNodeRef, onManifest: OnManifest) {.async.} =
         return
 
       onManifest(cid, manifest)
-
-proc togglePrivateQueries*(self: StorageNodeRef, enable: bool): ?!bool =
-  self.discovery.togglePrivateQueries(enable)
 
 proc onExpiryUpdate(
     self: StorageNodeRef, rootCid: Cid, expiry: SecondsSince1970
