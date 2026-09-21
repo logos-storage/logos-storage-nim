@@ -56,7 +56,12 @@ type
     chunkSize: int
     isPrivate: bool
 
-var downloadSessions {.threadvar.}: Table[DownloadSessionId, DownloadSession]
+var downloadSessions {.threadvar.}:
+  tuple[lock: AsyncLock, sessions: Table[DownloadSessionId, DownloadSession]]
+
+proc sessionTableLock(): AsyncLock =
+  if downloadSessions.lock.isNil:
+    downloadSessions.lock = newAsyncLock()
 
 proc createShared*(
     T: type NodeDownloadRequest,
@@ -99,6 +104,13 @@ proc init(
   let cid = Cid.init($cCid)
   if cid.isErr:
     return err("Failed to download locally: cannot parse cid: " & $cCid)
+
+  # Coarse lock which blocks two download sessions from being created concurrently.
+  # Prevents a second caller from entering and creating another session while we're
+  # blocked in node.retrieve.
+  await sessionTableLock().acquire()
+  defer:
+    sessionTableLock().release()
 
   downloadSessions.withValue($cid, session):
     if session.isPrivate != isPrivate:
