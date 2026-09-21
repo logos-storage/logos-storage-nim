@@ -62,6 +62,7 @@ var downloadSessions {.threadvar.}:
 proc sessionTableLock(): AsyncLock =
   if downloadSessions.lock.isNil:
     downloadSessions.lock = newAsyncLock()
+  downloadSessions.lock
 
 proc createShared*(
     T: type NodeDownloadRequest,
@@ -100,6 +101,7 @@ proc init(
   ## Meaning that a cid can only have one active download session.
   ## If the chunkSize is 0, the default block size will be used.
   ## If local is true, the file will be retrived from the local store.
+  ## If isPrivate is true, uses mix to run queries and download the data.
 
   let cid = Cid.init($cCid)
   if cid.isErr:
@@ -108,11 +110,19 @@ proc init(
   # Coarse lock which blocks two download sessions from being created concurrently.
   # Prevents a second caller from entering and creating another session while we're
   # blocked in node.retrieve.
-  await sessionTableLock().acquire()
-  defer:
-    sessionTableLock().release()
+  try:
+    await sessionTableLock().acquire()
+  except CancelledError as ex:
+    return err("Could not acquire session table lock - cancelled")
 
-  downloadSessions.withValue($cid, session):
+  defer:
+    try:
+      sessionTableLock().release()
+    except AsyncLockError:
+      # shouldn't happen
+      doAssert false, "lock released twice"
+
+  downloadSessions.sessions.withValue($cid, session):
     if session.isPrivate != isPrivate:
       return err("Download privacy setting does not match the existing session.")
     return ok("Download session already exists.")
@@ -127,11 +137,11 @@ proc init(
       return err("Failed to init the download: " & res.error.msg)
     stream = res.get()
   except CancelledError:
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to init the download: download cancelled.")
 
   let blockSize = if chunkSize.int > 0: chunkSize.int else: DefaultBlockSize.int
-  downloadSessions[$cid] =
+  downloadSessions.sessions[$cid] =
     DownloadSession(stream: stream, chunkSize: blockSize, isPrivate: isPrivate)
 
   return ok("")
@@ -151,12 +161,12 @@ proc chunk(
   if cid.isErr:
     return err("Failed to download locally: cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     return err("Failed to download chunk: no session for cid " & $cid)
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     return err("Failed to download chunk: no session for cid " & $cid)
 
@@ -172,11 +182,11 @@ proc chunk(
     buf.setLen(read)
   except LPStreamError as e:
     await stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to download chunk: " & $e.msg)
   except CancelledError:
     await stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to download chunk: download cancelled.")
 
   if buf.len <= 0:
@@ -233,31 +243,25 @@ proc stream(
     storage: ptr StorageServer,
     cCid: cstring,
     chunkSize: csize_t,
-    local: bool,
-    isPrivate: bool,
     filepath: cstring,
     onChunk: OnChunkHandler,
 ): Future[Result[string, string]] {.async: (raises: []).} =
   ## Stream the file identified by cid, calling the onChunk handler for each chunk
   ## and / or writing to a file if filepath is set.
   ##
-  ## If local is true, the file will be retrieved from the local store.
 
   let cid = Cid.init($cCid)
   if cid.isErr:
     return err("Failed to stream: cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     return err("Failed to stream: no session for cid " & $cid)
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     return err("Failed to stream: no session for cid " & $cid)
-
-  if session.isPrivate != isPrivate:
-    return err("Download privacy setting does not match the existing session.")
 
   try:
     let res =
@@ -271,7 +275,7 @@ proc stream(
   finally:
     if session.stream != nil:
       await session.stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
 
   return ok("")
 
@@ -286,20 +290,20 @@ proc cancel(
   if cid.isErr:
     return err("Failed to cancel : cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     # The session is already cancelled
     return ok("")
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     # The session is already cancelled
     return ok("")
 
   let stream = session.stream
   await stream.close()
-  downloadSessions.del($cid)
+  downloadSessions.sessions.del($cid)
 
   return ok("")
 
@@ -347,12 +351,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeDownloadMsgType.STREAM:
-    let res = (
-      await stream(
-        storage, self.cid, self.chunkSize, self.local, self.isPrivate, self.filepath,
-        onChunk,
-      )
-    )
+    let res = (await stream(storage, self.cid, self.chunkSize, self.filepath, onChunk))
     if res.isErr:
       error "Failed to STREAM.", error = res.error
       return err($res.error)

@@ -435,8 +435,6 @@ proc storage_download_stream(
     ctx: ptr StorageContext,
     cid: cstring,
     chunkSize: csize_t,
-    local: bool,
-    isPrivate: bool,
     filepath: cstring,
     callback: StorageCallback,
     userData: pointer,
@@ -445,12 +443,7 @@ proc storage_download_stream(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.STREAM,
-    cid = cid,
-    chunkSize = chunkSize,
-    isPrivate = isPrivate,
-    local = local,
-    filepath = filepath,
+    NodeDownloadMsgType.STREAM, cid = cid, chunkSize = chunkSize, filepath = filepath
   )
 
   let res = storage_context.sendRequestToStorageThread(

@@ -254,8 +254,6 @@ extern "C"
     // The init method must have been called prior to this.
     // If filepath is provided, the content will be written to that file.
     // The callback will be called with RET_PROGRESS updates during the download/
-    // `local` indicates whether to attempt local store retrieval only.
-    // `isPrivate` selects Mix transport; must match privacy setting for ongoing download sessions, if any
     //
     // Typical usage:
     // storage_download_init(ctx, cid, chunkSize, local, isPrivate, myCallback, myUserData);
@@ -265,8 +263,6 @@ extern "C"
         void *ctx,
         const char *cid,
         size_t chunkSize,
-        bool local,
-        bool isPrivate,
         const char *filepath,
         StorageCallback callback,
         void *userData);
