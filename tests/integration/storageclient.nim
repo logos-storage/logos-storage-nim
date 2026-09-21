@@ -115,17 +115,19 @@ proc upload*(
   return client.upload(string.fromBytes(bytes))
 
 proc downloadRaw*(
-    client: StorageClient, cid: string, local = false
+    client: StorageClient, cid: string, local = false, private = false
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
-  return
-    client.get(client.baseurl & "/data/" & cid & (if local: "" else: "/network/stream"))
+  return client.get(
+    client.baseurl & "/data/" & cid & (if local: "" else: "/network/stream") &
+      (if private: "?transport=mix" else: "?transport=direct")
+  )
 
 proc downloadBytes*(
-    client: StorageClient, cid: Cid, local = false
+    client: StorageClient, cid: Cid, local = false, private = false
 ): Future[?!seq[byte]] {.async: (raises: [CancelledError, HttpError]).} =
-  let response = await client.downloadRaw($cid, local = local)
+  let response = await client.downloadRaw($cid, local = local, private = private)
 
   if response.status != 200:
     return failure($response.status)
@@ -133,9 +135,10 @@ proc downloadBytes*(
   success await response.getBodyBytes()
 
 proc download*(
-    client: StorageClient, cid: Cid, local = false
+    client: StorageClient, cid: Cid, local = false, private = false
 ): Future[?!string] {.async: (raises: [CancelledError, HttpError]).} =
-  without response =? await client.downloadBytes(cid, local = local), err:
+  without response =? await client.downloadBytes(cid, local = local, private = private),
+    err:
     return failure(err)
   return success bytesToString(response)
 
