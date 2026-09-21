@@ -194,7 +194,7 @@ asyncchecksuite "Download transport selection":
       directOnlyDiscovery.findBlockProvidersHandler = proc(
           d: MockDiscovery, cid: Cid
       ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
-        return @[PeerRecord.init(provider.peerId, @[infos[^1].multiAddr])]
+        return success(@[PeerRecord.init(provider.peerId, @[infos[^1].multiAddr])])
       let directOnlyManifest = ManifestProtocol.new(
         switches[0], CacheStore.new(), directOnlyDiscovery, retries = 1
       )

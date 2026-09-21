@@ -37,7 +37,6 @@ const
 type DiscoveryKey = tuple[cid: Cid, transport: DownloadTransport]
 
 type DiscoveryEngine* = ref object of RootObj
-  localStore*: BlockStore # Local block store for this instance
   peers*: PeerContextStore # Peer context store
   networks*: BlockExcNetworks # Protocol instances available for provider dialing
   discovery*: Discovery # Discovery interface
@@ -66,7 +65,8 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
 
       trace "Running discovery task for cid", cid
 
-      let request = b.discovery.find(cid)
+      let request =
+        b.discovery.find(cid, useMix = key.transport == DownloadTransport.Mix)
       b.inFlightDiscReqs[key] = request
       storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
 
@@ -74,8 +74,7 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
         b.inFlightDiscReqs.del(key)
         storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
 
-      if (await request.withTimeout(DefaultDiscoveryTimeout)) and
-          peers =? await request:
+      if (await request.withTimeout(DefaultDiscoveryTimeout)) and peers =? await request:
         let network = b.networks.networkFor(key.transport)
         if network.isNil:
           trace "Skipping providers because selected transport is unavailable",
@@ -170,7 +169,6 @@ proc stop*(b: DiscoveryEngine) {.async: (raises: []).} =
 
 proc new*(
     T: type DiscoveryEngine,
-    localStore: BlockStore,
     peers: PeerContextStore,
     networks: BlockExcNetworks,
     discovery: Discovery,
@@ -179,7 +177,6 @@ proc new*(
   ## Create a discovery engine instance
   ##
   DiscoveryEngine(
-    localStore: localStore,
     peers: peers,
     networks: networks,
     discovery: discovery,

@@ -392,20 +392,6 @@ proc storage_upload_file(
 
   return callback.okOrError(res, userData)
 
-proc storage_toggle_private_queries(
-    ctx: ptr StorageContext, enabled: bool, callback: StorageCallback, userData: pointer
-): cint {.dynlib, exportc.} =
-  initializeLibrary()
-  checkLibstorageParams(ctx, callback, userData)
-
-  let req = NodeMixRequest.createShared(privateQueries = enabled)
-
-  let res = storage_context.sendRequestToStorageThread(
-    ctx, RequestType.MIX, req, callback, userData
-  )
-
-  return callback.okOrError(res, userData)
-
 proc storage_download_init(
     ctx: ptr StorageContext,
     cid: cstring,
@@ -446,6 +432,7 @@ proc storage_download_stream(
     cid: cstring,
     chunkSize: csize_t,
     local: bool,
+    isPrivate: bool,
     filepath: cstring,
     callback: StorageCallback,
     userData: pointer,
@@ -457,6 +444,7 @@ proc storage_download_stream(
     NodeDownloadMsgType.STREAM,
     cid = cid,
     chunkSize = chunkSize,
+    isPrivate = isPrivate,
     local = local,
     filepath = filepath,
   )
