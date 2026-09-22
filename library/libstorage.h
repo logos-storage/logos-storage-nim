@@ -240,7 +240,7 @@ extern "C"
     // Typical usage:
     // storage_download_init(ctx, cid, chunkSize, local, isPrivate, myCallback, myUserData);
     // ...
-    // storage_download_stream(ctx, cid, chunkSize, local, isPrivate, filepath, myCallback, myUserData);
+    // storage_download_stream(ctx, cid, chunkSize, filepath, myCallback, myUserData);
     int storage_download_init(
         void *ctx,
         const char *cid,
@@ -258,7 +258,7 @@ extern "C"
     // Typical usage:
     // storage_download_init(ctx, cid, chunkSize, local, isPrivate, myCallback, myUserData);
     // ...
-    // storage_download_stream(ctx, cid, chunkSize, local, isPrivate, filepath, myCallback, myUserData);
+    // storage_download_stream(ctx, cid, chunkSize, filepath, myCallback, myUserData);
     int storage_download_stream(
         void *ctx,
         const char *cid,
