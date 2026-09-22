@@ -44,7 +44,7 @@ asyncchecksuite "Test Node - Basic":
   test "Fetch Manifest":
     let md = await storeDataGetManifest(localStore, chunker)
 
-    let fetched = (await node.fetchManifest(md.manifestCid)).tryGet()
+    let fetched = (await node.fetchManifest(md.manifestCid, advertise = true)).tryGet()
 
     check:
       fetched == md.manifest
@@ -75,7 +75,7 @@ asyncchecksuite "Test Node - Basic":
   test "Should store Data Stream":
     let
       stream = BufferStream.new()
-      storeFut = node.store(stream)
+      storeFut = node.store(stream, advertise = true)
         # Let's check that node.store can correctly rechunk these odd chunks
       oddChunker = FileChunker.new(file = file, chunkSize = 1024.NBytes, pad = false)
         # don't pad, so `node.store` gets the correct size
@@ -107,7 +107,8 @@ asyncchecksuite "Test Node - Basic":
   test "Should retrieve a Data Stream":
     let md = await storeDataGetManifest(localStore, chunker)
 
-    let data = await ((await node.retrieve(md.manifestCid)).tryGet()).drain()
+    let data =
+      await ((await node.retrieve(md.manifestCid, advertise = true)).tryGet()).drain()
 
     var storedData: seq[byte]
     for i in 0 ..< md.manifest.blocksCount:
@@ -188,7 +189,7 @@ asyncchecksuite "Test Node - Basic":
       blk = bt.Block.new(testString.toBytes).tryGet()
 
     (await localStore.putBlock(blk)).tryGet()
-    let stream = (await node.retrieve(blk.cid)).tryGet()
+    let stream = (await node.retrieve(blk.cid, advertise = true)).tryGet()
     defer:
       await stream.close()
 
@@ -220,6 +221,57 @@ asyncchecksuite "Test Node - Basic":
     for blk in blocks:
       check not (await blk.cid in localStore)
 
+  test "Should delete the advertise state with the dataset":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    (await node.setAdvertise(md.manifestCid, false)).tryGet()
+    (await node.delete(md.manifestCid)).tryGet()
+
+    check:
+      (await localStore.isAdvertised(md.manifestCid)).tryGet()
+      (await localStore.isAdvertised(md.manifest.treeCid)).tryGet()
+
+  test "Should stop advertising the manifest and tree cid":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    (await node.setAdvertise(md.manifestCid, false)).tryGet()
+
+    check:
+      not (await node.isAdvertised(md.manifestCid)).tryGet()
+      not (await localStore.isAdvertised(md.manifest.treeCid)).tryGet()
+
+  test "Should resume advertising and queue the manifest cid":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    (await node.setAdvertise(md.manifestCid, false)).tryGet()
+    (await node.setAdvertise(md.manifestCid, true)).tryGet()
+
+    check:
+      (await node.isAdvertised(md.manifestCid)).tryGet()
+      (await localStore.isAdvertised(md.manifest.treeCid)).tryGet()
+      md.manifestCid in advertiser.advertiseQueue
+
+  test "Should fail to set the advertise state of a non manifest cid":
+    let blk = bt.Block.new("Random block".toBytes).tryGet()
+
+    check (await node.setAdvertise(blk.cid, false)).isErr
+
+  test "Should fail to set the advertise state of a manifest not stored locally":
+    let
+      manifest = Manifest.new(
+        treeCid = Cid.example, blockSize = 123.NBytes, datasetSize = 234.NBytes
+      )
+      manifestBlk =
+        bt.Block.new(data = manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
+
+    check (await node.setAdvertise(manifestBlk.cid, false)).isErr
+
   test "Should return true when a cid is already in the local store":
     let
       blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
@@ -242,7 +294,7 @@ asyncchecksuite "Test Node - Basic":
   test "updateExpiry returns failure when block metadata is missing":
     let
       manifest = Manifest.example
-      manifestBlk = (await node.storeManifest(manifest)).tryGet()
+      manifestBlk = (await node.storeManifest(manifest, advertise = true)).tryGet()
       expiry = SecondsSince1970(9999999999)
     let res = await node.updateExpiry(manifestBlk.cid, expiry)
     check res.isErr

@@ -22,6 +22,7 @@ const
   StorageBlocksKey* = Key.init(StorageBlocksNamespace).tryGet
   StorageTotalBlocksKey* = Key.init(StorageBlockTotalNamespace).tryGet
   StorageManifestKey* = Key.init(StorageManifestNamespace).tryGet
+  AdvertiseKey* = Key.init(StorageAdvertiseNamespace).tryGet
   BlocksTtlKey* = Key.init(StorageBlocksTtlNamespace).tryGet
   BlockProofKey* = Key.init(StorageBlockProofNamespace).tryGet
   QuotaKey* = Key.init(StorageQuotaNamespace).tryGet
@@ -42,6 +43,9 @@ proc createBlockExpirationMetadataKey*(cid: Cid): ?!Key =
 proc createBlockExpirationMetadataQueryKey*(): ?!Key =
   let queryString = ?(BlocksTtlKey / "*")
   Key.init(queryString)
+
+proc createAdvertiseMetadataKey*(cid: Cid): ?!Key =
+  AdvertiseKey / $cid
 
 proc createBlockCidAndProofMetadataKey*(treeCid: Cid, index: Natural): ?!Key =
   (BlockProofKey / $treeCid).flatMap((k: Key) => k / $index)

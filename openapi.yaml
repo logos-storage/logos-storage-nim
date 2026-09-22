@@ -188,6 +188,18 @@ components:
         manifest:
           $ref: "#/components/schemas/ManifestItem"
 
+    AdvertiseState:
+      type: object
+      required:
+        - cid
+        - advertise
+      properties:
+        cid:
+          $ref: "#/components/schemas/Cid"
+        advertise:
+          type: boolean
+          description: "Whether the dataset is announced to the DHT and served to peers"
+
     ManifestItem:
       type: object
       required:
@@ -328,6 +340,13 @@ paths:
           schema:
             type: string
             example: 'attachment; filename="storage.png"'
+        - name: advertise
+          in: query
+          required: false
+          description: "When false, the dataset is neither announced to the DHT nor served to peers. Defaults to true."
+          schema:
+            type: boolean
+            default: true
       requestBody:
         content:
           application/octet-stream:
@@ -406,6 +425,13 @@ paths:
           schema:
             $ref: "#/components/schemas/Cid"
           description: "File to be downloaded."
+        - name: advertise
+          in: query
+          required: false
+          description: "When false, the dataset is neither announced to the DHT nor served to peers. Defaults to true."
+          schema:
+            type: boolean
+            default: true
       responses:
         "200":
           description: Manifest information for download that has been started.
@@ -432,6 +458,13 @@ paths:
           schema:
             $ref: "#/components/schemas/Cid"
           description: "File to be downloaded."
+        - name: advertise
+          in: query
+          required: false
+          description: "When false, the dataset is neither announced to the DHT nor served to peers. Defaults to true."
+          schema:
+            type: boolean
+            default: true
       responses:
         "200":
           description: Retrieved content specified by CID
@@ -459,6 +492,13 @@ paths:
           schema:
             $ref: "#/components/schemas/Cid"
           description: "File for which the manifest is to be downloaded."
+        - name: advertise
+          in: query
+          required: false
+          description: "When false, the dataset is neither announced to the DHT nor served to peers. Defaults to true."
+          schema:
+            type: boolean
+            default: true
       responses:
         "200":
           description: Manifest information.
@@ -470,6 +510,62 @@ paths:
           description: Invalid CID is specified
         "404":
           description: Failed to download dataset manifest
+        "500":
+          description: Well it was bad-bad
+
+  "/data/{cid}/advertise":
+    get:
+      summary: "Check whether the dataset is announced to the DHT and served to peers."
+      tags: [Data]
+      operationId: getAdvertise
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema:
+            $ref: "#/components/schemas/Cid"
+          description: "Dataset to be checked."
+      responses:
+        "200":
+          description: Advertise state of the dataset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdvertiseState"
+        "400":
+          description: Invalid or non-manifest CID is specified
+        "404":
+          description: Dataset not found in the local node
+        "500":
+          description: Well it was bad-bad
+    post:
+      summary: "Announce the dataset to the DHT and serve it to peers, or stop doing both. Already published DHT records are not withdrawn, they stop being republished and expire."
+      tags: [Data]
+      operationId: setAdvertise
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema:
+            $ref: "#/components/schemas/Cid"
+          description: "Dataset to be announced or hidden."
+        - name: advertise
+          in: query
+          required: true
+          description: "When false, the dataset is neither announced to the DHT nor served to peers."
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Advertise state of the dataset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdvertiseState"
+        "400":
+          description: Invalid or non-manifest CID, or invalid advertise value is specified
+        "404":
+          description: Dataset not found in the local node
         "500":
           description: Well it was bad-bad
 

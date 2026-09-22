@@ -11,6 +11,7 @@
 
 import std/random
 import std/sequtils
+import std/tables
 
 import pkg/chronos
 import pkg/libp2p
@@ -156,6 +157,16 @@ method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), bas
     raise exc
   except CatchableError as exc:
     warn "Error providing block", cid, exc = exc.msg
+
+method stopProviding*(d: Discovery, cid: Cid) {.base, gcsafe, raises: [].} =
+  ## Stop announcing a block Cid
+  ##
+  d.kad.stopProviding(cid)
+
+method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
+  ## Stop announcing every Cid this node provides by clearing the table
+  ##
+  d.kad.providerManager.providedKeys.provided.clear()
 
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
