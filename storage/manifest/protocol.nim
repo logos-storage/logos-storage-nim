@@ -199,12 +199,13 @@ proc fetchManifest*(
     for attempt in 0 ..< self.retries:
       trace "Manifest fetch attempt", cid, attempt, maxRetries = self.retries
 
-      without providers =?
-        await self.discovery.find(cid, useMix = (transport == DownloadTransport.Mix)),
-        err:
-        warn "Lookup failed, will retry", cid, err
-        lastErr = err
-        continue
+      let providers = (
+        await self.discovery.find(cid, useMix = (transport == DownloadTransport.Mix))
+      ).valueOr:
+        warn "Lookup failed, will retry", cid, err = error
+        lastErr = error
+        # evals to empty provider list
+        @[]
 
       if providers.len > 0:
         for provider in providers:

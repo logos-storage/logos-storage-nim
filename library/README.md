@@ -381,17 +381,12 @@ Perform a streaming download for `cid`. Init must have been called prior.
 
 - If `filepath` is provided, content is written to that file.
 - Callback may be called with `RET_PROGRESS` updates during download.
-- `local` indicates whether to attempt local store retrieval only.
-- `isPrivate`: use Mix transport when true, or direct peer connetions when false. 
-     Existing download sessions for the same `cid`, if any, must have the same privacy setting.
 
 ```c
 int storage_download_stream(
     void *ctx,
     const char *cid,
     size_t chunkSize,
-    bool local,
-    bool isPrivate,
     const char *filepath,
     StorageCallback callback,
     void *userData
