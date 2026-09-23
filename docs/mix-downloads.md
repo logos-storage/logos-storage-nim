@@ -49,7 +49,7 @@ router.api(MethodPost, "/api/storage/v1/data/{cid}/network") do(
     return RestApiResponse.error(Http400, error, headers = headers)
 
   # CID validation omitted.
-  without manifest =? (await node.fetchManifest(cid.get(), transport)), err:
+  without manifest =? (await node.fetchManifest(cid.get(), true, transport)), err:
     return RestApiResponse.error(Http404, err.msg, headers = headers)
 
   let md = ManifestDescriptor(manifest: manifest, manifestCid: cid.get())
@@ -70,6 +70,7 @@ The node's manifest entry point delegates to `ManifestProtocol`:
 proc fetchManifest*(
     self: StorageNodeRef,
     cid: Cid,
+    advertise: bool = true,
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).}
 ```
@@ -602,7 +603,7 @@ The Direct path passes the complete provider address list to the Switch, leaving
 
 ```nim
 proc fetchManifestFromPeer(
-    self: ManifestProtocol, peer: PeerRecord, cid: Cid, transport: DownloadTransport
+    self: ManifestProtocol, peer: PeerRecord, cid: Cid, advertise: bool, transport: DownloadTransport
 ): Future[?!bt.Block] {.async: (raises: [CancelledError]).} =
   var conn: Connection
   try:

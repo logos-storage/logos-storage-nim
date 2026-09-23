@@ -11,6 +11,7 @@
 
 import std/random
 import std/sequtils
+import std/tables
 
 import pkg/chronos
 import pkg/libp2p
@@ -46,8 +47,6 @@ type
     kad*: KadDHT # libp2p Kademlia DHT
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
-    bootstrapNodes: seq[(PeerId, seq[MultiAddress])]
-      # kept to re-seed the routing table when it goes empty
     mixProto*: MixProtocol
     dhtMixProxies*: seq[SignedPeerRecord]
 
@@ -160,6 +159,16 @@ method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), bas
   except CatchableError as exc:
     warn "Error providing block", cid, exc = exc.msg
 
+method stopProviding*(d: Discovery, cid: Cid) {.base, gcsafe, raises: [].} =
+  ## Stop announcing a block Cid
+  ##
+  d.kad.stopProviding(cid)
+
+method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
+  ## Stop announcing every Cid this node provides by clearing the table
+  ##
+  d.kad.providerManager.providedKeys.provided.clear()
+
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
 
@@ -188,19 +197,6 @@ proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
 
 proc isServerMode*(d: Discovery): bool =
   d.kad.isServer
-
-proc hasBootstrapNodes*(d: Discovery): bool =
-  d.bootstrapNodes.len > 0
-
-proc routingTableEmpty*(d: Discovery): bool =
-  for bucket in d.kad.rtable.buckets:
-    if bucket.peers.len > 0:
-      return false
-  true
-
-proc reseedRoutingTable*(d: Discovery) {.async: (raises: [CancelledError]).} =
-  d.kad.updatePeers(d.bootstrapNodes)
-  await d.kad.bootstrap(forceRefresh = true)
 
 proc routingTable*(
     d: Discovery
@@ -235,15 +231,12 @@ proc new*(
   ##
 
   var self = Discovery(
-    switch: switch,
-    peerId: switch.peerInfo.peerId,
-    bootstrapNodes: @bootstrapNodes,
-    dhtMixProxies: @dhtMixProxies,
+    switch: switch, peerId: switch.peerInfo.peerId, dhtMixProxies: @dhtMixProxies
   )
 
   self.kad = KadDHT.new(
     switch,
-    bootstrapNodes = self.bootstrapNodes,
+    bootstrapNodes = @bootstrapNodes,
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

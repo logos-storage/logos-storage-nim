@@ -1013,6 +1013,15 @@ proc wantListHandler*(
     for e in wantList.entries:
       storage_block_exchange_want_have_lists_received.inc()
 
+      without advertised =? (await self.localStore.isAdvertised(e.address.treeCid)), err:
+        warn "Unable to read advertise state",
+          treeCid = e.address.treeCid, err = err.msg
+        continue
+
+      if not advertised:
+        trace "Not serving presence", peer = peer, treeCid = e.address.treeCid
+        continue
+
       if e.rangeCount > 0:
         let
           startIdx = e.address.index.uint64
@@ -1209,6 +1218,16 @@ proc configureNetwork(
   proc wantBlocksRequestHandler(
       peer: PeerId, req: WantBlocksRequest
   ): Future[seq[BlockDelivery]] {.async: (raises: [CancelledError]).} =
+    without advertised =? (await self.localStore.isAdvertised(req.treeCid)),
+      advertiseErr:
+      warn "Unable to read advertise state",
+        treeCid = req.treeCid, err = advertiseErr.msg
+      return @[]
+
+    if not advertised:
+      trace "Not serving blocks", peer = peer, treeCid = req.treeCid
+      return @[]
+
     let maxIndex = high(Natural).uint64
     var totalCount: uint64 = 0
 

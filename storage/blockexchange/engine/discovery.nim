@@ -32,7 +32,6 @@ declareGauge(storage_inflight_discovery, "inflight discovery requests")
 const
   DefaultConcurrentDiscRequests = 10
   DefaultDiscoveryTimeout = 1.minutes
-  RoutingTableHealthInterval = 30.seconds
 
 type DiscoveryKey = tuple[cid: Cid, transport: DownloadTransport]
 
@@ -93,29 +92,6 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
 
   info "Exiting discovery task runner"
 
-proc routingTableHealthLoop(b: DiscoveryEngine) {.async: (raises: []).} =
-  ## Re-seed the DHT routing table from the configured bootstrap nodes when
-  ## it goes empty.
-  try:
-    while b.discEngineRunning:
-      await sleepAsync(RoutingTableHealthInterval)
-
-      if not b.discovery.routingTableEmpty():
-        continue
-
-      warn "Routing table empty, re-seeding from bootstrap nodes"
-
-      try:
-        await b.discovery.reseedRoutingTable()
-        debug "Routing table re-seeded"
-      except CancelledError:
-        return
-      except CatchableError as exc:
-        warn "Failed to re-seed routing table", exc = exc.msg
-  except CancelledError:
-    trace "Routing table health loop cancelled"
-    return
-
 proc queueFindBlocksReq*(
     b: DiscoveryEngine,
     cids: seq[Cid],
@@ -143,11 +119,6 @@ proc start*(b: DiscoveryEngine) {.async: (raises: []).} =
   for i in 0 ..< b.concurrentDiscReqs:
     let fut = b.discoveryTaskLoop()
     b.trackedFutures.track(fut)
-
-  if b.discovery.hasBootstrapNodes():
-    b.trackedFutures.track(b.routingTableHealthLoop())
-  else:
-    trace "No bootstrap nodes configured, routing table health watchdog disabled"
 
   trace "Discovery engine started"
 

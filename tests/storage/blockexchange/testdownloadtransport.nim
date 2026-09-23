@@ -181,10 +181,11 @@ asyncchecksuite "Download transport selection":
 
       # Start both fetches before awaiting either: both miss the local cache.
       let
-        directManifest =
-          manifests[0].fetchManifest(dataset.manifestCid, DownloadTransport.Direct)
+        directManifest = manifests[0].fetchManifest(
+          dataset.manifestCid, true, DownloadTransport.Direct
+        )
         mixManifest =
-          manifests[0].fetchManifest(dataset.manifestCid, DownloadTransport.Mix)
+          manifests[0].fetchManifest(dataset.manifestCid, true, DownloadTransport.Mix)
       check (await directManifest).isOk
       check (await mixManifest).isOk
 
@@ -201,7 +202,7 @@ asyncchecksuite "Download transport selection":
       directOnlyManifest.attachMixTransport(transports[0])
       check (
         await directOnlyManifest.fetchManifest(
-          dataset.manifestCid, DownloadTransport.Mix
+          dataset.manifestCid, true, DownloadTransport.Mix
         )
       ).isErr
 

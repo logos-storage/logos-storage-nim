@@ -38,6 +38,11 @@ method hasBlock(
     await newAsyncEvent().wait()
   return success(false)
 
+method isAdvertised*(
+    self: PausedPresenceStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  success(true)
+
 proc checkPresenceCancellation(
     engine: BlockExcEngine, peer: PeerId, rangeCount: uint64
 ) {.async.} =
@@ -195,6 +200,31 @@ asyncchecksuite "NetworkStore engine handlers":
 
     await engine.wantListHandler(peerId, wantList)
     await done
+
+  test "Should not send presence for a tree that is not advertised":
+    let
+      tree = StorageMerkleTree.init(blocks.mapIt(it.cid)).tryGet
+      rootCid = tree.rootCid.tryGet()
+
+    for i, blk in blocks:
+      (await localStore.putBlock(blk)).tryGet()
+      (await localStore.putCidAndProof(rootCid, i, blk.cid, tree.getProof(i).tryGet())).tryGet()
+
+    (await localStore.setAdvertise(rootCid, false)).tryGet()
+
+    var presenceSent = false
+
+    proc sendPresence(
+        peerId: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      presenceSent = true
+
+    engine.networks.direct =
+      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+
+    await engine.wantListHandler(peerId, makeWantList(rootCid, blocks.len))
+
+    check not presenceSent
 
   test "Should handle want list - `dont-have`":
     let
@@ -442,6 +472,26 @@ asyncchecksuite "NetworkStore engine handlers":
 
     let delivered = await network.handlers.onWantBlocksRequest(peerId, req)
     check delivered.len == blocks.len
+
+  test "WantBlocks: serves no block of a tree that is not advertised":
+    let
+      tree = StorageMerkleTree.init(blocks.mapIt(it.cid)).tryGet
+      rootCid = tree.rootCid.tryGet()
+
+    for i, blk in blocks:
+      (await localStore.putBlock(blk)).tryGet()
+      (await localStore.putCidAndProof(rootCid, i, blk.cid, tree.getProof(i).tryGet())).tryGet()
+
+    (await localStore.setAdvertise(rootCid, false)).tryGet()
+
+    let req = WantBlocksRequest(
+      requestId: 1,
+      treeCid: rootCid,
+      ranges: @[IndexRange(start: 0'u64, count: blocks.len.uint64)],
+    )
+
+    let delivered = await network.handlers.onWantBlocksRequest(peerId, req)
+    check delivered.len == 0
 
 suite "IsIndexInRanges":
   test "Empty ranges returns false":

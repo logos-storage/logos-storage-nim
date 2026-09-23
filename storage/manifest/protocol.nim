@@ -16,15 +16,17 @@ import pkg/questionable/results
 import pkg/stew/endians2
 
 import ../blocktype as bt
-import ../stores/blockstore
 import ../discovery
-import ../logutils
 import ../errors
-import ./manifest
-import ./coders
+import ../logutils
 import ../mix
+import ../stores/blockstore
 
-export manifest, coders
+import ./coders
+import ./manifest
+import ./store
+
+export coders, manifest, store
 
 logScope:
   topics = "storage manifestprotocol"
@@ -116,6 +118,16 @@ proc handleManifestRequest(
       await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
       return
 
+    without advertised =? (await self.localStore.isAdvertised(cid)), advertiseErr:
+      warn "Unable to read advertise state", cid, err = advertiseErr.msg
+      await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
+      return
+
+    if not advertised:
+      trace "Manifest is not served", cid
+      await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
+      return
+
     without blk =? await self.localStore.getBlock(cid), err:
       trace "Manifest not found locally", cid, err = err.msg
       await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
@@ -180,6 +192,7 @@ proc fetchManifestFromPeer(
 proc fetchManifest*(
     self: ManifestProtocol,
     cid: Cid,
+    advertise: bool,
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   if transport == DownloadTransport.Mix and self.mixTransport.isNil:
@@ -224,11 +237,10 @@ proc fetchManifest*(
             lastErr = fetchErr
             continue
 
-          if putErr =? (await self.localStore.putBlock(blk)).errorOption:
-            warn "Failed to store fetched manifest locally", cid, err = putErr.msg
-
-          without manifest =? Manifest.decode(blk), err:
-            return failure("Unable to decode manifest: " & err.msg)
+          without manifest =? (
+            await storeManifestBlock(self.localStore, blk, advertise)
+          ), storeErr:
+            return failure("Unable to store manifest: " & storeErr.msg)
 
           return success manifest
       else:

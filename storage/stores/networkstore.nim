@@ -103,6 +103,22 @@ method getCidAndProof*(
 
   self.localStore.getCidAndProof(treeCid, index)
 
+method setAdvertise*(
+    self: NetworkStore, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Set whether the cid is announced to the DHT and served to peers
+  ##
+
+  await self.localStore.setAdvertise(cid, advertise)
+
+method isAdvertised*(
+    self: NetworkStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  ## Check whether the cid is announced to the DHT and served to peers
+  ##
+
+  await self.localStore.isAdvertised(cid)
+
 method ensureExpiry*(
     self: NetworkStore, cid: Cid, expiry: SecondsSince1970
 ): Future[?!void] {.async: (raises: [CancelledError]).} =

@@ -81,6 +81,20 @@ asyncchecksuite "RepoStore":
   proc createTestBlock(size: int): bt.Block =
     bt.Block.new('a'.repeat(size).toBytes).tryGet()
 
+  test "Should advertise a cid by default":
+    let blk = createTestBlock(100)
+
+    check (await repo.isAdvertised(blk.cid)).tryGet
+
+  test "Should stop and resume advertising a cid":
+    let blk = createTestBlock(100)
+
+    (await repo.setAdvertise(blk.cid, false)).tryGet
+    check not (await repo.isAdvertised(blk.cid)).tryGet
+
+    (await repo.setAdvertise(blk.cid, true)).tryGet
+    check (await repo.isAdvertised(blk.cid)).tryGet
+
   test "Should update current used bytes on block put":
     let blk = createTestBlock(200)
 

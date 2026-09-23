@@ -47,6 +47,12 @@ method provide*(
 
   await d.publishBlockProvideHandler(d, cid)
 
+method stopProviding*(d: MockDiscovery, cid: Cid) {.gcsafe, raises: [].} =
+  discard
+
+method stopProvidingAll*(d: MockDiscovery) {.gcsafe, raises: [].} =
+  discard
+
 proc nullDiscovery*(): MockDiscovery =
   proc findBlockProvidersHandler(
       d: MockDiscovery, cid: Cid, useMix: bool = false

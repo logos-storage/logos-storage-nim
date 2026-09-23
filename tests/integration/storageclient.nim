@@ -96,16 +96,21 @@ proc setLogLevel*(
   assert response.status == 200
 
 proc uploadRaw*(
-    client: StorageClient, contents: string, headers: seq[HttpHeaderTuple] = @[]
+    client: StorageClient,
+    contents: string,
+    headers: seq[HttpHeaderTuple] = @[],
+    advertise = true,
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
-  return client.post(client.baseurl & "/data", body = contents, headers = headers)
+  return client.post(
+    client.baseurl & "/data?advertise=" & $advertise, body = contents, headers = headers
+  )
 
 proc upload*(
-    client: StorageClient, contents: string
+    client: StorageClient, contents: string, advertise = true
 ): Future[?!Cid] {.async: (raises: [CancelledError, HttpError]).} =
-  let response = await client.uploadRaw(contents)
+  let response = await client.uploadRaw(contents, advertise = advertise)
   assert response.status == 200
   Cid.init(await response.body).mapFailure
 
@@ -113,6 +118,36 @@ proc upload*(
     client: StorageClient, bytes: seq[byte]
 ): Future[?!Cid] {.async: (raw: true).} =
   return client.upload(string.fromBytes(bytes))
+
+proc getAdvertise*(
+    client: StorageClient, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError, HttpError]).} =
+  let response = await client.get(client.baseurl & "/data/" & $cid & "/advertise")
+
+  if response.status != 200:
+    return failure($response.status)
+
+  let jsonData = JsonNode.parse(await response.body)
+  if jsonData.isErr:
+    return failure(jsonData.error)
+
+  let advertiseNode = jsonData.get.getOrDefault("advertise")
+  if advertiseNode.isNil:
+    return failure("missing advertise in response")
+
+  success advertiseNode.getBool()
+
+proc setAdvertise*(
+    client: StorageClient, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError, HttpError]).} =
+  let response = await client.post(
+    client.baseurl & "/data/" & $cid & "/advertise?advertise=" & $advertise
+  )
+
+  if response.status != 200:
+    return failure($response.status)
+
+  success()
 
 proc downloadRaw*(
     client: StorageClient, cid: string, local = false, private = false

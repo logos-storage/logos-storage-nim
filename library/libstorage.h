@@ -176,10 +176,13 @@ extern "C"
     // `chunkSize` defines the size of each chunk to be used during upload.
     // The default value is the default block size 1024 * 64 bytes.
     //
+    // `advertise` if set to false, the dataset is neither announced over the
+    // DHT nor served to other peers.
+    //
     // The callback returns the `sessionId` for the download session created.
     //
     // Typical usage:
-    // storage_upload_init(ctx, filepath, chunkSize, myCallback, myUserData);
+    // storage_upload_init(ctx, filepath, chunkSize, advertise, myCallback, myUserData);
     // ...
     // storage_upload_chunk(ctx, sessionId, chunk, len, myCallback, myUserData);
     // ...
@@ -188,6 +191,7 @@ extern "C"
         void *ctx,
         const char *filepath,
         size_t chunkSize,
+        bool advertise,
         StorageCallback callback,
         void *userData);
 
@@ -222,7 +226,7 @@ extern "C"
     // The callback returns the `cid` of the uploaded content.
     //
     // Typical usage:
-    // storage_upload_init(ctx, filepath, chunkSize, myCallback, myUserData);
+    // storage_upload_init(ctx, filepath, chunkSize, advertise, myCallback, myUserData);
     // ...
     // storage_upload_file(ctx, sessionId, myCallback, myUserData);
     int storage_upload_file(
@@ -237,8 +241,11 @@ extern "C"
     // `local` indicates whether to attempt local store retrieval only.
     // `isPrivate` selects Mix transport; must match privacy setting for ongoing download sessions, if any
     //
+    // `advertise` if set to false, the dataset is neither announced over the
+    // DHT nor served to other peers.
+    //
     // Typical usage:
-    // storage_download_init(ctx, cid, chunkSize, local, isPrivate, myCallback, myUserData);
+    // storage_download_init(ctx, cid, chunkSize, local, isPrivate, advertise, myCallback, myUserData);
     // ...
     // storage_download_stream(ctx, cid, chunkSize, filepath, myCallback, myUserData);
     int storage_download_init(
@@ -247,6 +254,7 @@ extern "C"
         size_t chunkSize,
         bool local,
         bool isPrivate,
+        bool advertise,
         StorageCallback callback,
         void *userData);
 
@@ -256,7 +264,7 @@ extern "C"
     // The callback will be called with RET_PROGRESS updates during the download/
     //
     // Typical usage:
-    // storage_download_init(ctx, cid, chunkSize, local, isPrivate, myCallback, myUserData);
+    // storage_download_init(ctx, cid, chunkSize, local, isPrivate, advertise, myCallback, myUserData);
     // ...
     // storage_download_stream(ctx, cid, chunkSize, filepath, myCallback, myUserData);
     int storage_download_stream(
@@ -286,6 +294,9 @@ extern "C"
     // Retrieve the manifest for the given `cid`.
     // `isPrivate` selects Mix transport when true, direct peer connections when false
     //
+    // `advertise` if set to false, the manifest is neither announced over the
+    // DHT nor served to other peers.
+    //
     // Here is an example of the returned manifest JSON structure:
     // {
     //  "treeCid": "zDzSvJTf8JYwvysKPmG7BtzpbiAHfuwFMRphxm4hdvnMJ4XPJjKX",
@@ -299,6 +310,7 @@ extern "C"
         void *ctx,
         const char *cid,
         bool isPrivate,
+        bool advertise,
         StorageCallback callback,
         void *userData);
 
@@ -333,9 +345,13 @@ extern "C"
     // local store.
     // The download is done in background so the callback
     // will not receive progress updates.
+    //
+    // `advertise` if set to false, the dataset is neither announced over the
+    // DHT nor served to other peers.
     int storage_fetch(
         void *ctx,
         const char *cid,
+        bool advertise,
         StorageCallback callback,
         void *userData);
 
@@ -343,6 +359,25 @@ extern "C"
     int storage_exists(
         void *ctx,
         const char *cid,
+        StorageCallback callback,
+        void *userData);
+
+    // Check whether the dataset identified by `cid` is announced to the DHT
+    // and served to peers. The result is returned via the callback as
+    // "true" or "false".
+    int storage_get_advertise(
+        void *ctx,
+        const char *cid,
+        StorageCallback callback,
+        void *userData);
+
+    // Announce the dataset identified by `cid` to the DHT and serve it to
+    // peers, or stop doing both. Records already published in the DHT are not
+    // withdrawn, they stop being republished and expire.
+    int storage_set_advertise(
+        void *ctx,
+        const char *cid,
+        bool advertise,
         StorageCallback callback,
         void *userData);
 

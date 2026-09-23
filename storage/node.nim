@@ -82,7 +82,7 @@ func manifestProtocol*(self: StorageNodeRef): ManifestProtocol =
   return self.manifestProto
 
 proc storeManifest*(
-    self: StorageNodeRef, manifest: Manifest
+    self: StorageNodeRef, manifest: Manifest, advertise: bool
 ): Future[?!bt.Block] {.async.} =
   without encodedVerifiable =? manifest.encode(), err:
     trace "Unable to encode manifest"
@@ -92,7 +92,7 @@ proc storeManifest*(
     trace "Unable to create block from manifest"
     return failure(error)
 
-  if err =? (await self.networkStore.putBlock(blk)).errorOption:
+  if err =? (await storeManifestBlock(self.networkStore, blk, advertise)).errorOption:
     trace "Unable to store manifest block", cid = blk.cid, err = err.msg
     return failure(err)
 
@@ -101,10 +101,47 @@ proc storeManifest*(
 proc fetchManifest*(
     self: StorageNodeRef,
     cid: Cid,
+    advertise: bool = true,
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   ## Fetch and decode a manifest
-  return await self.manifestProto.fetchManifest(cid, transport)
+  return await self.manifestProto.fetchManifest(cid, advertise, transport)
+
+proc isAdvertised*(
+    self: StorageNodeRef, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  ## Check whether the dataset is announced to the DHT and served to peers
+  ##
+  await self.networkStore.isAdvertised(cid)
+
+proc setAdvertise*(
+    self: StorageNodeRef, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Set whether the dataset is announced to the DHT and served to peers
+  ##
+
+  without isManifest =? cid.isManifest, err:
+    return failure(err)
+
+  if not isManifest:
+    return failure("Advertise state applies to manifest cids only")
+
+  without blk =? (await self.networkStore.localStore.getBlock(cid)), err:
+    return failure(err)
+
+  without manifest =? Manifest.decode(blk), err:
+    return failure(err)
+
+  let cids = @[manifest.treeCid, cid]
+
+  if advertise:
+    ?await self.networkStore.clearAdvertise(cids)
+    await self.engine.advertiser.advertise(cid)
+  else:
+    discard ?await self.networkStore.disableAdvertise(cids)
+    self.discovery.stopProviding(cid)
+
+  success()
 
 proc findPeer*(self: StorageNodeRef, peerId: PeerId): Future[?PeerRecord] {.async.} =
   ## Find peer using the discovery service from the given StorageNode
@@ -119,8 +156,11 @@ proc connect*(
 proc updateExpiry*(
     self: StorageNodeRef, manifestCid: Cid, expiry: SecondsSince1970
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
-  without manifest =? await self.fetchManifest(manifestCid), error:
-    trace "Unable to fetch manifest for cid", manifestCid
+  let blk = (await self.networkStore.localStore.getBlock(manifestCid)).valueOr:
+    trace "Manifest not found locally", manifestCid
+    return failure(error)
+
+  let manifest = Manifest.decode(blk).valueOr:
     return failure(error)
 
   try:
@@ -295,6 +335,7 @@ proc retrieve*(
     self: StorageNodeRef,
     cid: Cid,
     local: bool = true,
+    advertise: bool = true,
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!LPStream] {.async: (raises: [CancelledError]).} =
   ## Retrieve by Cid a single block or an entire dataset described by manifest
@@ -303,7 +344,7 @@ proc retrieve*(
   if local and not await (cid in self.networkStore):
     return failure((ref BlockNotFoundError)(msg: "Block not found in local store"))
 
-  without manifest =? (await self.fetchManifest(cid, transport)), err:
+  without manifest =? (await self.fetchManifest(cid, advertise, transport)), err:
     if transport == DownloadTransport.Mix or err of AsyncTimeoutError:
       return failure(err)
 
@@ -352,6 +393,11 @@ proc deleteEntireDataset(self: StorageNodeRef, cid: Cid): Future[?!void] {.async
   if err =? (await store.delBlock(cid)).errorOption:
     error "Error deleting manifest block", err = err.msg
 
+  if err =? (await store.clearAdvertise(@[manifest.treeCid, cid])).errorOption:
+    error "Error deleting advertise state", err = err.msg
+
+  self.discovery.stopProviding(cid)
+
   success()
 
 proc delete*(
@@ -379,6 +425,7 @@ proc store*(
     mimetype: ?string = string.none,
     blockSize = DefaultBlockSize,
     onBlockStored: OnBlockStoredProc = nil,
+    advertise: bool,
 ): Future[?!Cid] {.async.} =
   ## Save stream contents as dataset with given blockSize
   ## to nodes's BlockStore, and return Cid of its manifest
@@ -443,7 +490,7 @@ proc store*(
     mimetype = mimetype,
   )
 
-  without manifestBlk =? await self.storeManifest(manifest), err:
+  without manifestBlk =? await self.storeManifest(manifest, advertise), err:
     error "Unable to store manifest"
     return failure(err)
 

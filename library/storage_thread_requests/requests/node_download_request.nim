@@ -47,6 +47,7 @@ type NodeDownloadRequest* = object
   local: bool
   isPrivate: bool
   filepath: cstring
+  advertise: bool
 
 type
   DownloadSessionId* = string
@@ -72,6 +73,7 @@ proc createShared*(
     local: bool = false,
     isPrivate: bool = false,
     filepath: cstring = "",
+    advertise: bool = true,
 ): ptr type T =
   var ret = createShared(T)
   ret[].operation = op
@@ -80,6 +82,7 @@ proc createShared*(
   ret[].local = local
   ret[].isPrivate = isPrivate
   ret[].filepath = filepath.alloc()
+  ret[].advertise = advertise
 
   return ret
 
@@ -94,6 +97,7 @@ proc init(
     chunkSize: csize_t = 0,
     local: bool,
     isPrivate: bool,
+    advertise: bool,
 ): Future[Result[string, string]] {.async: (raises: []).} =
   ## Init a new session to download the file identified by cid.
   ##
@@ -132,7 +136,7 @@ proc init(
 
   try:
     let transport = if isPrivate: DownloadTransport.Mix else: DownloadTransport.Direct
-    let res = await node.retrieve(cid.get(), local, transport)
+    let res = await node.retrieve(cid.get(), local, advertise, transport)
     if res.isErr():
       return err("Failed to init the download: " & res.error.msg)
     stream = res.get()
@@ -308,7 +312,7 @@ proc cancel(
   return ok("")
 
 proc manifest(
-    storage: ptr StorageServer, cCid: cstring, isPrivate: bool
+    storage: ptr StorageServer, cCid: cstring, isPrivate: bool, advertise: bool
 ): Future[Result[string, string]] {.async: (raises: []).} =
   let cid = Cid.init($cCid)
   if cid.isErr:
@@ -317,7 +321,7 @@ proc manifest(
   try:
     let node = storage[].node
     let transport = if isPrivate: DownloadTransport.Mix else: DownloadTransport.Direct
-    let manifest = await node.fetchManifest(cid.get(), transport)
+    let manifest = await node.fetchManifest(cid.get(), advertise, transport)
     if manifest.isErr:
       return err("Failed to fetch manifest: " & manifest.error.msg)
 
@@ -338,8 +342,11 @@ proc process*(
 
   case self.operation
   of NodeDownloadMsgType.INIT:
-    let res =
-      (await init(storage, self.cid, self.chunkSize, self.local, self.isPrivate))
+    let res = (
+      await init(
+        storage, self.cid, self.chunkSize, self.local, self.isPrivate, self.advertise
+      )
+    )
     if res.isErr:
       error "Failed to INIT.", error = res.error
       return err($res.error)
@@ -363,7 +370,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeDownloadMsgType.MANIFEST:
-    let res = (await manifest(storage, self.cid, self.isPrivate))
+    let res = (await manifest(storage, self.cid, self.isPrivate, self.advertise))
     if res.isErr:
       error "Failed to MANIFEST.", error = res.error
       return err($res.error)

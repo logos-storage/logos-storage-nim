@@ -10,6 +10,7 @@
 {.push raises: [].}
 
 import std/options
+import std/sets
 
 import pkg/chronos
 import pkg/libp2p
@@ -38,6 +39,7 @@ type
     size*: NBytes
     cache: LruCache[Cid, Block]
     cidAndProofCache: LruCache[(Cid, Natural), (Cid, StorageMerkleProof)]
+    notAdvertised: HashSet[Cid]
 
   InvalidBlockSize* = object of StorageError
 
@@ -232,6 +234,27 @@ method putCidAndProof*(
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   self.cidAndProofCache[(treeCid, index)] = (blockCid, proof)
   success()
+
+method setAdvertise*(
+    self: CacheStore, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Set whether the cid is announced to the DHT and served to peers
+  ##
+
+  if advertise:
+    self.notAdvertised.excl(cid)
+  else:
+    self.notAdvertised.incl(cid)
+
+  success()
+
+method isAdvertised*(
+    self: CacheStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  ## Check whether the cid is announced to the DHT and served to peers
+  ##
+
+  success(cid notin self.notAdvertised)
 
 method ensureExpiry*(
     self: CacheStore, cid: Cid, expiry: SecondsSince1970

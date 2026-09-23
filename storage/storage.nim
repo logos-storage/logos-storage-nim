@@ -522,6 +522,7 @@ proc new*(
       repoStore,
       discovery,
       peerInfo = switch.peerInfo,
+      autonat = autonatService,
       advertiseContent = config.advertiseContent,
     )
     blockDiscovery = DiscoveryEngine.new(peerStore, networks, discovery)
@@ -580,6 +581,7 @@ proc new*(
         await natMapper.get.handleNatStatus(
           networkReachability, addrs, discovery, switch, relayService
         )
+        engine.advertiser.onAddrChange()
     )
 
     holePunchHandler = some(setupHolePunching(switch))
