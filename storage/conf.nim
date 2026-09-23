@@ -753,6 +753,16 @@ proc openLogFile(conf: StorageConf): Option[IoHandle] =
       return logFileHandle.option
   return IoHandle.none
 
+# Writer state lives in plain globals: under refc, a closure env created on a
+# non-main thread is freed by that thread's GC even while a global holds it.
+var activeLogFile: Option[IoHandle]
+
+when storage_enable_log_counter:
+  var
+    logCounter: uint64
+    logCounterWriter:
+      proc(logLevel: LogLevel, msg: LogOutputStr) {.nimcall, gcsafe, raises: [].}
+
 proc setupLogging*(conf: StorageConf): Option[IoHandle] =
   let ioHandle =
     if conf.logFile.isSome:
@@ -780,10 +790,16 @@ proc setupLogging*(conf: StorageConf): Option[IoHandle] =
       writeAndFlush(stdout, stripAnsi(msg))
 
     proc fileFlush(logLevel: LogLevel, msg: LogOutputStr) =
-      if file =? ioHandle:
-        if error =? file.writeFile(stripAnsi(msg).toBytes).errorOption:
-          error "failed to write to log file", errorCode = $error
+      if file =? activeLogFile:
+        let line = stripAnsi(msg)
+        if error =? file.writeFile(line.toBytes).errorOption:
+          # Not through chronicles: this writer would get that message too.
+          logLoggingFailure(
+            cstring(line),
+            newException(IOError, "failed to write to log file: " & ioErrorMsg(error)),
+          )
 
+    activeLogFile = ioHandle
     defaultChroniclesStream.outputs[2].writer = noOutput
     if ioHandle.isSome:
       defaultChroniclesStream.outputs[2].writer = fileFlush
@@ -805,11 +821,12 @@ proc setupLogging*(conf: StorageConf): Option[IoHandle] =
         noOutput
 
     when storage_enable_log_counter:
-      var counter = 0.uint64
+      logCounter = 0
+      logCounterWriter = writer
       proc numberedWriter(logLevel: LogLevel, msg: LogOutputStr) =
-        inc(counter)
+        inc(logCounter)
         let withoutNewLine = msg[0 ..^ 2]
-        writer(logLevel, withoutNewLine & " count=" & $counter & "\n")
+        logCounterWriter(logLevel, withoutNewLine & " count=" & $logCounter & "\n")
 
       defaultChroniclesStream.outputs[0].writer = numberedWriter
     else:
