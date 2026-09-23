@@ -200,3 +200,6 @@
 [submodule "vendor/nim-libp2p-mix"]
 	path = vendor/nim-libp2p-mix
 	url = https://github.com/logos-co/nim-libp2p-mix
+[submodule "vendor/libp2p-mix-transport"]
+	path = vendor/libp2p-mix-transport
+	url = https://github.com/logos-storage/libp2p-mix-transport

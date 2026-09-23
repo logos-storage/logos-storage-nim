@@ -9,14 +9,20 @@
 
 {.push raises: [].}
 
+import std/options
+import std/sequtils
+
 import pkg/chronos
 import pkg/libp2p/cid
 import pkg/libp2p/peerinfo
+import pkg/libp2p/protocols/connectivity/autonat/types
+import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/metrics
 import pkg/questionable
 import pkg/questionable/results
 
 import ../../utils
+import ../../utils/addrutils
 import ../../utils/exceptions
 import ../../utils/trackedfutures
 import ../../discovery
@@ -37,6 +43,7 @@ type Advertiser* = ref object of RootObj
   localStore*: BlockStore # Local block store for this instance
   discovery*: Discovery # Discovery interface
 
+  advertiseContent: bool # Announce local or downloaded content
   advertiserRunning*: bool # Indicates if discovery is running
   concurrentAdvReqs: int # Concurrent advertise requests
 
@@ -48,30 +55,64 @@ type Advertiser* = ref object of RootObj
   inFlightAdvReqs*: Table[Cid, Future[void]] # Inflight advertise requests
   addrChanged: AsyncEvent # Fired when the announced addresses change
   peerInfo: PeerInfo
+  autonat: Option[AutonatV2Service]
 
-proc addCidToQueue(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError]).} =
-  if cid notin b.advertiseQueue:
+proc addCidToQueue(
+    b: Advertiser, cid: Cid, wait = true
+) {.async: (raises: [CancelledError]).} =
+  if cid in b.advertiseQueue:
+    return
+
+  if wait:
     await b.advertiseQueue.put(cid)
-
     trace "Advertising", cid
+    return
 
-proc advertiseBlock(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError]).} =
+  try:
+    b.advertiseQueue.putNoWait(cid)
+    trace "Advertising", cid
+  except AsyncQueueFullError:
+    trace "Advertise queue is full, cid will be announced by the next sweep", cid
+
+proc advertiseBlock(
+    b: Advertiser, cid: Cid, wait = true
+) {.async: (raises: [CancelledError]).} =
   without isM =? cid.isManifest, err:
     warn "Unable to determine if cid is manifest"
     return
 
   try:
     if isM:
+      let advertised = await b.localStore.isAdvertised(cid)
+      if advertised.isErr:
+        warn "Unable to read advertise state", cid, err = advertised.error.msg
+        return
+
+      if not advertised.get:
+        trace "Not advertising cid", cid
+        b.discovery.stopProviding(cid)
+        return
+
       # announce manifest cid
-      await b.addCidToQueue(cid)
+      await b.addCidToQueue(cid, wait)
   except CancelledError as exc:
     trace "Cancelled advertise block", cid
     raise exc
   except CatchableError as e:
     error "failed to advertise block", cid, error = e.msgDetail
 
+proc advertise*(b: Advertiser, cid: Cid) {.async: (raises: [CancelledError]).} =
+  ## Announce a cid now, or leave it to the next sweep if the queue is full
+  ##
+  if not b.advertiserRunning:
+    return
+
+  await b.advertiseBlock(cid, wait = false)
+
 proc reachable(b: Advertiser): bool =
-  b.peerInfo.addrs.len > 0
+  let nodeReachable =
+    b.autonat.isNone or b.autonat.get.networkReachability.isReachable()
+  nodeReachable or b.peerInfo.addrs.anyIt(it.isDialableCircuitMA())
 
 proc onAddrChange*(b: Advertiser) =
   b.addrChanged.fire()
@@ -89,7 +130,8 @@ proc advertiseLocalStoreLoop(b: Advertiser) {.async: (raises: []).} =
               await b.advertiseBlock(cid)
           trace "Advertiser iterating blocks finished."
       else:
-        trace "No reachable address yet, skipping advertise sweep"
+        trace "No reachable address yet, withdrawing local content"
+        b.discovery.stopProvidingAll()
 
       discard await b.addrChanged.wait().withTimeout(b.advertiseLocalStoreLoopSleep)
   except CancelledError:
@@ -108,6 +150,15 @@ proc processQueueLoop(b: Advertiser) {.async: (raises: []).} =
       if not b.reachable():
         continue
 
+      let advertised = await b.localStore.isAdvertised(cid)
+      if advertised.isErr:
+        warn "Unable to read advertise state", cid, err = advertised.error.msg
+        continue
+
+      if not advertised.get:
+        b.discovery.stopProviding(cid)
+        continue
+
       let request = b.discovery.provide(cid)
       b.inFlightAdvReqs[cid] = request
       storage_inflight_advertise.set(b.inFlightAdvReqs.len.int64)
@@ -117,6 +168,10 @@ proc processQueueLoop(b: Advertiser) {.async: (raises: []).} =
         storage_inflight_advertise.set(b.inFlightAdvReqs.len.int64)
 
       await request
+
+      let stillAdvertised = await b.localStore.isAdvertised(cid)
+      if stillAdvertised.isErr or not stillAdvertised.get:
+        b.discovery.stopProviding(cid)
   except CancelledError:
     warn "Cancelled advertise task runner"
 
@@ -127,6 +182,10 @@ proc start*(b: Advertiser) {.async: (raises: []).} =
   ##
 
   trace "Advertiser start"
+
+  if not b.advertiseContent:
+    info "Content advertising is disabled, this node will not become a provider"
+    return
 
   # The advertiser is expected to be started only once.
   if b.advertiserRunning:
@@ -154,6 +213,10 @@ proc stop*(b: Advertiser) {.async: (raises: []).} =
   ##
 
   trace "Advertiser stop"
+
+  if not b.advertiseContent:
+    return
+
   if not b.advertiserRunning:
     warn "Stopping advertiser without starting it"
     return
@@ -170,8 +233,10 @@ proc new*(
     localStore: BlockStore,
     discovery: Discovery,
     peerInfo: PeerInfo,
+    autonat = none(AutonatV2Service),
     concurrentAdvReqs = DefaultConcurrentAdvertRequests,
     advertiseLocalStoreLoopSleep = DefaultAdvertiseLoopSleep,
+    advertiseContent = true,
 ): Advertiser =
   ## Create a advertiser instance
   ##
@@ -179,6 +244,8 @@ proc new*(
     localStore: localStore,
     discovery: discovery,
     peerInfo: peerInfo,
+    advertiseContent: advertiseContent,
+    autonat: autonat,
     concurrentAdvReqs: concurrentAdvReqs,
     advertiseQueue: newAsyncQueue[Cid](concurrentAdvReqs),
     trackedFutures: TrackedFutures.new(),

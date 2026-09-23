@@ -15,6 +15,8 @@ const
     # number of blocks in the repo
   StorageBlocksNamespace* = StorageRepoNamespace & "/blocks" # blocks namespace
   StorageManifestNamespace* = StorageRepoNamespace & "/manifests" # manifest namespace
+  StorageAdvertiseNamespace* = # Cids neither advertised nor served
+    StorageMetaNamespace & "/advertise"
   StorageBlocksTtlNamespace* = # Cid TTL
     StorageMetaNamespace & "/ttl"
   StorageBlockProofNamespace* = # Cid and Proof

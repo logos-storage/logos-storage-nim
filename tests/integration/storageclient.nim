@@ -96,16 +96,21 @@ proc setLogLevel*(
   assert response.status == 200
 
 proc uploadRaw*(
-    client: StorageClient, contents: string, headers: seq[HttpHeaderTuple] = @[]
+    client: StorageClient,
+    contents: string,
+    headers: seq[HttpHeaderTuple] = @[],
+    advertise = true,
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
-  return client.post(client.baseurl & "/data", body = contents, headers = headers)
+  return client.post(
+    client.baseurl & "/data?advertise=" & $advertise, body = contents, headers = headers
+  )
 
 proc upload*(
-    client: StorageClient, contents: string
+    client: StorageClient, contents: string, advertise = true
 ): Future[?!Cid] {.async: (raises: [CancelledError, HttpError]).} =
-  let response = await client.uploadRaw(contents)
+  let response = await client.uploadRaw(contents, advertise = advertise)
   assert response.status == 200
   Cid.init(await response.body).mapFailure
 
@@ -114,18 +119,50 @@ proc upload*(
 ): Future[?!Cid] {.async: (raw: true).} =
   return client.upload(string.fromBytes(bytes))
 
+proc getAdvertise*(
+    client: StorageClient, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError, HttpError]).} =
+  let response = await client.get(client.baseurl & "/data/" & $cid & "/advertise")
+
+  if response.status != 200:
+    return failure($response.status)
+
+  let jsonData = JsonNode.parse(await response.body)
+  if jsonData.isErr:
+    return failure(jsonData.error)
+
+  let advertiseNode = jsonData.get.getOrDefault("advertise")
+  if advertiseNode.isNil:
+    return failure("missing advertise in response")
+
+  success advertiseNode.getBool()
+
+proc setAdvertise*(
+    client: StorageClient, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError, HttpError]).} =
+  let response = await client.post(
+    client.baseurl & "/data/" & $cid & "/advertise?advertise=" & $advertise
+  )
+
+  if response.status != 200:
+    return failure($response.status)
+
+  success()
+
 proc downloadRaw*(
-    client: StorageClient, cid: string, local = false
+    client: StorageClient, cid: string, local = false, private = false
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
-  return
-    client.get(client.baseurl & "/data/" & cid & (if local: "" else: "/network/stream"))
+  return client.get(
+    client.baseurl & "/data/" & cid & (if local: "" else: "/network/stream") &
+      (if private: "?transport=mix" else: "?transport=direct")
+  )
 
 proc downloadBytes*(
-    client: StorageClient, cid: Cid, local = false
+    client: StorageClient, cid: Cid, local = false, private = false
 ): Future[?!seq[byte]] {.async: (raises: [CancelledError, HttpError]).} =
-  let response = await client.downloadRaw($cid, local = local)
+  let response = await client.downloadRaw($cid, local = local, private = private)
 
   if response.status != 200:
     return failure($response.status)
@@ -133,9 +170,10 @@ proc downloadBytes*(
   success await response.getBodyBytes()
 
 proc download*(
-    client: StorageClient, cid: Cid, local = false
+    client: StorageClient, cid: Cid, local = false, private = false
 ): Future[?!string] {.async: (raises: [CancelledError, HttpError]).} =
-  without response =? await client.downloadBytes(cid, local = local), err:
+  without response =? await client.downloadBytes(cid, local = local, private = private),
+    err:
     return failure(err)
   return success bytesToString(response)
 

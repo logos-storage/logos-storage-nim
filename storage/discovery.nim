@@ -11,6 +11,7 @@
 
 import std/random
 import std/sequtils
+import std/tables
 
 import pkg/chronos
 import pkg/libp2p
@@ -46,11 +47,8 @@ type
     kad*: KadDHT # libp2p Kademlia DHT
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
-    bootstrapNodes: seq[(PeerId, seq[MultiAddress])]
-      # kept to re-seed the routing table when it goes empty
     mixProto*: MixProtocol
     dhtMixProxies*: seq[SignedPeerRecord]
-    privateQueries: bool
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -130,22 +128,24 @@ method findDirect*(
     return failure("Error finding providers for block " & $cid & ": " & exc.msg)
 
 method find*(
-    d: Discovery, cid: Cid
-): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
+    d: Discovery, cid: Cid, useMix: bool = false
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
   let providers =
-    # Note that the invariant checks in `togglePrivateQueries` ensure that
-    # `d.privateQueries` is only true when `d.mixProto` and `d.dhtMixProxies`
-    # are set; i.e., it never happens that privateQueries is set to true but
-    # we branch onto the else case which is non-private.
-    if d.privateQueries and not d.mixProto.isNil and d.dhtMixProxies.len > 0:
-      (await d.findViaMix(cid)).valueOr:
-        warn "Mix lookup failed", cid, err = error.msg
-        return @[]
+    if useMix:
+      if d.mixProto.isNil or d.dhtMixProxies.len == 0:
+        return failure(
+          "Mix lookup requested but MixProtocol not enabled no Mix proxies configured"
+        )
+      else:
+        (await d.findViaMix(cid)).valueOr:
+          warn "Mix lookup failed", cid, err = error.msg
+          return failure(error.msg)
     else:
       (await d.findDirect(cid)).valueOr:
         warn "Direct lookup failed", cid, err = error.msg
-        return @[]
-  providers.filterIt(not (it.peerId == d.peerId))
+        return failure(error.msg)
+
+  ok(providers.filterIt(not (it.peerId == d.peerId)))
 
 method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), base.} =
   ## Provide a block Cid
@@ -158,6 +158,16 @@ method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), bas
     raise exc
   except CatchableError as exc:
     warn "Error providing block", cid, exc = exc.msg
+
+method stopProviding*(d: Discovery, cid: Cid) {.base, gcsafe, raises: [].} =
+  ## Stop announcing a block Cid
+  ##
+  d.kad.stopProviding(cid)
+
+method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
+  ## Stop announcing every Cid this node provides by clearing the table
+  ##
+  d.kad.providerManager.providedKeys.provided.clear()
 
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
@@ -188,19 +198,6 @@ proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
 proc isServerMode*(d: Discovery): bool =
   d.kad.isServer
 
-proc hasBootstrapNodes*(d: Discovery): bool =
-  d.bootstrapNodes.len > 0
-
-proc routingTableEmpty*(d: Discovery): bool =
-  for bucket in d.kad.rtable.buckets:
-    if bucket.peers.len > 0:
-      return false
-  true
-
-proc reseedRoutingTable*(d: Discovery) {.async: (raises: [CancelledError]).} =
-  d.kad.updatePeers(d.bootstrapNodes)
-  await d.kad.bootstrap(forceRefresh = true)
-
 proc routingTable*(
     d: Discovery
 ): tuple[localNode: PeerRecord, peers: seq[RoutingPeer]] =
@@ -223,16 +220,6 @@ proc routingTable*(
     peers: peers,
   )
 
-proc togglePrivateQueries*(d: Discovery, enabled: bool): ?!bool =
-  if enabled and (d.mixProto.isNil or d.dhtMixProxies.len == 0):
-    return failure("Cannot enable private queries: Mix is not configured")
-  let old = d.privateQueries
-  d.privateQueries = enabled
-  success(old)
-
-proc isPrivateQueriesEnabled*(d: Discovery): bool =
-  d.privateQueries
-
 proc new*(
     T: type Discovery,
     switch: Switch,
@@ -244,15 +231,12 @@ proc new*(
   ##
 
   var self = Discovery(
-    switch: switch,
-    peerId: switch.peerInfo.peerId,
-    bootstrapNodes: @bootstrapNodes,
-    dhtMixProxies: @dhtMixProxies,
+    switch: switch, peerId: switch.peerInfo.peerId, dhtMixProxies: @dhtMixProxies
   )
 
   self.kad = KadDHT.new(
     switch,
-    bootstrapNodes = self.bootstrapNodes,
+    bootstrapNodes = @bootstrapNodes,
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

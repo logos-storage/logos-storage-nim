@@ -496,7 +496,7 @@ int check_upload_chunk(void *storage_ctx, const char *filepath)
     const char *payload = "hello world";
     size_t chunk_size = strlen(payload);
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, filepath, chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -563,7 +563,7 @@ int upload_cancel(void *storage_ctx)
     char *session_id = NULL;
     size_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, "hello.txt", chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, "hello.txt", chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -594,7 +594,7 @@ int check_upload_file(void *storage_ctx, const char *filepath, char **res)
     char *session_id = NULL;
     size_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, filepath, chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -634,7 +634,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, false, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -648,7 +648,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     r = alloc_resp();
     r->chunk = malloc(chunk_size + 1);
 
-    if (storage_download_stream(storage_ctx, cid, chunk_size, local, filepath, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_stream(storage_ctx, cid, chunk_size, filepath, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -686,7 +686,7 @@ int check_download_chunk(void *storage_ctx, const char *cid)
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, false, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -737,7 +737,7 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_download_manifest(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_manifest(storage_ctx, cid, false, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -756,6 +756,84 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     free(res);
 
     return ret;
+}
+
+static int check_error(Resp *r, const char *expected_error)
+{
+    char *res = NULL;
+    int ret = is_resp_ok(r, &res);
+    if (ret != RET_ERR)
+    {
+        fprintf(stderr, "Expected RET_ERR but got %d\n", ret);
+        free(res);
+        return RET_ERR;
+    }
+
+    if (res == NULL || strstr(res, expected_error) == NULL)
+    {
+        fprintf(stderr, "Unexpected error message: %s\n", res ? res : "(null)");
+        free(res);
+        return RET_ERR;
+    }
+
+    free(res);
+    return RET_OK;
+}
+
+int check_download_manifest_private(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_manifest(storage_ctx, cid, true, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    // This node has no Mix transport, so a private request must fail.
+    return check_error(r, "Mix transport is not enabled");
+}
+
+int check_download_init_private(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_init(storage_ctx, cid, 0, false, true, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return check_error(r, "Mix transport is not enabled");
+}
+
+int check_download_privacy_mismatch(void *storage_ctx, const char *cid)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_download_init(storage_ctx, cid, 0, false, false, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+    if (is_resp_ok(r, NULL) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    // Reusing a direct session must not silently accept a private request.
+    r = alloc_resp();
+    if (storage_download_init(storage_ctx, cid, 0, false, true, true, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+    if (check_error(r, "Download privacy setting does not match") != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    return check_download_cancel(storage_ctx, cid);
 }
 
 int check_list(void *storage_ctx)
@@ -844,6 +922,44 @@ int check_exists(void *storage_ctx, const char *cid, bool expected)
     return ret;
 }
 
+int check_advertise(void *storage_ctx, const char *cid, bool advertise)
+{
+    Resp *r = alloc_resp();
+    char *res = NULL;
+
+    if (storage_set_advertise(storage_ctx, cid, advertise, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    if (is_resp_ok(r, NULL) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    r = alloc_resp();
+
+    if (storage_get_advertise(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    int ret = is_resp_ok(r, &res);
+    const char *expected = advertise ? "true" : "false";
+
+    if (res == NULL || strcmp(res, expected) != 0)
+    {
+        fprintf(stderr, "advertise content mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(res);
+
+    return ret;
+}
+
 int check_delete(void *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
@@ -855,46 +971,6 @@ int check_delete(void *storage_ctx, const char *cid)
     }
 
     return is_resp_ok(r, NULL);
-}
-
-int check_toggle_private_queries(void *storage_ctx)
-{
-    Resp *r = alloc_resp();
-    char *res = NULL;
-    // First toggle is false -> true
-    if (storage_toggle_private_queries(storage_ctx, true, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    int ret = is_resp_ok(r, &res);
-    if (ret == RET_OK)
-    {
-        fprintf(stderr, "expected toggle(true) to fail when mix is not configured, got ok\n");
-        free(res);
-        return RET_ERR;
-    }
-
-    free(res);
-    // Second toggle is true -> false
-    r = alloc_resp();
-    if (storage_toggle_private_queries(storage_ctx, false, (StorageCallback)callback, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    ret = is_resp_ok(r, &res);
-    if (res == NULL || strcmp(res, "false") != 0)
-    {
-        fprintf(stderr, "toggle private queries content mismatch, res:%s\n", res ? res : "(null)");
-        free(res);
-        return RET_ERR;
-    }
-
-    free(res);
-    return RET_OK;
 }
 
 int check_get_metrics(void *storage_ctx)
@@ -925,6 +1001,119 @@ int check_get_metrics(void *storage_ctx)
 
     free(res);
     return RET_OK;
+}
+
+static int read_whole_file(const char *filepath, char **res)
+{
+    FILE *file = fopen(filepath, "rb");
+
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0)
+    {
+        if (file)
+        {
+            fclose(file);
+        }
+        return RET_ERR;
+    }
+
+    long size = ftell(file);
+    rewind(file);
+    *res = (char *)calloc(1, size > 0 ? size + 1 : 1);
+
+    if (size < 0 || !*res || fread(*res, 1, size, file) != (size_t)size)
+    {
+        fclose(file);
+        return RET_ERR;
+    }
+
+    fclose(file);
+
+    return RET_OK;
+}
+
+// Uploading many blocks makes the storage thread's GC run a full collection;
+// the log file must keep receiving lines after it, through stop and close.
+int check_log_file_after_many_blocks(void)
+{
+    const char *log_path = "log-file.log";
+    const char *input_path = "log-file.bin";
+    const char *cfg = "{\"log-level\":\"INFO\",\"log-format\":\"none\","
+                      "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
+                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
+                      "\"no-bootstrap-node\":true}";
+    size_t chunk_size = 1024;
+    char *cid = NULL;
+    char *log = NULL;
+
+    // 16384 blocks of zeros.
+    FILE *input = fopen(input_path, "wb");
+    if (!input || fseek(input, 16 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
+    {
+        if (input)
+        {
+            fclose(input);
+        }
+        return RET_ERR;
+    }
+    fclose(input);
+
+    Resp *r = alloc_resp();
+    void *ctx = storage_new(cfg, (StorageCallback)callback, r);
+
+    if (!ctx)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    if (is_resp_ok(r, NULL) != RET_OK || start(ctx) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    char *path = realpath(input_path, NULL);
+    char *session_id = NULL;
+    r = alloc_resp();
+
+    if (!path || storage_upload_init(ctx, path, chunk_size, true, (StorageCallback)callback, r) != RET_OK ||
+        is_resp_ok(r, &session_id) != RET_OK)
+    {
+        free(path);
+        return RET_ERR;
+    }
+
+    free(path);
+    r = alloc_resp();
+
+    if (storage_upload_file(ctx, session_id, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        free(session_id);
+        return RET_ERR;
+    }
+
+    free(session_id);
+
+    if (is_resp_ok(r, &cid) != RET_OK || cleanup(ctx) != RET_OK)
+    {
+        free(cid);
+        return RET_ERR;
+    }
+
+    free(cid);
+    remove(input_path);
+
+    int ret = read_whole_file(log_path, &log);
+
+    if (ret != RET_OK || !strstr(log, "Stored data") || !strstr(log, "Stopping Storage node"))
+    {
+        fprintf(stderr, "log file is missing lines, log:\n%s\n", log ? log : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(log);
+
+    return ret;
 }
 
 // TODO: implement check_fetch
@@ -970,18 +1159,23 @@ int main(void)
     RUN_TEST(check_download_chunk(storage_ctx, cid));
     RUN_TEST(check_download_cancel(storage_ctx, cid));
     RUN_TEST(check_download_manifest(storage_ctx, cid));
+    RUN_TEST(check_download_manifest_private(storage_ctx, cid));
+    RUN_TEST(check_download_init_private(storage_ctx, cid));
+    RUN_TEST(check_download_privacy_mismatch(storage_ctx, cid));
     RUN_TEST(check_list(storage_ctx));
     RUN_TEST(check_space(storage_ctx));
     RUN_TEST(check_exists(storage_ctx, cid, true));
+    RUN_TEST(check_advertise(storage_ctx, cid, false));
+    RUN_TEST(check_advertise(storage_ctx, cid, true));
     RUN_TEST(check_delete(storage_ctx, cid));
     RUN_TEST(check_exists(storage_ctx, cid, false));
 
     free(cid);
 
-    RUN_TEST(check_toggle_private_queries(storage_ctx));
     RUN_TEST(update_log_level(storage_ctx, "TRACE"));
     RUN_TEST(check_get_metrics(storage_ctx));
     RUN_TEST(cleanup(storage_ctx));
+    RUN_TEST(check_log_file_after_many_blocks());
 
     END_SUITE
 }

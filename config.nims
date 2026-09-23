@@ -98,6 +98,8 @@ else:
   "libp2p_multihash_exts:../../../storage/multihash_exts.nim"
 --define:
   "libp2p_contentids_exts:../../../storage/contentids_exts.nim"
+--define:
+  "libp2p_multiaddress_exts:../../../storage/multiaddress_exts.nim"
 
 when (NimMajor, NimMinor) >= (1, 4):
   --warning:

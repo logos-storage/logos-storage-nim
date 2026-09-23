@@ -185,16 +185,18 @@ proc generateNodes*(
         (store.BlockStore, newSeq[TempLevelDb](), discovery)
 
     let
-      discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
+      discovery =
+        DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
       advertiser =
         Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
       engine = BlockExcEngine.new(
-        localStore, network, discovery, advertiser, peerStore, downloadManager
+        localStore, discovery.networks, discovery, advertiser, peerStore,
+        downloadManager,
       )
       networkStore = NetworkStore.new(engine, localStore)
       manifestProto = ManifestProtocol.new(switch, localStore, blockDiscovery)
 
-    switch.mount(network)
+    switch.mount(discovery.networks.dispatchProtocol)
     switch.mount(manifestProto)
 
     let node =

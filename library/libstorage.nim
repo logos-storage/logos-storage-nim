@@ -37,7 +37,6 @@ import ./storage_thread_requests/requests/node_p2p_request
 import ./storage_thread_requests/requests/node_upload_request
 import ./storage_thread_requests/requests/node_download_request
 import ./storage_thread_requests/requests/node_storage_request
-import ./storage_thread_requests/requests/node_mix_request
 import ./ffi_types
 
 from ../storage/conf import storageVersion
@@ -134,7 +133,7 @@ proc storage_version(ctx: ptr StorageContext): ptr cchar {.dynlib, exportc.} =
 proc storage_revision(ctx: ptr StorageContext): ptr cchar {.dynlib, exportc.} =
   initializeLibrary()
 
-  return asNewCString(conf.storageVersion)
+  return asNewCString(conf.storageRevision)
 
 proc storage_repo(
     ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
@@ -182,6 +181,19 @@ proc storage_peer_id(
   checkLibstorageParams(ctx, callback, userData)
 
   let reqContent = NodeInfoRequest.createShared(NodeInfoMsgType.PEERID)
+  let res = storage_context.sendRequestToStorageThread(
+    ctx, RequestType.INFO, reqContent, callback, userData
+  )
+
+  return callback.okOrError(res, userData)
+
+proc storage_network(
+    ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
+): cint {.dynlib, exportc.} =
+  initializeLibrary()
+  checkLibstorageParams(ctx, callback, userData)
+
+  let reqContent = NodeInfoRequest.createShared(NodeInfoMsgType.NETWORK)
   let res = storage_context.sendRequestToStorageThread(
     ctx, RequestType.INFO, reqContent, callback, userData
   )
@@ -290,6 +302,7 @@ proc storage_upload_init(
     ctx: ptr StorageContext,
     filepath: cstring,
     chunkSize: csize_t,
+    advertise: bool,
     callback: StorageCallback,
     userData: pointer,
 ): cint {.dynlib, exportc.} =
@@ -297,7 +310,10 @@ proc storage_upload_init(
   checkLibstorageParams(ctx, callback, userData)
 
   let reqContent = NodeUploadRequest.createShared(
-    NodeUploadMsgType.INIT, filepath = filepath, chunkSize = chunkSize
+    NodeUploadMsgType.INIT,
+    filepath = filepath,
+    chunkSize = chunkSize,
+    advertise = advertise,
   )
 
   let res = storage_context.sendRequestToStorageThread(
@@ -379,25 +395,13 @@ proc storage_upload_file(
 
   return callback.okOrError(res, userData)
 
-proc storage_toggle_private_queries(
-    ctx: ptr StorageContext, enabled: bool, callback: StorageCallback, userData: pointer
-): cint {.dynlib, exportc.} =
-  initializeLibrary()
-  checkLibstorageParams(ctx, callback, userData)
-
-  let req = NodeMixRequest.createShared(privateQueries = enabled)
-
-  let res = storage_context.sendRequestToStorageThread(
-    ctx, RequestType.MIX, req, callback, userData
-  )
-
-  return callback.okOrError(res, userData)
-
 proc storage_download_init(
     ctx: ptr StorageContext,
     cid: cstring,
     chunkSize: csize_t,
     local: bool,
+    isPrivate: bool,
+    advertise: bool,
     callback: StorageCallback,
     userData: pointer,
 ): cint {.dynlib, exportc.} =
@@ -405,7 +409,12 @@ proc storage_download_init(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.INIT, cid = cid, chunkSize = chunkSize, local = local
+    NodeDownloadMsgType.INIT,
+    cid = cid,
+    chunkSize = chunkSize,
+    local = local,
+    isPrivate = isPrivate,
+    advertise = advertise,
   )
 
   let res = storage_context.sendRequestToStorageThread(
@@ -432,7 +441,6 @@ proc storage_download_stream(
     ctx: ptr StorageContext,
     cid: cstring,
     chunkSize: csize_t,
-    local: bool,
     filepath: cstring,
     callback: StorageCallback,
     userData: pointer,
@@ -441,11 +449,7 @@ proc storage_download_stream(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.STREAM,
-    cid = cid,
-    chunkSize = chunkSize,
-    local = local,
-    filepath = filepath,
+    NodeDownloadMsgType.STREAM, cid = cid, chunkSize = chunkSize, filepath = filepath
   )
 
   let res = storage_context.sendRequestToStorageThread(
@@ -469,12 +473,22 @@ proc storage_download_cancel(
   return callback.okOrError(res, userData)
 
 proc storage_download_manifest(
-    ctx: ptr StorageContext, cid: cstring, callback: StorageCallback, userData: pointer
+    ctx: ptr StorageContext,
+    cid: cstring,
+    isPrivate: bool,
+    advertise: bool,
+    callback: StorageCallback,
+    userData: pointer,
 ): cint {.dynlib, exportc.} =
   initializeLibrary()
   checkLibstorageParams(ctx, callback, userData)
 
-  let req = NodeDownloadRequest.createShared(NodeDownloadMsgType.MANIFEST, cid = cid)
+  let req = NodeDownloadRequest.createShared(
+    NodeDownloadMsgType.MANIFEST,
+    cid = cid,
+    isPrivate = isPrivate,
+    advertise = advertise,
+  )
 
   let res = storage_context.sendRequestToStorageThread(
     ctx, RequestType.DOWNLOAD, req, callback, userData
@@ -525,12 +539,52 @@ proc storage_delete(
   return callback.okOrError(res, userData)
 
 proc storage_fetch(
+    ctx: ptr StorageContext,
+    cid: cstring,
+    advertise: bool,
+    callback: StorageCallback,
+    userData: pointer,
+): cint {.dynlib, exportc.} =
+  initializeLibrary()
+  checkLibstorageParams(ctx, callback, userData)
+
+  let req = NodeStorageRequest.createShared(
+    NodeStorageMsgType.FETCH, cid = cid, advertise = advertise
+  )
+
+  let res = storage_context.sendRequestToStorageThread(
+    ctx, RequestType.STORAGE, req, callback, userData
+  )
+
+  return callback.okOrError(res, userData)
+
+proc storage_get_advertise(
     ctx: ptr StorageContext, cid: cstring, callback: StorageCallback, userData: pointer
 ): cint {.dynlib, exportc.} =
   initializeLibrary()
   checkLibstorageParams(ctx, callback, userData)
 
-  let req = NodeStorageRequest.createShared(NodeStorageMsgType.FETCH, cid = cid)
+  let req = NodeStorageRequest.createShared(NodeStorageMsgType.GET_ADVERTISE, cid = cid)
+
+  let res = storage_context.sendRequestToStorageThread(
+    ctx, RequestType.STORAGE, req, callback, userData
+  )
+
+  return callback.okOrError(res, userData)
+
+proc storage_set_advertise(
+    ctx: ptr StorageContext,
+    cid: cstring,
+    advertise: bool,
+    callback: StorageCallback,
+    userData: pointer,
+): cint {.dynlib, exportc.} =
+  initializeLibrary()
+  checkLibstorageParams(ctx, callback, userData)
+
+  let req = NodeStorageRequest.createShared(
+    NodeStorageMsgType.SET_ADVERTISE, cid = cid, advertise = advertise
+  )
 
   let res = storage_context.sendRequestToStorageThread(
     ctx, RequestType.STORAGE, req, callback, userData

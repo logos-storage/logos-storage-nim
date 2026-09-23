@@ -66,6 +66,10 @@ proc hasPublicRelayTransport*(ma: MultiAddress): bool =
     return false
   relayWireAddr.isPublicMA()
 
+proc isDialableCircuitMA*(ma: MultiAddress): bool =
+  ## True when ``ma`` is a circuit address reachable through a public relay.
+  ma.isCircuitRelayMA() and ma.hasPublicRelayTransport()
+
 proc dialableAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
   # Use with switchBuilder.withAddressPolicy.
   # Filter the peerInfo.addrs updated by libp2p without

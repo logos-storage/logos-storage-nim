@@ -11,21 +11,29 @@
 
 import std/[json, os, tables]
 
+import pkg/chronicles
 import pkg/libp2p
 import pkg/libp2p/wire
 import pkg/libp2p/crypto/crypto
 import pkg/libp2p/crypto/secp
 import pkg/libp2p_mix
 import pkg/libp2p_mix/[curve25519, mix_node]
+import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/questionable/results
 import pkg/stew/byteutils
 
 import ../errors
+import ./addrutils
+
+logScope:
+  topics = "storage mixidentity"
 
 const PoolFormatVersion = 1
 
 const MixIdentityFileSize = 2 * FieldElementSize
+
+type MixPool* = Table[PeerId, MixPubInfo]
 
 proc mixUnsetMultiAddr*(): MultiAddress =
   ## Placeholder multiaddr for a mix node that has not yet been assigned a real multiaddr.
@@ -45,6 +53,38 @@ proc pickMixCompatibleMultiAddr*(addrs: openArray[MultiAddress]): Opt[MultiAddre
       return Opt.some(ma)
 
   Opt.none(MultiAddress)
+
+proc addressMapper*(proto: MixProtocol): AddressMapper =
+  proc(
+      listenAddrs: seq[MultiAddress]
+  ): Future[seq[MultiAddress]] {.async: (raises: [CancelledError]).} =
+    result = listenAddrs
+    # AutoNAT and AutoRelay may register mappers after this one, so this input
+    # need not contain the final reachable endpoint. Use the endpoint saved by
+    # the observer after the previous address update. This can remain stale
+    # until another update occurs.
+    # TODO: derive the Mix advertisement after all endpoint-producing mappers,
+    # with a regression test covering a later mapper supplying the endpoint.
+    let mixAddress = proto.localMixPubInfo.toMixAddress().valueOr:
+      error "Failed to get Mix address", err = error
+      return
+
+    trace "derived new mix transport address", address = mixAddress
+    result.add(mixAddress)
+
+proc dialableMixAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
+  ## Replacement policy for `dialableAddressPolicy` which allows an address if either:
+  ##  1. the address itself is dialable;
+  ##  2. the address is a valid mix transport address, and its underlying multiaddr is
+  ##     dialable.
+  if dialableAddressPolicy(ma):
+    return true
+
+  let pubMixInfo = MixPubInfo.fromMixAddress(ma, Opt.none(PeerId)).valueOr:
+    # not a valid mix address
+    return false
+
+  return dialableAddressPolicy(pubMixInfo.multiAddr)
 
 proc loadOrGenerateMixKeys*(
     path: string
@@ -172,7 +212,7 @@ proc pubInfoFromJson(node: JsonNode): ?!MixPubInfo =
 
   success MixPubInfo.init(peerId, multiAddr, mixPubKey, libp2pPubKey)
 
-proc loadRelayPubInfoTableFromJson*(poolJson: string): ?!Table[PeerId, MixPubInfo] =
+proc loadRelayPubInfoTableFromJson*(poolJson: string): ?!MixPool =
   ## Expected format:
   ##   { "version": 1, "relays": [ { peerId, multiAddr, mixPubKey, libp2pPubKey }, ... ] }
   if poolJson.len == 0:
@@ -199,7 +239,7 @@ proc loadRelayPubInfoTableFromJson*(poolJson: string): ?!Table[PeerId, MixPubInf
 
   success t
 
-proc loadRelayPubInfoTableFromFile*(poolPath: string): ?!Table[PeerId, MixPubInfo] =
+proc loadRelayPubInfoTableFromFile*(poolPath: string): ?!MixPool =
   if poolPath.len == 0:
     return success initTable[PeerId, MixPubInfo]()
 

@@ -22,7 +22,7 @@ _base_config() {
     --listen-port=8070
     --api-port=8080
     --data-dir=/data
-    '--log-level=DEBUG;trace:libp2p,mix'
+    '--log-level=DEBUG;trace:blockexcnetwork,libp2p,mix'
   )
 }
 
