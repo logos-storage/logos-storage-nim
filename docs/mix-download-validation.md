@@ -4,6 +4,14 @@ Updated: 2026-09-16. This is a live status note, separate from the implementatio
 
 ## Recorded verification
 
+2026-09-23: restored one shared BlockExchange discovery-submission timestamp for
+Direct and Mix, retaining transport-specific queue and in-flight keys. All 23
+tests in `tests/storage/blockexchange/engine/testengine.nim` passed, including a
+regression covering both transport orders, suppression during the shared cooldown,
+and correct transport routing after the cooldown expires. The test expires the
+timestamp explicitly rather than sleeping. Formatting checks passed for the
+edited Nim files. The full suite was not run.
+
 2026-09-16: retained the tree-only lookup diagnostic in the download-manager suite and strengthened the bound-reader regression to select the opposite download explicitly. Neither test assumes table iteration follows insertion order. The unbound test demonstrates cancellation coupling; the bound test demonstrates isolation. All 60 download-manager tests passed.
 
 2026-09-16: retaining download-ID-bound streaming readers passed all 59 download-manager tests, including two new Direct/Direct cancellation-isolation tests and the existing Direct/Mix handle-isolation test. Reader binding is an accepted shared correctness change relative to master's tree-only lookup. No production code changed in this increment. Concurrent storage behavior was inspected in source, not fault-injection tested; no benchmark equivalence is claimed.

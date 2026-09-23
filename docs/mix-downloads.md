@@ -710,6 +710,25 @@ Mix uses its separate session-event callback for the corresponding registration.
 
 Discovery requests are keyed by `(CID, transport)`. Requests for the same CID over different transports can therefore both establish their intended connection type. This key controls provider dialing, not the DHT lookup mechanism itself.
 
+Before queueing discovery, `BlockExcEngine.searchForNewPeers` applies one shared
+three-second cooldown across Direct and Mix downloads. The timestamp records the
+last submission through this helper, regardless of CID or transport:
+
+```nim
+proc searchForNewPeers(self: BlockExcEngine, cid: Cid, transport: DownloadTransport) =
+  if self.lastDiscRequest + DiscoveryRateLimit < Moment.now():
+    trace "Searching for new peers for", cid = cid
+    storage_block_exchange_discovery_requests_total.inc()
+    self.lastDiscRequest = Moment.now()
+    self.discovery.queueFindBlocksReq(@[cid], transport)
+```
+
+A call during the cooldown does not enqueue a request; the download worker must
+try again later. This restores the original shared submission limit. It is not a
+global limiter for all DHT operations, such as independent manifest lookups.
+The queued request still retains its transport so the discovery worker selects
+the appropriate protocol instance when dialing providers.
+
 The queued request type and insertion operation in `engine/discovery.nim` are:
 
 ```nim

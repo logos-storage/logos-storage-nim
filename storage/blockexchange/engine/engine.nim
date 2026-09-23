@@ -85,7 +85,7 @@ type
     downloadManager*: DownloadManager
     discovery*: DiscoveryEngine
     advertiser*: Advertiser
-    lastDiscRequest: array[DownloadTransport, Moment]
+    lastDiscRequest: Moment
     selectionPolicy*: SelectionPolicy # Block selection policy for block scheduling
     activeDownloads*: HashSet[uint64] # Track running download workers by download ID
 
@@ -182,10 +182,10 @@ proc stop*(self: BlockExcEngine) {.async: (raises: []).} =
   trace "NetworkStore stopped"
 
 proc searchForNewPeers(self: BlockExcEngine, cid: Cid, transport: DownloadTransport) =
-  if self.lastDiscRequest[transport] + DiscoveryRateLimit < Moment.now():
+  if self.lastDiscRequest + DiscoveryRateLimit < Moment.now():
     trace "Searching for new peers for", cid = cid
     storage_block_exchange_discovery_requests_total.inc()
-    self.lastDiscRequest[transport] = Moment.now()
+    self.lastDiscRequest = Moment.now()
     self.discovery.queueFindBlocksReq(@[cid], transport)
 
 proc banAndDropPeer(
@@ -967,7 +967,8 @@ proc blockPresenceHandler*(
               trace "peer has complete tree", peer = peer, treeCid = treeCid
               BlockAvailability.complete()
             of BlockPresenceType.HaveRange:
-              trace "peer has ranges", peer = peer, treeCid = treeCid, len = presence.ranges.len
+              trace "peer has ranges",
+                peer = peer, treeCid = treeCid, len = presence.ranges.len
               if presence.ranges.len > 0:
                 BlockAvailability.fromRanges(presence.ranges)
               else:
@@ -1211,7 +1212,8 @@ proc configureNetwork(
     let maxIndex = high(Natural).uint64
     var totalCount: uint64 = 0
 
-    trace "Received WantBlocks request", peer = peer, treeCid = req.treeCid, ranges = req.ranges.len
+    trace "Received WantBlocks request",
+      peer = peer, treeCid = req.treeCid, ranges = req.ranges.len
     for r in req.ranges:
       if r.count == 0 or r.start > maxIndex or r.count - 1 > maxIndex - r.start or
           r.start > uint64.high - r.count or r.count > uint64.high - totalCount:

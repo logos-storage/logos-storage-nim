@@ -1,4 +1,4 @@
-import std/[sequtils, options]
+import std/[sequtils, options, importutils]
 
 import pkg/chronos
 import pkg/libp2p/routing_record
@@ -13,11 +13,14 @@ import pkg/storage/merkletree
 import pkg/storage/blockexchange/utils
 import pkg/storage/blockexchange/engine/activedownload {.all.}
 import pkg/storage/blockexchange/engine/downloadmanager {.all.}
+import pkg/storage/blockexchange/engine/engine {.all.}
 import pkg/storage/blockexchange/protocol/constants
 
 import ../../../asynctest
 import ../../helpers
 import ../../examples
+
+privateAccess(BlockExcEngine)
 
 asyncchecksuite "NetworkStore engine handlers":
   var
@@ -68,6 +71,35 @@ asyncchecksuite "NetworkStore engine handlers":
 
   test "Default peer selection does not install provider tracking":
     check discovery.onProviders.isNil
+
+  test "Direct and Mix discovery share one cooldown in either order":
+    for firstTransport in [DownloadTransport.Direct, DownloadTransport.Mix]:
+      let
+        secondTransport =
+          if firstTransport == DownloadTransport.Direct:
+            DownloadTransport.Mix
+          else:
+            DownloadTransport.Direct
+        firstCid = Cid.example
+        secondCid = Cid.example
+
+      # Expire the cooldown explicitly; no wall-clock sleep is needed.
+      engine.lastDiscRequest = Moment.now() - 4.seconds
+      engine.searchForNewPeers(firstCid, firstTransport)
+      let requestedAt = engine.lastDiscRequest
+      engine.searchForNewPeers(secondCid, secondTransport)
+      check discovery.discoveryQueue.len == 1
+      check engine.lastDiscRequest == requestedAt
+      let firstRequest = discovery.discoveryQueue.getNoWait()
+      check firstRequest.cid == firstCid
+      check firstRequest.transport == firstTransport
+
+      engine.lastDiscRequest = Moment.now() - 4.seconds
+      engine.searchForNewPeers(secondCid, secondTransport)
+      check discovery.discoveryQueue.len == 1
+      let secondRequest = discovery.discoveryQueue.getNoWait()
+      check secondRequest.cid == secondCid
+      check secondRequest.transport == secondTransport
 
   test "Provider tracking is installed only when a policy needs it":
     discard BlockExcEngine.new(
