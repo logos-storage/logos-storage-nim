@@ -137,6 +137,34 @@ method ensureExpiry*(
 
   await self.ensureExpiry(leafMd.blkCid, expiry)
 
+method setAdvertise*(
+    self: RepoStore, cid: Cid, advertise: bool
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Set whether the cid is announced to the DHT and served to peers
+  ##
+
+  without key =? createAdvertiseMetadataKey(cid), err:
+    return failure(err)
+
+  if advertise:
+    await self.metaDs.delete(key)
+  else:
+    await self.metaDs.put(key, self.clock.now().uint64)
+
+method isAdvertised*(
+    self: RepoStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  ## Check whether the cid is announced to the DHT and served to peers
+  ##
+
+  without key =? createAdvertiseMetadataKey(cid), err:
+    return failure(err)
+
+  without disabled =? await self.metaDs.has(key), err:
+    return failure(err)
+
+  success(not disabled)
+
 method putCidAndProof*(
     self: RepoStore,
     treeCid: Cid,

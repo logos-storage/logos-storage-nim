@@ -270,6 +270,7 @@ Initialize an upload session for a file.
 
 - `filepath`: absolute path for file upload; for chunk uploads it's the file name. The metadata filename and mime type are derived from this value.
 - `chunkSize`: chunk size for upload (default: `1024 * 64` bytes)
+- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
 - Callback returns the `sessionId`
 
 ```c
@@ -277,6 +278,7 @@ int storage_upload_init(
     void *ctx,
     const char *filepath,
     size_t chunkSize,
+    bool advertise,
     StorageCallback callback,
     void *userData
 );
@@ -358,6 +360,7 @@ Initialize a download for `cid`.
 
 - `chunkSize`: chunk size for download (default: `1024 * 64` bytes)
 - `local`: attempt local store retrieval only
+- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
 
 ```c
 int storage_download_init(
@@ -365,6 +368,7 @@ int storage_download_init(
     const char *cid,
     size_t chunkSize,
     bool local,
+    bool advertise,
     StorageCallback callback,
     void *userData
 );
@@ -429,10 +433,13 @@ int storage_download_cancel(
 
 Retrieve the manifest for the given `cid` (JSON).
 
+- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
+
 ```c
 int storage_download_manifest(
     void *ctx,
     const char *cid,
+    bool advertise,
     StorageCallback callback,
     void *userData
 );
@@ -477,8 +484,10 @@ int storage_delete(void *ctx, const char *cid, StorageCallback callback, void *u
 Fetch content identified by `cid` from the network into local store
 in background. The callback will not receive progress updates.
 
+- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
+
 ```c
-int storage_fetch(void *ctx, const char *cid, StorageCallback callback, void *userData);
+int storage_fetch(void *ctx, const char *cid, bool advertise, StorageCallback callback, void *userData);
 ```
 
 ---
@@ -489,6 +498,29 @@ Check if content identified by `cid` exists in local store.
 
 ```c
 int storage_exists(void *ctx, const char *cid, StorageCallback callback, void *userData);
+```
+
+---
+
+### `storage_get_advertise`
+
+Check whether the dataset identified by `cid` is announced to the DHT and served
+to peers. The callback returns `"true"` or `"false"`.
+
+```c
+int storage_get_advertise(void *ctx, const char *cid, StorageCallback callback, void *userData);
+```
+
+---
+
+### `storage_set_advertise`
+
+Announce the dataset identified by `cid` to the DHT and serve it to peers, or stop
+doing both. Records already published in the DHT are not withdrawn, they stop being
+republished and expire.
+
+```c
+int storage_set_advertise(void *ctx, const char *cid, bool advertise, StorageCallback callback, void *userData);
 ```
 
 

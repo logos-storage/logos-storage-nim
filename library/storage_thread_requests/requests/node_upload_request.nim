@@ -51,6 +51,7 @@ type NodeUploadRequest* = object
   chunk: pointer
   chunkLen: int
   chunkSize: csize_t
+  advertise: bool
 
 type
   UploadSessionId* = string
@@ -73,6 +74,7 @@ proc createShared*(
     chunkData: ptr byte = nil,
     chunkLen: int = 0,
     chunkSize: csize_t = 0,
+    advertise: bool = true,
 ): ptr type T =
   var ret = createShared(T)
   ret[].operation = op
@@ -80,6 +82,7 @@ proc createShared*(
   ret[].filepath = filepath.alloc()
   ret[].chunkLen = chunkLen
   ret[].chunkSize = chunkSize
+  ret[].advertise = advertise
 
   if chunkLen > 0:
     ret[].chunk = allocShared(chunkLen)
@@ -97,7 +100,10 @@ proc destroyShared*(self: ptr NodeUploadRequest) =
   deallocShared(self)
 
 proc init(
-    storage: ptr StorageServer, filepath: cstring = "", chunkSize: csize_t = 0
+    storage: ptr StorageServer,
+    filepath: cstring = "",
+    chunkSize: csize_t = 0,
+    advertise: bool,
 ): Future[Result[string, string]] {.async: (raises: []).} =
   ## Init a new session upload and return its ID.
   ## The session contains the future corresponding to the
@@ -158,7 +164,8 @@ proc init(
 
   let blockSize =
     if chunkSize.NBytes > 0.NBytes: chunkSize.NBytes else: DefaultBlockSize
-  let fut = node.store(lpStream, filenameOpt, mimetypeOpt, blockSize, onBlockStored)
+  let fut =
+    node.store(lpStream, filenameOpt, mimetypeOpt, blockSize, onBlockStored, advertise)
 
   uploadSessions[sessionId] = UploadSession(
     stream: stream, fut: fut, filepath: $filepath, chunkSize: blockSize.int
@@ -357,7 +364,7 @@ proc process*(
 
   case self.operation
   of NodeUploadMsgType.INIT:
-    let res = (await init(storage, self.filepath, self.chunkSize))
+    let res = (await init(storage, self.filepath, self.chunkSize, self.advertise))
     if res.isErr:
       error "Failed to INIT.", error = res.error
       return err($res.error)

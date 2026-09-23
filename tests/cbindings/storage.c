@@ -496,7 +496,7 @@ int check_upload_chunk(void *storage_ctx, const char *filepath)
     const char *payload = "hello world";
     size_t chunk_size = strlen(payload);
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, filepath, chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -563,7 +563,7 @@ int upload_cancel(void *storage_ctx)
     char *session_id = NULL;
     size_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, "hello.txt", chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, "hello.txt", chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -594,7 +594,7 @@ int check_upload_file(void *storage_ctx, const char *filepath, char **res)
     char *session_id = NULL;
     size_t chunk_size = 64 * 1024;
 
-    if (storage_upload_init(storage_ctx, filepath, chunk_size, (StorageCallback)callback, r) != RET_OK)
+    if (storage_upload_init(storage_ctx, filepath, chunk_size, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -634,7 +634,7 @@ int check_download_stream(void *storage_ctx, const char *cid, const char *filepa
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -686,7 +686,7 @@ int check_download_chunk(void *storage_ctx, const char *cid)
     size_t chunk_size = 64 * 1024;
     bool local = true;
 
-    if (storage_download_init(storage_ctx, cid, chunk_size, local, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, chunk_size, local, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -737,7 +737,7 @@ int check_download_manifest(void *storage_ctx, const char *cid)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_download_manifest(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_manifest(storage_ctx, cid, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -837,6 +837,44 @@ int check_exists(void *storage_ctx, const char *cid, bool expected)
             fprintf(stderr, "exists content mismatch, res:%s\n", res ? res : "(null)");
             ret = RET_ERR;
         }
+    }
+
+    free(res);
+
+    return ret;
+}
+
+int check_advertise(void *storage_ctx, const char *cid, bool advertise)
+{
+    Resp *r = alloc_resp();
+    char *res = NULL;
+
+    if (storage_set_advertise(storage_ctx, cid, advertise, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    if (is_resp_ok(r, NULL) != RET_OK)
+    {
+        return RET_ERR;
+    }
+
+    r = alloc_resp();
+
+    if (storage_get_advertise(storage_ctx, cid, (StorageCallback)callback, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    int ret = is_resp_ok(r, &res);
+    const char *expected = advertise ? "true" : "false";
+
+    if (res == NULL || strcmp(res, expected) != 0)
+    {
+        fprintf(stderr, "advertise content mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
     }
 
     free(res);
@@ -1086,6 +1124,8 @@ int main(void)
     RUN_TEST(check_list(storage_ctx));
     RUN_TEST(check_space(storage_ctx));
     RUN_TEST(check_exists(storage_ctx, cid, true));
+    RUN_TEST(check_advertise(storage_ctx, cid, false));
+    RUN_TEST(check_advertise(storage_ctx, cid, true));
     RUN_TEST(check_delete(storage_ctx, cid));
     RUN_TEST(check_exists(storage_ctx, cid, false));
 
