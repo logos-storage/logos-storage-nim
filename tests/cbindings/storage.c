@@ -784,7 +784,7 @@ int check_download_manifest_private(void *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_download_manifest(storage_ctx, cid, true, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_manifest(storage_ctx, cid, true, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -798,7 +798,7 @@ int check_download_init_private(void *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_download_init(storage_ctx, cid, 0, false, true, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, 0, false, true, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -811,7 +811,7 @@ int check_download_privacy_mismatch(void *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_download_init(storage_ctx, cid, 0, false, false, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, 0, false, false, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -823,7 +823,7 @@ int check_download_privacy_mismatch(void *storage_ctx, const char *cid)
 
     // Reusing a direct session must not silently accept a private request.
     r = alloc_resp();
-    if (storage_download_init(storage_ctx, cid, 0, false, true, (StorageCallback)callback, r) != RET_OK)
+    if (storage_download_init(storage_ctx, cid, 0, false, true, true, (StorageCallback)callback, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;

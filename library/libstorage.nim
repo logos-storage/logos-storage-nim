@@ -484,8 +484,10 @@ proc storage_download_manifest(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.MANIFEST, cid = cid, isPrivate = isPrivate
-    NodeDownloadMsgType.MANIFEST, cid = cid, advertise = advertise
+    NodeDownloadMsgType.MANIFEST,
+    cid = cid,
+    isPrivate = isPrivate,
+    advertise = advertise,
   )
 
   let res = storage_context.sendRequestToStorageThread(
