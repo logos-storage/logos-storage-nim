@@ -10,6 +10,7 @@
 {.push raises: [], gcsafe.}
 
 import std/sequtils
+import std/strutils
 import std/mimetypes
 import std/os
 
@@ -73,7 +74,11 @@ proc isPending(resp: HttpResponseRef): bool =
   return resp.getResponseState() == HttpResponseState.Empty
 
 proc retrieveCid(
-    node: StorageNodeRef, cid: Cid, local: bool = true, resp: HttpResponseRef
+    node: StorageNodeRef,
+    cid: Cid,
+    local: bool = true,
+    resp: HttpResponseRef,
+    advertise: bool,
 ): Future[void] {.async: (raises: [CancelledError, HttpWriteError]).} =
   ## Download a file from the node in a streaming
   ## manner
@@ -83,7 +88,7 @@ proc retrieveCid(
 
   var bytes = 0
   try:
-    without stream =? (await node.retrieve(cid, local)), error:
+    without stream =? (await node.retrieve(cid, local, advertise)), error:
       if error of BlockNotFoundError:
         resp.status = Http404
         await resp.sendBody(
@@ -98,7 +103,7 @@ proc retrieveCid(
     lpStream = stream
 
     # It is ok to fetch again the manifest because it will hit the cache
-    without manifest =? (await node.fetchManifest(cid)), err:
+    without manifest =? (await node.fetchManifest(cid, advertise)), err:
       error "Failed to fetch manifest", err = err.msg
       resp.status = Http404
       await resp.sendBody(err.msg)
@@ -262,6 +267,12 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
 
     # Here we could check if the extension matches the filename if needed
 
+    let advertise =
+      try:
+        parseBool(request.query.getString("advertise", "true"))
+      except ValueError as exc:
+        return RestApiResponse.error(Http400, exc.msg)
+
     let reader = bodyReader.get()
 
     try:
@@ -271,6 +282,7 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
           filename = filename,
           mimetype = mimetype,
           blockSize = blockSize,
+          advertise = advertise,
         )
       ), error:
         error "Error uploading file", exc = error.msg
@@ -315,7 +327,7 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
       resp.setCorsHeaders("GET", corsOrigin)
       resp.setHeader("Access-Control-Headers", "X-Requested-With")
 
-    await node.retrieveCid(cid.get(), local = true, resp = resp)
+    await node.retrieveCid(cid.get(), local = true, resp = resp, advertise = false)
 
   router.api(MethodDelete, "/api/storage/v1/data/{cid}") do(
     cid: Cid, resp: HttpResponseRef
@@ -338,6 +350,60 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
     resp.status = Http204
     await resp.sendBody("")
 
+  router.api(MethodGet, "/api/storage/v1/data/{cid}/advertise") do(
+    cid: Cid, resp: HttpResponseRef
+  ) -> RestApiResponse:
+    ## Whether the dataset is announced to the DHT and served to peers
+    ##
+    var headers = buildCorsHeaders("GET", allowedOrigin)
+
+    if cid.isErr:
+      return RestApiResponse.error(Http400, $cid.error(), headers = headers)
+
+    let isManifest = cid.get().isManifest
+    if isManifest.isErr or not isManifest.get:
+      return RestApiResponse.error(Http400, "CID is not a manifest", headers = headers)
+
+    if not await node.hasLocalBlock(cid.get()):
+      return RestApiResponse.error(Http404, "Dataset not found", headers = headers)
+
+    let advertised = await node.isAdvertised(cid.get())
+    if advertised.isErr:
+      return RestApiResponse.error(Http500, advertised.error.msg, headers = headers)
+
+    let json = %*{"cid": $cid.get(), "advertise": advertised.get}
+    return RestApiResponse.response($json, contentType = "application/json")
+
+  router.api(MethodPost, "/api/storage/v1/data/{cid}/advertise") do(
+    cid: Cid, resp: HttpResponseRef
+  ) -> RestApiResponse:
+    ## Announce the dataset to the DHT and serve it to peers, or stop doing both
+    ##
+    var headers = buildCorsHeaders("POST", allowedOrigin)
+
+    if cid.isErr:
+      return RestApiResponse.error(Http400, $cid.error(), headers = headers)
+
+    let isManifest = cid.get().isManifest
+    if isManifest.isErr or not isManifest.get:
+      return RestApiResponse.error(Http400, "CID is not a manifest", headers = headers)
+
+    let advertise =
+      try:
+        parseBool(request.query.getString("advertise", ""))
+      except ValueError as exc:
+        return RestApiResponse.error(Http400, exc.msg, headers = headers)
+
+    let res = await node.setAdvertise(cid.get(), advertise)
+    if res.isErr:
+      if res.error of BlockNotFoundError:
+        return RestApiResponse.error(Http404, res.error.msg, headers = headers)
+
+      return RestApiResponse.error(Http500, res.error.msg, headers = headers)
+
+    let json = %*{"cid": $cid.get(), "advertise": advertise}
+    return RestApiResponse.response($json, contentType = "application/json")
+
   router.api(MethodPost, "/api/storage/v1/data/{cid}/network") do(
     cid: Cid, resp: HttpResponseRef
   ) -> RestApiResponse:
@@ -350,7 +416,13 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
     if cid.isErr:
       return RestApiResponse.error(Http400, $cid.error(), headers = headers)
 
-    without manifest =? (await node.fetchManifest(cid.get())), err:
+    let advertise =
+      try:
+        parseBool(request.query.getString("advertise", "true"))
+      except ValueError as exc:
+        return RestApiResponse.error(Http400, exc.msg, headers = headers)
+
+    without manifest =? (await node.fetchManifest(cid.get(), advertise)), err:
       error "Failed to fetch manifest", err = err.msg
       return RestApiResponse.error(Http404, err.msg, headers = headers)
 
@@ -430,8 +502,14 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
       resp.setCorsHeaders("GET", corsOrigin)
       resp.setHeader("Access-Control-Headers", "X-Requested-With")
 
+    let advertise =
+      try:
+        parseBool(request.query.getString("advertise", "true"))
+      except ValueError as exc:
+        return RestApiResponse.error(Http400, exc.msg, headers = headers)
+
     resp.setHeader("Access-Control-Expose-Headers", "Content-Disposition")
-    await node.retrieveCid(cid.get(), local = false, resp = resp)
+    await node.retrieveCid(cid.get(), local = false, resp = resp, advertise = advertise)
 
   router.api(MethodGet, "/api/storage/v1/data/{cid}/network/manifest") do(
     cid: Cid, resp: HttpResponseRef
@@ -444,7 +522,13 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
     if cid.isErr:
       return RestApiResponse.error(Http400, $cid.error(), headers = headers)
 
-    without manifest =? (await node.fetchManifest(cid.get())), err:
+    let advertise =
+      try:
+        parseBool(request.query.getString("advertise", "true"))
+      except ValueError as exc:
+        return RestApiResponse.error(Http400, exc.msg, headers = headers)
+
+    without manifest =? (await node.fetchManifest(cid.get(), advertise)), err:
       error "Failed to fetch manifest", err = err.msg
       return RestApiResponse.error(Http404, err.msg, headers = headers)
 

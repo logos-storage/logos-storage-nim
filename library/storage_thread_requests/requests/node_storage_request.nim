@@ -18,7 +18,8 @@ import ../../../storage/stores/repostore
 
 from ../../../storage/storage import StorageServer, node, repoStore
 from ../../../storage/node import
-  iterateManifests, fetchManifest, fetchDatasetAsyncTask, delete, hasLocalBlock
+  iterateManifests, fetchManifest, fetchDatasetAsyncTask, delete, hasLocalBlock,
+  isAdvertised, setAdvertise
 from libp2p import Cid, init, `$`
 
 logScope:
@@ -30,10 +31,13 @@ type NodeStorageMsgType* = enum
   FETCH
   SPACE
   EXISTS
+  GET_ADVERTISE
+  SET_ADVERTISE
 
 type NodeStorageRequest* = object
   operation: NodeStorageMsgType
   cid: cstring
+  advertise: bool
 
 type StorageSpace = object
   totalBlocks* {.serialize.}: Natural
@@ -42,11 +46,15 @@ type StorageSpace = object
   quotaReservedBytes* {.serialize.}: NBytes
 
 proc createShared*(
-    T: type NodeStorageRequest, op: NodeStorageMsgType, cid: cstring = ""
+    T: type NodeStorageRequest,
+    op: NodeStorageMsgType,
+    cid: cstring = "",
+    advertise: bool = true,
 ): ptr type T =
   var ret = createShared(T)
   ret[].operation = op
   ret[].cid = cid.alloc()
+  ret[].advertise = advertise
 
   return ret
 
@@ -95,7 +103,7 @@ proc delete(
   return ok("")
 
 proc fetch(
-    storage: ptr StorageServer, cCid: cstring
+    storage: ptr StorageServer, cCid: cstring, advertise: bool
 ): Future[Result[string, string]] {.async: (raises: []).} =
   let cid = Cid.init($cCid)
   if cid.isErr:
@@ -103,7 +111,7 @@ proc fetch(
 
   try:
     let node = storage[].node
-    let manifest = await node.fetchManifest(cid.get())
+    let manifest = await node.fetchManifest(cid.get(), advertise)
     if manifest.isErr:
       return err("Failed to fetch the data: " & manifest.error.msg)
 
@@ -141,6 +149,40 @@ proc exists(
   except CancelledError:
     return err("Failed to check the data existence: operation cancelled.")
 
+proc getAdvertise(
+    storage: ptr StorageServer, cCid: cstring
+): Future[Result[string, string]] {.async: (raises: []).} =
+  let cid = Cid.init($cCid)
+  if cid.isErr:
+    return err("Failed to get the advertise state: cannot parse cid: " & $cCid)
+
+  try:
+    let node = storage[].node
+    let advertised = await node.isAdvertised(cid.get())
+    if advertised.isErr:
+      return err("Failed to get the advertise state: " & advertised.error.msg)
+
+    return ok($advertised.get())
+  except CancelledError:
+    return err("Failed to get the advertise state: operation cancelled.")
+
+proc setAdvertise(
+    storage: ptr StorageServer, cCid: cstring, advertise: bool
+): Future[Result[string, string]] {.async: (raises: []).} =
+  let cid = Cid.init($cCid)
+  if cid.isErr:
+    return err("Failed to set the advertise state: cannot parse cid: " & $cCid)
+
+  try:
+    let node = storage[].node
+    let res = await node.setAdvertise(cid.get(), advertise)
+    if res.isErr:
+      return err("Failed to set the advertise state: " & res.error.msg)
+
+    return ok($advertise)
+  except CancelledError:
+    return err("Failed to set the advertise state: operation cancelled.")
+
 proc process*(
     self: ptr NodeStorageRequest, storage: ptr StorageServer
 ): Future[Result[string, string]] {.async: (raises: []).} =
@@ -166,7 +208,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeStorageMsgType.FETCH:
-    let res = (await fetch(storage, self.cid))
+    let res = (await fetch(storage, self.cid, self.advertise))
     if res.isErr:
       error "Failed to FETCH.", error = res.error
       return err($res.error)
@@ -181,5 +223,17 @@ proc process*(
     let res = (await exists(storage, self.cid))
     if res.isErr:
       error "Failed to EXISTS.", error = res.error
+      return err($res.error)
+    return res
+  of NodeStorageMsgType.GET_ADVERTISE:
+    let res = (await getAdvertise(storage, self.cid))
+    if res.isErr:
+      error "Failed to GET_ADVERTISE.", error = res.error
+      return err($res.error)
+    return res
+  of NodeStorageMsgType.SET_ADVERTISE:
+    let res = (await setAdvertise(storage, self.cid, self.advertise))
+    if res.isErr:
+      error "Failed to SET_ADVERTISE.", error = res.error
       return err($res.error)
     return res

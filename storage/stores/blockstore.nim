@@ -135,6 +135,22 @@ method ensureExpiry*(
 
   raiseAssert("Not implemented!")
 
+method setAdvertise*(
+    self: BlockStore, cid: Cid, advertise: bool
+): Future[?!void] {.base, async: (raises: [CancelledError]), gcsafe.} =
+  ## Set whether the cid is announced to the DHT and served to peers
+  ##
+
+  raiseAssert("setAdvertise not implemented!")
+
+method isAdvertised*(
+    self: BlockStore, cid: Cid
+): Future[?!bool] {.base, async: (raises: [CancelledError]), gcsafe.} =
+  ## Check whether the cid is announced to the DHT and served to peers
+  ##
+
+  raiseAssert("isAdvertised not implemented!")
+
 method delBlock*(
     self: BlockStore, cid: Cid
 ): Future[?!void] {.base, async: (raises: [CancelledError]), gcsafe.} =

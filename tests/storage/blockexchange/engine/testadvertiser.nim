@@ -55,7 +55,7 @@ asyncchecksuite "Advertiser":
   proc waitTillQueueEmpty() {.async.} =
     check eventually advertiser.advertiseQueue.len == 0
 
-  test "blockStored should queue manifest Cid for advertising":
+  test "Storing a manifest should queue its Cid for advertising":
     (await localStore.putBlock(manifestBlk)).tryGet()
 
     await waitTillQueueEmpty()
@@ -63,7 +63,16 @@ asyncchecksuite "Advertiser":
     check:
       manifestBlk.cid in advertised
 
-  test "blockStored should not queue tree Cid for advertising":
+  test "Storing a manifest that is not advertised should not queue its Cid":
+    (await localStore.setAdvertise(manifestBlk.cid, false)).tryGet()
+    (await localStore.putBlock(manifestBlk)).tryGet()
+
+    await waitTillQueueEmpty()
+
+    check:
+      manifestBlk.cid notin advertised
+
+  test "Storing a manifest should not queue its tree Cid for advertising":
     (await localStore.putBlock(manifestBlk)).tryGet()
 
     await waitTillQueueEmpty()
@@ -71,7 +80,7 @@ asyncchecksuite "Advertiser":
     check:
       manifest.treeCid notin advertised
 
-  test "blockStored should not queue non-manifest CIDs for discovery":
+  test "Storing a non-manifest block should not queue its Cid for advertising":
     let blk = bt.Block.example
 
     (await localStore.putBlock(blk)).tryGet()
