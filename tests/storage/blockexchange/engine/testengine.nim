@@ -22,6 +22,57 @@ import ../../examples
 
 privateAccess(BlockExcEngine)
 
+# Exercise BlockStore's cancellable async contract with a suspending lookup.
+# Current production existence lookups complete synchronously; these tests do
+# not reproduce a shutdown failure with those implementations.
+type PausedPresenceStore = ref object of BlockStore
+  entered: AsyncEvent
+  lookups: int
+
+method hasBlock(
+    self: PausedPresenceStore, tree: Cid, index: Natural
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  inc self.lookups
+  if self.lookups == 1:
+    self.entered.fire()
+    await newAsyncEvent().wait()
+  return success(false)
+
+proc checkPresenceCancellation(
+    engine: BlockExcEngine, peer: PeerId, rangeCount: uint64
+) {.async.} =
+  let store = PausedPresenceStore(entered: newAsyncEvent())
+  engine.localStore = store
+  var responses = 0
+  proc sendPresence(
+      peerId: PeerId, presence: seq[BlockPresence]
+  ) {.async: (raises: [CancelledError]).} =
+    inc responses
+
+  engine.networks.direct =
+    BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+  let handling = engine.wantListHandler(
+    peer,
+    WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: 0),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+          rangeCount: rangeCount,
+        )
+      ]
+    ),
+  )
+  await store.entered.wait().wait(5.seconds)
+  await handling.cancelAndWait().wait(5.seconds)
+  # Cancellation is consumed by the outer handler, not translated to DontHave.
+  check handling.finished
+  check not handling.failed
+  check store.lookups == 1
+  check responses == 0
+  check not engine.peers.get(peer).wantListBusy
+
 asyncchecksuite "NetworkStore engine handlers":
   var
     peerId: PeerId
@@ -68,6 +119,12 @@ asyncchecksuite "NetworkStore engine handlers":
 
     peerCtx = PeerContext(id: peerId)
     engine.peers.add(peerCtx)
+
+  test "Cancellation during a single presence lookup sends no response":
+    await checkPresenceCancellation(engine, peerId, 0)
+
+  test "Cancellation during a range presence lookup stops scanning":
+    await checkPresenceCancellation(engine, peerId, 2)
 
   test "Default peer selection does not install provider tracking":
     check discovery.onProviders.isNil

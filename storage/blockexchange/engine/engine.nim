@@ -1045,6 +1045,8 @@ proc wantListHandler*(
           let have =
             try:
               await address in self.localStore
+            except CancelledError:
+              raise
             except CatchableError:
               false
 
@@ -1093,6 +1095,8 @@ proc wantListHandler*(
         let have =
           try:
             await e.address in self.localStore
+          except CancelledError:
+            raise
           except CatchableError:
             false
 
@@ -1116,8 +1120,7 @@ proc wantListHandler*(
 
     if presence.len > 0:
       let network = self.networks.networkFor(transport)
-      if network.isNil:
-        return
+      doAssert not network.isNil, "Selected download transport is unavailable"
       trace "Sending presence to remote", items = presence.len
       try:
         await network.request.sendPresence(peer, presence).wait(
@@ -1159,10 +1162,7 @@ proc requestWantBlocks*(
     async: (raises: [CancelledError])
 .} =
   let network = self.networks.networkFor(transport)
-  if network.isNil:
-    return err(
-      wantBlocksError(ConnectionClosed, "Selected download transport is unavailable")
-    )
+  doAssert not network.isNil, "Selected download transport is unavailable"
   let response = ?await network.sendWantBlocksRequest(peer, blockRange)
   var blockViews: seq[BlockDeliveryView]
 
