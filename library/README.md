@@ -360,7 +360,10 @@ Initialize a download for `cid`.
 
 - `chunkSize`: chunk size for download (default: `1024 * 64` bytes)
 - `local`: attempt local store retrieval only
-- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
+- `isPrivate`: use Mix transport when true, or direct peer connetions when false. 
+     Existing download sessions for the same `cid`, if any, must have the same privacy setting.
+- `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers.
+>>>>>>> master
 
 ```c
 int storage_download_init(
@@ -368,6 +371,7 @@ int storage_download_init(
     const char *cid,
     size_t chunkSize,
     bool local,
+    bool isPrivate,
     bool advertise,
     StorageCallback callback,
     void *userData
@@ -382,14 +386,12 @@ Perform a streaming download for `cid`. Init must have been called prior.
 
 - If `filepath` is provided, content is written to that file.
 - Callback may be called with `RET_PROGRESS` updates during download.
-- `local` indicates whether to attempt local store retrieval only.
 
 ```c
 int storage_download_stream(
     void *ctx,
     const char *cid,
     size_t chunkSize,
-    bool local,
     const char *filepath,
     StorageCallback callback,
     void *userData
@@ -433,12 +435,14 @@ int storage_download_cancel(
 
 Retrieve the manifest for the given `cid` (JSON).
 
+- `isPrivate`: use Mix transport when true, direct transport when false
 - `advertise`: when `false`, the dataset is neither announced to the DHT nor served to peers
 
 ```c
 int storage_download_manifest(
     void *ctx,
     const char *cid,
+    bool isPrivate,
     bool advertise,
     StorageCallback callback,
     void *userData

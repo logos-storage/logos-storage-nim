@@ -485,7 +485,17 @@ proc writeWantBlocksResponse*(
       copyMem(addr buf[offset], unsafeAddr bd.blk.data[][0], bd.blk.data[].len)
       offset += bd.blk.data[].len
 
+  trace "Sending WantBlocks response",
+    peer = conn.peerId,
+    treeCid = treeCid,
+    blockCount = blocks.len,
+    totalDataSize = totalDataSize
   await conn.write(buf)
+  trace "WantBlocks response sent",
+    peer = conn.peerId,
+    treeCid = treeCid,
+    blockCount = blocks.len,
+    totalDataSize = totalDataSize
 
 proc writeWantBlocksRequest*(
     conn: Connection, req: WantBlocksRequest

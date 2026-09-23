@@ -1,4 +1,4 @@
-import std/[sequtils, options]
+import std/[sequtils, options, importutils]
 
 import pkg/chronos
 import pkg/libp2p/routing_record
@@ -13,11 +13,70 @@ import pkg/storage/merkletree
 import pkg/storage/blockexchange/utils
 import pkg/storage/blockexchange/engine/activedownload {.all.}
 import pkg/storage/blockexchange/engine/downloadmanager {.all.}
+import pkg/storage/blockexchange/engine/engine {.all.}
 import pkg/storage/blockexchange/protocol/constants
 
 import ../../../asynctest
 import ../../helpers
 import ../../examples
+
+privateAccess(BlockExcEngine)
+
+# Exercise BlockStore's cancellable async contract with a suspending lookup.
+# Current production existence lookups complete synchronously; these tests do
+# not reproduce a shutdown failure with those implementations.
+type PausedPresenceStore = ref object of BlockStore
+  entered: AsyncEvent
+  lookups: int
+
+method hasBlock(
+    self: PausedPresenceStore, tree: Cid, index: Natural
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  inc self.lookups
+  if self.lookups == 1:
+    self.entered.fire()
+    await newAsyncEvent().wait()
+  return success(false)
+
+method isAdvertised*(
+    self: PausedPresenceStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]).} =
+  success(true)
+
+proc checkPresenceCancellation(
+    engine: BlockExcEngine, peer: PeerId, rangeCount: uint64
+) {.async.} =
+  let store = PausedPresenceStore(entered: newAsyncEvent())
+  engine.localStore = store
+  var responses = 0
+  proc sendPresence(
+      peerId: PeerId, presence: seq[BlockPresence]
+  ) {.async: (raises: [CancelledError]).} =
+    inc responses
+
+  engine.networks.direct =
+    BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+  let handling = engine.wantListHandler(
+    peer,
+    WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: 0),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+          rangeCount: rangeCount,
+        )
+      ]
+    ),
+  )
+  await store.entered.wait().wait(5.seconds)
+  await handling.cancelAndWait().wait(5.seconds)
+  # Cancellation is consumed by the outer handler, not translated to DontHave.
+  check handling.finished
+  check not handling.failed
+  check store.lookups == 1
+  check responses == 0
+  check not engine.peers.get(peer).wantListBusy
 
 asyncchecksuite "NetworkStore engine handlers":
   var
@@ -52,17 +111,68 @@ asyncchecksuite "NetworkStore engine handlers":
     localStore = CacheStore.new()
     network = BlockExcNetwork()
 
-    discovery = DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
+    discovery =
+      DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
     engine = BlockExcEngine.new(
-      localStore, network, discovery, advertiser, peerStore, downloadManager
+      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
     )
 
     peerCtx = PeerContext(id: peerId)
     engine.peers.add(peerCtx)
+
+  test "Cancellation during a single presence lookup sends no response":
+    await checkPresenceCancellation(engine, peerId, 0)
+
+  test "Cancellation during a range presence lookup stops scanning":
+    await checkPresenceCancellation(engine, peerId, 2)
+
+  test "Default peer selection does not install provider tracking":
+    check discovery.onProviders.isNil
+
+  test "Direct and Mix discovery share one cooldown in either order":
+    for firstTransport in [DownloadTransport.Direct, DownloadTransport.Mix]:
+      let
+        secondTransport =
+          if firstTransport == DownloadTransport.Direct:
+            DownloadTransport.Mix
+          else:
+            DownloadTransport.Direct
+        firstCid = Cid.example
+        secondCid = Cid.example
+
+      # Expire the cooldown explicitly; no wall-clock sleep is needed.
+      engine.lastDiscRequest = Moment.now() - 4.seconds
+      engine.searchForNewPeers(firstCid, firstTransport)
+      let requestedAt = engine.lastDiscRequest
+      engine.searchForNewPeers(secondCid, secondTransport)
+      check discovery.discoveryQueue.len == 1
+      check engine.lastDiscRequest == requestedAt
+      let firstRequest = discovery.discoveryQueue.getNoWait()
+      check firstRequest.cid == firstCid
+      check firstRequest.transport == firstTransport
+
+      engine.lastDiscRequest = Moment.now() - 4.seconds
+      engine.searchForNewPeers(secondCid, secondTransport)
+      check discovery.discoveryQueue.len == 1
+      let secondRequest = discovery.discoveryQueue.getNoWait()
+      check secondRequest.cid == secondCid
+      check secondRequest.transport == secondTransport
+
+  test "Provider tracking is installed only when a policy needs it":
+    discard BlockExcEngine.new(
+      localStore,
+      discovery.networks,
+      discovery,
+      advertiser,
+      peerStore,
+      downloadManager,
+      mixPeerSelectionPolicy = newProviderPriorityPolicy(),
+    )
+    check not discovery.onProviders.isNil
 
   test "Should handle want list":
     let
@@ -85,7 +195,7 @@ asyncchecksuite "NetworkStore engine handlers":
         check p.kind in {BlockPresenceType.HaveRange, BlockPresenceType.Complete}
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -109,7 +219,7 @@ asyncchecksuite "NetworkStore engine handlers":
     ) {.async: (raises: [CancelledError]).} =
       presenceSent = true
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, makeWantList(rootCid, blocks.len))
@@ -132,7 +242,7 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -167,7 +277,7 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -188,7 +298,7 @@ asyncchecksuite "NetworkStore engine handlers":
     ) {.async: (raises: [CancelledError]).} =
       discard
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendWantList: sendWantList))
 
     let
@@ -247,7 +357,7 @@ asyncchecksuite "NetworkStore engine handlers":
       check presence[0].ranges.len > 0
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)
@@ -288,7 +398,7 @@ asyncchecksuite "NetworkStore engine handlers":
         check r.start < 2
       done.complete()
 
-    engine.network =
+    engine.networks.direct =
       BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
 
     await engine.wantListHandler(peerId, wantList)

@@ -37,7 +37,6 @@ import ./storage_thread_requests/requests/node_p2p_request
 import ./storage_thread_requests/requests/node_upload_request
 import ./storage_thread_requests/requests/node_download_request
 import ./storage_thread_requests/requests/node_storage_request
-import ./storage_thread_requests/requests/node_mix_request
 import ./ffi_types
 
 from ../storage/conf import storageVersion
@@ -396,25 +395,12 @@ proc storage_upload_file(
 
   return callback.okOrError(res, userData)
 
-proc storage_toggle_private_queries(
-    ctx: ptr StorageContext, enabled: bool, callback: StorageCallback, userData: pointer
-): cint {.dynlib, exportc.} =
-  initializeLibrary()
-  checkLibstorageParams(ctx, callback, userData)
-
-  let req = NodeMixRequest.createShared(privateQueries = enabled)
-
-  let res = storage_context.sendRequestToStorageThread(
-    ctx, RequestType.MIX, req, callback, userData
-  )
-
-  return callback.okOrError(res, userData)
-
 proc storage_download_init(
     ctx: ptr StorageContext,
     cid: cstring,
     chunkSize: csize_t,
     local: bool,
+    isPrivate: bool,
     advertise: bool,
     callback: StorageCallback,
     userData: pointer,
@@ -427,6 +413,7 @@ proc storage_download_init(
     cid = cid,
     chunkSize = chunkSize,
     local = local,
+    isPrivate = isPrivate,
     advertise = advertise,
   )
 
@@ -454,7 +441,6 @@ proc storage_download_stream(
     ctx: ptr StorageContext,
     cid: cstring,
     chunkSize: csize_t,
-    local: bool,
     filepath: cstring,
     callback: StorageCallback,
     userData: pointer,
@@ -463,11 +449,7 @@ proc storage_download_stream(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.STREAM,
-    cid = cid,
-    chunkSize = chunkSize,
-    local = local,
-    filepath = filepath,
+    NodeDownloadMsgType.STREAM, cid = cid, chunkSize = chunkSize, filepath = filepath
   )
 
   let res = storage_context.sendRequestToStorageThread(
@@ -493,6 +475,7 @@ proc storage_download_cancel(
 proc storage_download_manifest(
     ctx: ptr StorageContext,
     cid: cstring,
+    isPrivate: bool,
     advertise: bool,
     callback: StorageCallback,
     userData: pointer,
@@ -501,7 +484,10 @@ proc storage_download_manifest(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeDownloadRequest.createShared(
-    NodeDownloadMsgType.MANIFEST, cid = cid, advertise = advertise
+    NodeDownloadMsgType.MANIFEST,
+    cid = cid,
+    isPrivate = isPrivate,
+    advertise = advertise,
   )
 
   let res = storage_context.sendRequestToStorageThread(

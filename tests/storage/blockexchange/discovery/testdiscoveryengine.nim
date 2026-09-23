@@ -1,7 +1,6 @@
 import pkg/chronos
 
 import pkg/storage/rng
-import pkg/storage/stores
 import pkg/storage/blockexchange
 import pkg/storage/chunker
 import pkg/storage/blocktype as bt
@@ -52,13 +51,12 @@ asyncchecksuite "Test Discovery Engine":
 
   test "Should queue discovery request":
     var
-      localStore = CacheStore.new()
       discoveryEngine =
-        DiscoveryEngine.new(localStore, peerStore, network, blockDiscovery)
+        DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
       want = newFuture[void]()
 
     blockDiscovery.findBlockProvidersHandler = proc(
-        d: MockDiscovery, cid: Cid
+        d: MockDiscovery, cid: Cid, useMix: bool = false
     ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       check cid == blocks[0].cid
       if not want.finished:
@@ -71,15 +69,14 @@ asyncchecksuite "Test Discovery Engine":
 
   test "Should not request if there is already an inflight discovery request":
     var
-      localStore = CacheStore.new()
       discoveryEngine = DiscoveryEngine.new(
-        localStore, peerStore, network, blockDiscovery, concurrentDiscReqs = 2
+        peerStore, newBlockExcNetworks(network), blockDiscovery, concurrentDiscReqs = 2
       )
       reqs = Future[void].Raising([CancelledError]).init()
       count = 0
 
     blockDiscovery.findBlockProvidersHandler = proc(
-        d: MockDiscovery, cid: Cid
+        d: MockDiscovery, cid: Cid, useMix: bool = false
     ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       check cid == blocks[0].cid
       if count > 0:
@@ -96,4 +93,35 @@ asyncchecksuite "Test Discovery Engine":
     await sleepAsync(200.millis)
 
     reqs.complete()
+    await discoveryEngine.stop()
+
+  test "Should query over mix when requested":
+    var
+      privateCid = Cid.example
+      publicCid = Cid.example
+      discoveryEngine = DiscoveryEngine.new(
+        peerStore, newBlockExcNetworks(network), blockDiscovery, concurrentDiscReqs = 2
+      )
+      privateMatches = newFuture[bool]()
+      publicMatches = newFuture[bool]()
+
+    check privateCid != publicCid
+
+    blockDiscovery.findBlockProvidersHandler = proc(
+        d: MockDiscovery, cid: Cid, useMix: bool = false
+    ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
+      if useMix:
+        privateMatches.complete(cid == privateCid)
+      else:
+        publicMatches.complete(cid == publicCid)
+
+    await discoveryEngine.start()
+    discoveryEngine.queueFindBlocksReq(@[privateCid], transport = DownloadTransport.Mix)
+    discoveryEngine.queueFindBlocksReq(
+      @[publicCid], transport = DownloadTransport.Direct
+    )
+
+    check await privateMatches.wait(100.millis)
+    check await publicMatches.wait(100.millis)
+
     await discoveryEngine.stop()

@@ -35,7 +35,7 @@ const
   FallbackThroughputRatio* = 0.5
   FallbackRttRatio* = 0.5
 
-  DefaultBatchTimeout* = 30.seconds # fallback when no BDP stats available
+  DefaultBatchTimeout* = 300.seconds # fallback when no BDP stats available
   TimeoutSafetyFactor* = 3.0
     # multiplier to account for variance (network jitter, congestion, GC pauses )
   MinBatchTimeout* = 5.seconds # min to avoid too aggressive timeouts

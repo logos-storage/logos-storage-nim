@@ -18,6 +18,8 @@ import ./swarm
 import ../peers/peercontext
 import ../../manifest
 import ../../storagetypes
+import ../../downloadtransport
+export downloadtransport
 import ../../blocktype
 import ../protocol/constants
 import ../protocol/message
@@ -52,6 +54,7 @@ type
     bytesTransferred*: uint64
 
   DownloadDesc* = object
+    transport*: DownloadTransport
     md*: ManifestDescriptor
     startIndex*: uint64
     count*: uint64
@@ -71,6 +74,8 @@ type
       pendingRanges: seq[IndexRange]
 
   DownloadContext* = ref object
+    transport*: DownloadTransport
+    providerPeers*: HashSet[PeerId]
     md*: ManifestDescriptor
     totalBlocks*: uint64
     received*: uint64
@@ -188,6 +193,7 @@ proc new*(
     windowSize = computeWindowSize(blockSize)
 
   result = DownloadContext(
+    transport: desc.transport,
     md: desc.md,
     totalBlocks: totalBlocks,
     scheduler: Scheduler.new(),

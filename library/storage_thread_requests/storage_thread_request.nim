@@ -12,7 +12,6 @@ import ./requests/node_p2p_request
 import ./requests/node_upload_request
 import ./requests/node_download_request
 import ./requests/node_storage_request
-import ./requests/node_mix_request
 
 from ../../storage/storage import StorageServer
 
@@ -24,7 +23,6 @@ type RequestType* {.pure.} = enum
   UPLOAD
   DOWNLOAD
   STORAGE
-  MIX
 
 type StorageThreadRequest* = object
   reqType: RequestType
@@ -72,8 +70,6 @@ proc destroy*(request: ptr StorageThreadRequest) =
     cast[ptr NodeDownloadRequest](request[].reqContent).destroyShared()
   of STORAGE:
     cast[ptr NodeStorageRequest](request[].reqContent).destroyShared()
-  of MIX:
-    cast[ptr NodeMixRequest](request[].reqContent).destroyShared()
 
   deallocShared(request)
 
@@ -147,8 +143,6 @@ proc process*(
       cast[ptr NodeUploadRequest](request[].reqContent).process(
         storage, onBlockReceived
       )
-    of MIX:
-      cast[ptr NodeMixRequest](request[].reqContent).process(storage)
 
   handleRes(await retFut, request)
 
