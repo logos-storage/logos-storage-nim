@@ -1041,7 +1041,7 @@ int check_log_file_after_many_blocks(void)
                       "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
                       "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
                       "\"no-bootstrap-node\":true}";
-    size_t block_size = 1024;
+    size_t chunk_size = 1024;
     char *cid = NULL;
     char *log = NULL;
 
@@ -1075,7 +1075,7 @@ int check_log_file_after_many_blocks(void)
     char *session_id = NULL;
     r = alloc_resp();
 
-    if (!path || storage_upload_init(ctx, path, block_size, (StorageCallback)callback, r) != RET_OK ||
+    if (!path || storage_upload_init(ctx, path, chunk_size, true, (StorageCallback)callback, r) != RET_OK ||
         is_resp_ok(r, &session_id) != RET_OK)
     {
         free(path);
