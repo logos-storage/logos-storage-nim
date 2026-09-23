@@ -41,13 +41,10 @@ method needsProviderTracking*(
 method selectPresencePeers*(
     policy: ProviderPriorityPolicy, peers: PeerContextStore, providers: HashSet[PeerId]
 ): seq[PeerContext] {.gcsafe, raises: [].} =
-  for peer in peers:
-    if peer.id in providers:
-      result.add(peer)
+  let connected = peers.toSeq()
+  result = connected.filterIt(it.id in providers)
   if not policy.providersOnly:
-    for peer in peers:
-      if peer.id notin providers:
-        result.add(peer)
+    result.add(connected.filterIt(it.id notin providers))
 
 method selectInitialPresencePeers*(
     policy: ProviderPriorityPolicy,

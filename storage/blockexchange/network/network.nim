@@ -227,23 +227,22 @@ proc getOrCreatePeer(self: BlockExcNetwork, peer: PeerId): NetworkPeer =
   if peer in self.peers:
     return self.peers.getOrDefault(peer, nil)
 
-  var getConn: ConnProvider = proc(): Future[Connection] {.
-      async: (raises: [CancelledError])
-  .} =
+  var getConn: ConnProvider =
     if self.isMixDownload:
-      trace "Opening block exchange stream via MixTransport", peer
-      let stream = (await self.mixTransport.dial(peer, Codec)).valueOr:
-        trace "Unable to open MixTransport block exchange stream", peer, error
-        return nil
-      return stream
+      proc(): Future[Connection] {.async: (raises: [CancelledError]).} =
+        trace "Opening block exchange stream via MixTransport", peer
+        (await self.mixTransport.dial(peer, Codec)).valueOr:
+          trace "Unable to open MixTransport block exchange stream", peer, error
+          nil
     else:
-      try:
-        trace "Getting new connection stream", peer
-        return await self.switch.dial(peer, Codec)
-      except CancelledError as error:
-        raise error
-      except CatchableError as exc:
-        trace "Unable to connect to blockexc peer", exc = exc.msg
+      proc(): Future[Connection] {.async: (raises: [CancelledError]).} =
+        try:
+          trace "Getting new connection stream", peer
+          return await self.switch.dial(peer, Codec)
+        except CancelledError as error:
+          raise error
+        except CatchableError as exc:
+          trace "Unable to connect to blockexc peer", exc = exc.msg
 
   if not isNil(self.getConn):
     getConn = self.getConn
