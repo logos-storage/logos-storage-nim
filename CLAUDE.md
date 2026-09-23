@@ -63,7 +63,7 @@ make coverage && make show-coverage
 
 **REST API** (`storage/rest/`): HTTP API surface. See `openapi.yaml` for the full spec.
 
-**C library bindings** (`library/`): `libstorage.nim` exposes a C ABI via `storage_new / storage_start / storage_stop / storage_destroy`. All API calls are async and deliver results via a `StorageCallback`. Callbacks must be fast and non-blocking (they run on the worker thread).
+**C library bindings** (`library/`): built on [nim-ffi](https://github.com/logos-messaging/nim-ffi). Each entry point is a `{.ffi.}` proc in `library/storage_api/`; `libstorage.nim` imports them and calls `genBindings()`, which writes `library/generated/storage.h` at build time. nim-ffi owns the worker thread, the request queue, the CBOR wire and the event thread. Lifecycle is `storage_ctx_create / storage_ctx_start / storage_ctx_stop / storage_ctx_destroy`. Result callbacks and event listeners must be fast and non-blocking. See `library/README.md`.
 
 **Integration tests** (`tests/integration/`): Tests that spawn actual node processes. `twonodessuite` / `multinodesuite` macros set up N nodes and `StorageClient` (HTTP client) for interacting with them.
 

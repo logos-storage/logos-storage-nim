@@ -156,7 +156,7 @@ in stdenv.mkDerivation rec {
       mkdir -p $out/bin
       cp build/storage${lib.optionalString isWindows ".exe"} $out/bin/
     else
-      mkdir -p $out/lib $out/include${lib.optionalString isWindows " $out/bin"}
+      mkdir -p $out/lib $out/include/generated${lib.optionalString isWindows " $out/bin"}
       if [ -f build/libstorage.${libExt} ]; then
         cp build/libstorage.${libExt} $out/${dllDir}/
       else
@@ -171,6 +171,7 @@ in stdenv.mkDerivation rec {
       cp build/libstorage.dll.a $out/lib/
   '' + ''
       cp library/libstorage.h $out/include/
+      cp library/generated/*.h $out/include/generated/
     fi
   '';
 
