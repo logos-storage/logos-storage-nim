@@ -21,6 +21,7 @@ import libp2p/stream/[lpstream]
 import serde/json as serde
 import ../../alloc
 import ../../../storage/storagetypes
+import ../../../storage/downloadtransport
 
 from ../../../storage/storage import StorageServer, node
 from ../../../storage/node import retrieve, fetchManifest
@@ -44,6 +45,7 @@ type NodeDownloadRequest* = object
   cid: cstring
   chunkSize: csize_t
   local: bool
+  isPrivate: bool
   filepath: cstring
   advertise: bool
 
@@ -53,8 +55,15 @@ type
   DownloadSession* = object
     stream: LPStream
     chunkSize: int
+    isPrivate: bool
 
-var downloadSessions {.threadvar.}: Table[DownloadSessionId, DownloadSession]
+var downloadSessions {.threadvar.}:
+  tuple[lock: AsyncLock, sessions: Table[DownloadSessionId, DownloadSession]]
+
+proc sessionTableLock(): AsyncLock =
+  if downloadSessions.lock.isNil:
+    downloadSessions.lock = newAsyncLock()
+  downloadSessions.lock
 
 proc createShared*(
     T: type NodeDownloadRequest,
@@ -62,6 +71,7 @@ proc createShared*(
     cid: cstring = "",
     chunkSize: csize_t = 0,
     local: bool = false,
+    isPrivate: bool = false,
     filepath: cstring = "",
     advertise: bool = true,
 ): ptr type T =
@@ -70,6 +80,7 @@ proc createShared*(
   ret[].cid = cid.alloc()
   ret[].chunkSize = chunkSize
   ret[].local = local
+  ret[].isPrivate = isPrivate
   ret[].filepath = filepath.alloc()
   ret[].advertise = advertise
 
@@ -85,6 +96,7 @@ proc init(
     cCid: cstring = "",
     chunkSize: csize_t = 0,
     local: bool,
+    isPrivate: bool,
     advertise: bool,
 ): Future[Result[string, string]] {.async: (raises: []).} =
   ## Init a new session to download the file identified by cid.
@@ -93,28 +105,48 @@ proc init(
   ## Meaning that a cid can only have one active download session.
   ## If the chunkSize is 0, the default block size will be used.
   ## If local is true, the file will be retrived from the local store.
+  ## If isPrivate is true, uses mix to run queries and download the data.
 
   let cid = Cid.init($cCid)
   if cid.isErr:
     return err("Failed to download locally: cannot parse cid: " & $cCid)
 
-  if downloadSessions.contains($cid):
+  # Coarse lock which blocks two download sessions from being created concurrently.
+  # Prevents a second caller from entering and creating another session while we're
+  # blocked in node.retrieve.
+  try:
+    await sessionTableLock().acquire()
+  except CancelledError as ex:
+    return err("Could not acquire session table lock - cancelled")
+
+  defer:
+    try:
+      sessionTableLock().release()
+    except AsyncLockError:
+      # shouldn't happen
+      doAssert false, "lock released twice"
+
+  downloadSessions.sessions.withValue($cid, session):
+    if session.isPrivate != isPrivate:
+      return err("Download privacy setting does not match the existing session.")
     return ok("Download session already exists.")
 
   let node = storage[].node
   var stream: LPStream
 
   try:
-    let res = await node.retrieve(cid.get(), local, advertise)
+    let transport = if isPrivate: DownloadTransport.Mix else: DownloadTransport.Direct
+    let res = await node.retrieve(cid.get(), local, advertise, transport)
     if res.isErr():
       return err("Failed to init the download: " & res.error.msg)
     stream = res.get()
   except CancelledError:
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to init the download: download cancelled.")
 
   let blockSize = if chunkSize.int > 0: chunkSize.int else: DefaultBlockSize.int
-  downloadSessions[$cid] = DownloadSession(stream: stream, chunkSize: blockSize)
+  downloadSessions.sessions[$cid] =
+    DownloadSession(stream: stream, chunkSize: blockSize, isPrivate: isPrivate)
 
   return ok("")
 
@@ -133,12 +165,12 @@ proc chunk(
   if cid.isErr:
     return err("Failed to download locally: cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     return err("Failed to download chunk: no session for cid " & $cid)
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     return err("Failed to download chunk: no session for cid " & $cid)
 
@@ -154,11 +186,11 @@ proc chunk(
     buf.setLen(read)
   except LPStreamError as e:
     await stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to download chunk: " & $e.msg)
   except CancelledError:
     await stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
     return err("Failed to download chunk: download cancelled.")
 
   if buf.len <= 0:
@@ -215,29 +247,25 @@ proc stream(
     storage: ptr StorageServer,
     cCid: cstring,
     chunkSize: csize_t,
-    local: bool,
     filepath: cstring,
     onChunk: OnChunkHandler,
 ): Future[Result[string, string]] {.async: (raises: []).} =
   ## Stream the file identified by cid, calling the onChunk handler for each chunk
   ## and / or writing to a file if filepath is set.
   ##
-  ## If local is true, the file will be retrieved from the local store.
 
   let cid = Cid.init($cCid)
   if cid.isErr:
     return err("Failed to stream: cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     return err("Failed to stream: no session for cid " & $cid)
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     return err("Failed to stream: no session for cid " & $cid)
-
-  let node = storage[].node
 
   try:
     let res =
@@ -251,7 +279,7 @@ proc stream(
   finally:
     if session.stream != nil:
       await session.stream.close()
-    downloadSessions.del($cid)
+    downloadSessions.sessions.del($cid)
 
   return ok("")
 
@@ -266,25 +294,25 @@ proc cancel(
   if cid.isErr:
     return err("Failed to cancel : cannot parse cid: " & $cCid)
 
-  if not downloadSessions.contains($cid):
+  if not downloadSessions.sessions.contains($cid):
     # The session is already cancelled
     return ok("")
 
   var session: DownloadSession
   try:
-    session = downloadSessions[$cid]
+    session = downloadSessions.sessions[$cid]
   except KeyError:
     # The session is already cancelled
     return ok("")
 
   let stream = session.stream
   await stream.close()
-  downloadSessions.del($cCid)
+  downloadSessions.sessions.del($cid)
 
   return ok("")
 
 proc manifest(
-    storage: ptr StorageServer, cCid: cstring, advertise: bool
+    storage: ptr StorageServer, cCid: cstring, isPrivate: bool, advertise: bool
 ): Future[Result[string, string]] {.async: (raises: []).} =
   let cid = Cid.init($cCid)
   if cid.isErr:
@@ -292,7 +320,8 @@ proc manifest(
 
   try:
     let node = storage[].node
-    let manifest = await node.fetchManifest(cid.get(), advertise)
+    let transport = if isPrivate: DownloadTransport.Mix else: DownloadTransport.Direct
+    let manifest = await node.fetchManifest(cid.get(), advertise, transport)
     if manifest.isErr:
       return err("Failed to fetch manifest: " & manifest.error.msg)
 
@@ -313,8 +342,11 @@ proc process*(
 
   case self.operation
   of NodeDownloadMsgType.INIT:
-    let res =
-      (await init(storage, self.cid, self.chunkSize, self.local, self.advertise))
+    let res = (
+      await init(
+        storage, self.cid, self.chunkSize, self.local, self.isPrivate, self.advertise
+      )
+    )
     if res.isErr:
       error "Failed to INIT.", error = res.error
       return err($res.error)
@@ -326,11 +358,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeDownloadMsgType.STREAM:
-    let res = (
-      await stream(
-        storage, self.cid, self.chunkSize, self.local, self.filepath, onChunk
-      )
-    )
+    let res = (await stream(storage, self.cid, self.chunkSize, self.filepath, onChunk))
     if res.isErr:
       error "Failed to STREAM.", error = res.error
       return err($res.error)
@@ -342,7 +370,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeDownloadMsgType.MANIFEST:
-    let res = (await manifest(storage, self.cid, self.advertise))
+    let res = (await manifest(storage, self.cid, self.isPrivate, self.advertise))
     if res.isErr:
       error "Failed to MANIFEST.", error = res.error
       return err($res.error)

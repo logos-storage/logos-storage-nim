@@ -6,6 +6,7 @@ import pkg/libp2p/peerid
 import pkg/libp2p/cid
 
 import pkg/storage/blocktype as bt
+import pkg/storage/stores
 import pkg/storage/blockexchange
 import pkg/storage/blockexchange/engine/downloadcontext {.all.}
 import pkg/storage/blockexchange/engine/activedownload {.all.}
@@ -23,6 +24,139 @@ const
   Threshold = 0.75
 
 suite "DownloadManager - Want Handles":
+  test "Tree-only lookup lets cancelling an unrelated download cancel another download's read":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      firstDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      secondDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      # Table iteration order is not an ownership rule. Observe the selected
+      # entry instead of assuming the first-created download will be returned.
+      unrelatedDownload = manager.getDownload(md.manifest.treeCid).get()
+      readerDownload =
+        if unrelatedDownload.id == firstDownload.id: secondDownload else: firstDownload
+      address = BlockAddress.init(md.manifest.treeCid, 0)
+      # This read belongs to readerDownload, but master's shared store receives
+      # no downloadId and therefore selects unrelatedDownload instead.
+      view =
+        NetworkStore.new(BlockExcEngine(downloadManager: manager), CacheStore.new())
+    let reading = view.getBlock(address)
+    check address in unrelatedDownload
+    check address notin readerDownload
+    check not reading.finished
+    manager.cancelDownload(unrelatedDownload)
+    var cancelled = false
+    try:
+      discard await reading
+    except CancelledError:
+      cancelled = true
+    check cancelled
+    # The reader failed even though its own download is still active.
+    check not readerDownload.cancelled
+    check not readerDownload.completionFuture.finished
+    manager.cancelDownload(readerDownload)
+
+  test "A Direct reader survives cancellation of another Direct download of the same tree":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      firstDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      secondDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      selectedByTreeLookup = manager.getDownload(md.manifest.treeCid).get()
+      # Bind to the other download so a regression to tree-only lookup fails
+      # this test regardless of table iteration order.
+      readerDownload =
+        if selectedByTreeLookup.id == firstDownload.id:
+          secondDownload
+        else:
+          firstDownload
+      address = BlockAddress.init(md.manifest.treeCid, 0)
+      blk = bt.Block.new("independent Direct reader".toBytes).tryGet()
+      view = NetworkStore.new(
+        BlockExcEngine(downloadManager: manager),
+        CacheStore.new(),
+        downloadId = some(readerDownload.id),
+      )
+    check selectedByTreeLookup.id != readerDownload.id
+    let reading = view.getBlock(address)
+    check address in readerDownload
+    manager.cancelDownload(selectedByTreeLookup)
+    check not reading.finished
+    discard readerDownload.completeWantHandle(address, some(blk))
+    check (await reading).tryGet() == blk
+    manager.cancelDownload(readerDownload)
+
+  test "Cancelling a Direct reader's own download does not attach it to another download":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      otherDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      readerDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      address = BlockAddress.init(md.manifest.treeCid, 0)
+      view = NetworkStore.new(
+        BlockExcEngine(downloadManager: manager),
+        CacheStore.new(),
+        downloadId = some(readerDownload.id),
+      )
+    let reading = view.getBlock(address)
+    check address in readerDownload
+    manager.cancelDownload(readerDownload)
+    var cancelled = false
+    try:
+      discard await reading
+    except CancelledError:
+      cancelled = true
+    check cancelled
+    check not otherDownload.cancelled
+    check address notin otherDownload
+    manager.cancelDownload(otherDownload)
+
+  test "A scoped streaming read waits for its own download":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      directDownload = manager.startDownload(DownloadDesc(md: md, count: 1))
+      mixDownload = manager.startDownload(
+        DownloadDesc(md: md, count: 1, transport: DownloadTransport.Mix)
+      )
+      address = BlockAddress.init(md.manifest.treeCid, 0)
+      blk = bt.Block.new("scoped read".toBytes).tryGet()
+      view = NetworkStore.new(
+        BlockExcEngine(downloadManager: manager),
+        CacheStore.new(),
+        downloadId = some(mixDownload.id),
+      )
+    discard directDownload.getWantHandle(address)
+    let reading = view.getBlock(address)
+    discard directDownload.completeWantHandle(address, some(blk))
+    check not reading.finished
+    discard mixDownload.completeWantHandle(address, some(blk))
+    check (await reading).tryGet() == blk
+    manager.cancelDownload(directDownload)
+    manager.cancelDownload(mixDownload)
+
+  test "Background download reuse is scoped to the selected transport":
+    let
+      manager = DownloadManager.new()
+      md = testManifestDesc(Cid.example, DefaultBlockSize.uint32, 1)
+      directDownload = manager.startDownload(
+        DownloadDesc(
+          md: md, count: 1, isBackground: true, transport: DownloadTransport.Direct
+        )
+      )
+      mixDownload = manager.startDownload(
+        DownloadDesc(
+          md: md, count: 1, isBackground: true, transport: DownloadTransport.Mix
+        )
+      )
+    check manager
+      .getBackgroundDownload(md.manifest.treeCid, DownloadTransport.Direct)
+      .get() == directDownload
+    check manager.getBackgroundDownload(md.manifest.treeCid, DownloadTransport.Mix).get() ==
+      mixDownload
+    manager.cancelDownload(directDownload)
+    manager.cancelDownload(mixDownload)
+
   test "Should add want handle":
     let
       downloadManager = DownloadManager.new()

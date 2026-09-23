@@ -79,6 +79,7 @@ proc retrieveCid(
     local: bool = true,
     resp: HttpResponseRef,
     advertise: bool,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[void] {.async: (raises: [CancelledError, HttpWriteError]).} =
   ## Download a file from the node in a streaming
   ## manner
@@ -88,7 +89,7 @@ proc retrieveCid(
 
   var bytes = 0
   try:
-    without stream =? (await node.retrieve(cid, local, advertise)), error:
+    without stream =? (await node.retrieve(cid, local, advertise, transport)), error:
       if error of BlockNotFoundError:
         resp.status = Http404
         await resp.sendBody(
@@ -103,7 +104,7 @@ proc retrieveCid(
     lpStream = stream
 
     # It is ok to fetch again the manifest because it will hit the cache
-    without manifest =? (await node.fetchManifest(cid, advertise)), err:
+    without manifest =? (await node.fetchManifest(cid, advertise, transport)), err:
       error "Failed to fetch manifest", err = err.msg
       resp.status = Http404
       await resp.sendBody(err.msg)
@@ -413,6 +414,11 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
 
     var headers = buildCorsHeaders("POST", allowedOrigin)
 
+    let transport = parseDownloadTransport(
+      request.query.getString("transport", "direct")
+    ).valueOr:
+      return RestApiResponse.error(Http400, error, headers = headers)
+
     if cid.isErr:
       return RestApiResponse.error(Http400, $cid.error(), headers = headers)
 
@@ -422,14 +428,17 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
       except ValueError as exc:
         return RestApiResponse.error(Http400, exc.msg, headers = headers)
 
-    without manifest =? (await node.fetchManifest(cid.get(), advertise)), err:
+    without manifest =? (await node.fetchManifest(cid.get(), advertise, transport)), err:
       error "Failed to fetch manifest", err = err.msg
       return RestApiResponse.error(Http404, err.msg, headers = headers)
 
     # Start fetching the dataset in the background
     let md = ManifestDescriptor(manifest: manifest, manifestCid: cid.get())
-    without downloadId =?
-      (await node.startBackgroundDownload(md, selectionPolicy = spRandomWindow)), err:
+    without downloadId =? (
+      await node.startBackgroundDownload(
+        md, selectionPolicy = spRandomWindow, transport = transport
+      )
+    ), err:
       return RestApiResponse.error(Http409, err.msg, headers = headers)
 
     var json = %formatManifest(cid.get(), manifest)
@@ -509,7 +518,17 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
         return RestApiResponse.error(Http400, exc.msg, headers = headers)
 
     resp.setHeader("Access-Control-Expose-Headers", "Content-Disposition")
-    await node.retrieveCid(cid.get(), local = false, resp = resp, advertise = advertise)
+    let transport = parseDownloadTransport(
+      request.query.getString("transport", "direct")
+    ).valueOr:
+      return RestApiResponse.error(Http400, error, headers = headers)
+    await node.retrieveCid(
+      cid.get(),
+      local = false,
+      resp = resp,
+      transport = transport,
+      advertise = advertise,
+    )
 
   router.api(MethodGet, "/api/storage/v1/data/{cid}/network/manifest") do(
     cid: Cid, resp: HttpResponseRef
@@ -518,6 +537,11 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
     ##
 
     var headers = buildCorsHeaders("GET", allowedOrigin)
+
+    let transport = parseDownloadTransport(
+      request.query.getString("transport", "direct")
+    ).valueOr:
+      return RestApiResponse.error(Http400, error, headers = headers)
 
     if cid.isErr:
       return RestApiResponse.error(Http400, $cid.error(), headers = headers)
@@ -528,7 +552,7 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
       except ValueError as exc:
         return RestApiResponse.error(Http400, exc.msg, headers = headers)
 
-    without manifest =? (await node.fetchManifest(cid.get(), advertise)), err:
+    without manifest =? (await node.fetchManifest(cid.get(), advertise, transport)), err:
       error "Failed to fetch manifest", err = err.msg
       return RestApiResponse.error(Http404, err.msg, headers = headers)
 

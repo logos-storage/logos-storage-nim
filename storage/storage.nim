@@ -48,6 +48,7 @@ import ./storagetypes
 import ./logutils
 import ./nat
 import ./utils/natutils
+import ./mix
 
 logScope:
   topics = "storage node"
@@ -67,6 +68,7 @@ type
     natMapper*: Option[NatPortMapper]
     holePunchHandler: Option[connmanager.PeerEventHandler]
     bootstrapNodes: seq[SignedPeerRecord]
+    mixTransport: MixTransport
     isStarted: bool
 
   StoragePrivateKey* = libp2p.PrivateKey # alias
@@ -121,6 +123,21 @@ proc enableMix(
 
   switch.peerInfo.addressMappers.add(mixProto.addressMapper())
   (mixProto, relayPool)
+
+proc startMixTransport*(
+    s: StorageServer, mixProto: MixProtocol
+) {.async: (raises: [CancelledError, StorageError]).} =
+  if not s.config.mixEnabled or mixProto.isNil:
+    return
+
+  let mixTransport = newMixTransport(mixProto)
+  s.storageNode.engine.enableMixNetwork(mixTransport)
+  s.storageNode.manifestProtocol.attachMixTransport(mixTransport)
+  (await mixTransport.start()).isOkOr:
+    await s.storageNode.engine.disableMixNetwork()
+    s.storageNode.manifestProtocol.detachMixTransport()
+    raise newException(StorageError, "Failed to start MixTransport: " & error)
+  s.mixTransport = mixTransport
 
 proc start*(self: StorageServer) {.async.} =
   if self.isStarted:
@@ -178,13 +195,9 @@ proc start*(self: StorageServer) {.async.} =
     switch.mount(dhtProxyProto)
 
     self.storageNode.discovery.mixProto = mixProto
+    self.storageNode.engine.networks.direct.excludeRelays(relayPool.keys.toSeq)
 
-    if self.config.dhtMixProxies.len > 0:
-      discard self.storageNode.discovery.togglePrivateQueries(true).valueOr:
-        raise
-          newException(StorageError, "Failed to enable private queries: " & error.msg)
-
-    self.storageNode.engine.network.excludeRelays(relayPool.keys.toSeq)
+    await self.startMixTransport(mixProto)
 
   if self.natMapper.isSome:
     self.natMapper.get.start()
@@ -254,6 +267,14 @@ proc stop*(s: StorageServer) {.async.} =
     s.storageNode.switch.removePeerEventHandler(
       s.holePunchHandler.get, PeerEventKind.Joined
     )
+
+  if not s.mixTransport.isNil:
+    try:
+      await s.mixTransport.stop()
+    finally:
+      await s.storageNode.engine.disableMixNetwork()
+      s.storageNode.manifestProtocol.detachMixTransport()
+      s.mixTransport = nil
 
   var futures = @[
     s.storageNode.switch.stop(),
@@ -456,7 +477,8 @@ proc new*(
       isServer = config.nat.hasExtIp or config.autonatServer,
     )
 
-    network = BlockExcNetwork.new(switch)
+    directNetwork = BlockExcNetwork.new(switch)
+    networks = newBlockExcNetworks(directNetwork)
 
     repoData =
       case config.repoKind
@@ -503,9 +525,9 @@ proc new*(
       autonat = autonatService,
       advertiseContent = config.advertiseContent,
     )
-    blockDiscovery = DiscoveryEngine.new(repoStore, peerStore, network, discovery)
+    blockDiscovery = DiscoveryEngine.new(peerStore, networks, discovery)
     engine = BlockExcEngine.new(
-      repoStore, network, blockDiscovery, advertiser, peerStore, downloadManager
+      repoStore, networks, blockDiscovery, advertiser, peerStore, downloadManager
     )
     store = NetworkStore.new(engine, repoStore)
     manifestProto = ManifestProtocol.new(switch, repoStore, discovery)
@@ -519,7 +541,7 @@ proc new*(
       taskPool = taskPool,
     )
 
-  switch.mount(network)
+  switch.mount(networks.dispatchProtocol)
   switch.mount(manifestProto)
   switch.mount(discovery.kad)
 
@@ -593,4 +615,5 @@ proc new*(
     natMapper: natMapper,
     holePunchHandler: holePunchHandler,
     bootstrapNodes: bootstrapNodes,
+    mixTransport: nil,
   )

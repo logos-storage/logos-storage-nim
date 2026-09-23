@@ -32,7 +32,7 @@ asyncchecksuite "Manifest protocol":
 
     let discovery = MockDiscovery.new()
     discovery.findBlockProvidersHandler = proc(
-        d: MockDiscovery, cid: Cid
+        d: MockDiscovery, cid: Cid, useMix: bool = false
     ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
       return @[
         PeerRecord.init(

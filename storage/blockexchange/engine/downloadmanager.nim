@@ -45,11 +45,13 @@ proc getDownload*(self: DownloadManager, treeCid: Cid): Option[ActiveDownload] =
   return none(ActiveDownload)
 
 proc getBackgroundDownload*(
-    self: DownloadManager, treeCid: Cid
+    self: DownloadManager,
+    treeCid: Cid,
+    transport: DownloadTransport = DownloadTransport.Direct,
 ): Option[ActiveDownload] =
   self.downloads.withValue(treeCid, innerTable):
     for _, download in innerTable[]:
-      if download.isBackground:
+      if download.isBackground and download.ctx.transport == transport:
         return some(download)
   return none(ActiveDownload)
 

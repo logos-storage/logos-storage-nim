@@ -49,7 +49,6 @@ type
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
     dhtMixProxies*: seq[SignedPeerRecord]
-    privateQueries: bool
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -129,22 +128,24 @@ method findDirect*(
     return failure("Error finding providers for block " & $cid & ": " & exc.msg)
 
 method find*(
-    d: Discovery, cid: Cid
-): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
+    d: Discovery, cid: Cid, useMix: bool = false
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
   let providers =
-    # Note that the invariant checks in `togglePrivateQueries` ensure that
-    # `d.privateQueries` is only true when `d.mixProto` and `d.dhtMixProxies`
-    # are set; i.e., it never happens that privateQueries is set to true but
-    # we branch onto the else case which is non-private.
-    if d.privateQueries and not d.mixProto.isNil and d.dhtMixProxies.len > 0:
-      (await d.findViaMix(cid)).valueOr:
-        warn "Mix lookup failed", cid, err = error.msg
-        return @[]
+    if useMix:
+      if d.mixProto.isNil or d.dhtMixProxies.len == 0:
+        return failure(
+          "Mix lookup requested but MixProtocol not enabled no Mix proxies configured"
+        )
+      else:
+        (await d.findViaMix(cid)).valueOr:
+          warn "Mix lookup failed", cid, err = error.msg
+          return failure(error.msg)
     else:
       (await d.findDirect(cid)).valueOr:
         warn "Direct lookup failed", cid, err = error.msg
-        return @[]
-  providers.filterIt(not (it.peerId == d.peerId))
+        return failure(error.msg)
+
+  ok(providers.filterIt(not (it.peerId == d.peerId)))
 
 method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), base.} =
   ## Provide a block Cid
@@ -218,16 +219,6 @@ proc routingTable*(
     localNode: PeerRecord.init(d.peerId, d.switch.peerInfo.addrs, seqNo = 0),
     peers: peers,
   )
-
-proc togglePrivateQueries*(d: Discovery, enabled: bool): ?!bool =
-  if enabled and (d.mixProto.isNil or d.dhtMixProxies.len == 0):
-    return failure("Cannot enable private queries: Mix is not configured")
-  let old = d.privateQueries
-  d.privateQueries = enabled
-  success(old)
-
-proc isPrivateQueriesEnabled*(d: Discovery): bool =
-  d.privateQueries
 
 proc new*(
     T: type Discovery,

@@ -31,6 +31,9 @@ logScope:
 type NetworkStore* = ref object of BlockStore
   engine*: BlockExcEngine # blockexc decision engine
   localStore*: BlockStore # local block store
+  downloadId: Option[uint64]
+    # A streaming download must wait on its own handles, not another download
+    # of the same tree that may use a different transport.
 
 method getBlocks*(
     self: NetworkStore, addresses: seq[BlockAddress]
@@ -40,7 +43,11 @@ method getBlocks*(
 method getBlock*(
     self: NetworkStore, address: BlockAddress
 ): Future[?!Block] {.async: (raises: [CancelledError]).} =
-  let downloadOpt = self.engine.downloadManager.getDownload(address.treeCid)
+  let downloadOpt =
+    if self.downloadId.isSome:
+      self.engine.downloadManager.getDownload(self.downloadId.get(), address.treeCid)
+    else:
+      self.engine.downloadManager.getDownload(address.treeCid)
   if downloadOpt.isSome:
     let handle = downloadOpt.get().getWantHandle(address)
     without blk =? (await self.localStore.getBlock(address)), err:
@@ -187,8 +194,11 @@ method close*(self: NetworkStore): Future[void] {.async: (raises: []).} =
     await self.localStore.close
 
 proc new*(
-    T: type NetworkStore, engine: BlockExcEngine, localStore: BlockStore
+    T: type NetworkStore,
+    engine: BlockExcEngine,
+    localStore: BlockStore,
+    downloadId: Option[uint64] = none(uint64),
 ): NetworkStore =
   ## Create new instance of a NetworkStore
   ##
-  NetworkStore(localStore: localStore, engine: engine)
+  NetworkStore(localStore: localStore, engine: engine, downloadId: downloadId)
