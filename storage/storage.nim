@@ -571,7 +571,7 @@ proc new*(
       )
     )
 
-    autonatService.get.setStatusAndConfidenceHandler(
+    discard autonatService.get.reachabilityObservers.add(
       proc(
           networkReachability: NetworkReachability,
           confidence: Opt[float],
