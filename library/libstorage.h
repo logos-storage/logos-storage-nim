@@ -346,11 +346,13 @@ extern "C"
     // The download is done in background so the callback
     // will not receive progress updates.
     //
+    // `isPrivate` selects Mix transport; must match privacy setting for ongoing download sessions, if any
     // `advertise` if set to false, the dataset is neither announced over the
     // DHT nor served to other peers.
     int storage_fetch(
         void *ctx,
         const char *cid,
+        bool isPrivate,
         bool advertise,
         StorageCallback callback,
         void *userData);
