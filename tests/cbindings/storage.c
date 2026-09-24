@@ -1116,16 +1116,6 @@ int check_log_file_after_many_blocks(void)
     return ret;
 }
 
-// TODO: implement check_fetch
-// It is a bit complicated because it requires two nodes
-// connected together to fetch from peers.
-// A good idea would be to use connect function using addresses.
-// This test will be quite important when the block engine is re-implemented.
-int check_fetch(void *storage_ctx, const char *cid)
-{
-    return RET_OK;
-}
-
 int main(void)
 {
     void *storage_ctx = NULL;

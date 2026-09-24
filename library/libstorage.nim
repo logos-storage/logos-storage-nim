@@ -541,6 +541,7 @@ proc storage_delete(
 proc storage_fetch(
     ctx: ptr StorageContext,
     cid: cstring,
+    isPrivate: bool,
     advertise: bool,
     callback: StorageCallback,
     userData: pointer,
@@ -549,7 +550,7 @@ proc storage_fetch(
   checkLibstorageParams(ctx, callback, userData)
 
   let req = NodeStorageRequest.createShared(
-    NodeStorageMsgType.FETCH, cid = cid, advertise = advertise
+    NodeStorageMsgType.FETCH, cid = cid, isPrivate = isPrivate, advertise = advertise
   )
 
   let res = storage_context.sendRequestToStorageThread(
