@@ -12,6 +12,7 @@ import chronos
 import chronicles
 import serde/json as serde
 import ../../alloc
+import ../../../storage/downloadtransport
 import ../../../storage/units
 import ../../../storage/manifest
 import ../../../storage/stores/repostore
@@ -37,6 +38,7 @@ type NodeStorageMsgType* = enum
 type NodeStorageRequest* = object
   operation: NodeStorageMsgType
   cid: cstring
+  isPrivate: bool
   advertise: bool
 
 type StorageSpace = object
@@ -49,11 +51,13 @@ proc createShared*(
     T: type NodeStorageRequest,
     op: NodeStorageMsgType,
     cid: cstring = "",
+    isPrivate: bool = false,
     advertise: bool = true,
 ): ptr type T =
   var ret = createShared(T)
   ret[].operation = op
   ret[].cid = cid.alloc()
+  ret[].isPrivate = isPrivate
   ret[].advertise = advertise
 
   return ret
