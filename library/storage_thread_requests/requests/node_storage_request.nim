@@ -103,20 +103,24 @@ proc delete(
   return ok("")
 
 proc fetch(
-    storage: ptr StorageServer, cCid: cstring, advertise: bool
+    storage: ptr StorageServer, cCid: cstring, isPrivate: bool, advertise: bool
 ): Future[Result[string, string]] {.async: (raises: []).} =
-  let cid = Cid.init($cCid)
+  let
+    transport = if isPrivate: DownloadTransport.Mix else: DownloadTransport.Direct
+    cid = Cid.init($cCid)
+
   if cid.isErr:
     return err("Failed to fetch the data: cannot parse cid: " & $cCid)
 
   try:
     let node = storage[].node
-    let manifest = await node.fetchManifest(cid.get(), advertise)
+    let manifest = await node.fetchManifest(cid.get(), advertise, transport = transport)
     if manifest.isErr:
       return err("Failed to fetch the data: " & manifest.error.msg)
 
     node.fetchDatasetAsyncTask(
-      ManifestDescriptor(manifest: manifest.get(), manifestCid: cid.get())
+      ManifestDescriptor(manifest: manifest.get(), manifestCid: cid.get()),
+      transport = transport,
     )
 
     return ok(serde.toJson(manifest.get()))
@@ -208,7 +212,7 @@ proc process*(
       return err($res.error)
     return res
   of NodeStorageMsgType.FETCH:
-    let res = (await fetch(storage, self.cid, self.advertise))
+    let res = (await fetch(storage, self.cid, self.isPrivate, self.advertise))
     if res.isErr:
       error "Failed to FETCH.", error = res.error
       return err($res.error)

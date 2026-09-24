@@ -243,11 +243,17 @@ proc startBackgroundDownload*(
   self.trackedFutures.track(waitForCompleteTask())
   return success(downloadId)
 
-proc fetchDatasetAsyncTask*(self: StorageNodeRef, md: ManifestDescriptor) =
+proc fetchDatasetAsyncTask*(
+    self: StorageNodeRef,
+    md: ManifestDescriptor,
+    transport: DownloadTransport = DownloadTransport.Direct,
+) =
   ## Kept for C library compatibility.
   proc fetchTask(): Future[void] {.async: (raises: []).} =
     try:
-      discard await self.startBackgroundDownload(md, selectionPolicy = spRandomWindow)
+      discard await self.startBackgroundDownload(
+        md, selectionPolicy = spRandomWindow, transport = transport
+      )
     except CancelledError:
       trace "Background dataset fetch cancelled", treeCid = md.manifest.treeCid
 
