@@ -200,3 +200,73 @@ task libstorageStatic, "Generate bindings":
 
   let name = "libstorage"
   buildLibrary name, "library/", params, "static"
+
+################
+## Android    ##
+################
+# Cross-compiles libstorage.so for a single Android ABI. CPU and ABIDIR are
+# read from the environment (set by the Makefile's per-arch targets below),
+# mirroring the CPU/ABIDIR env-var handoff logos-delivery uses for its own
+# Android build (see liblogosdelivery-android-* in that repo's Makefile).
+proc buildLibraryAndroid(name: string, srcDir = "./", params = "") =
+  let cpu = getEnv("CPU")
+  let abiDir = getEnv("ABIDIR")
+  let ccExe = getEnv("CC")
+  doAssert cpu.len > 0, "CPU env var must be set (use the Makefile android targets)"
+  doAssert abiDir.len > 0, "ABIDIR env var must be set (use the Makefile android targets)"
+  doAssert ccExe.len > 0, "CC env var must be set (use the Makefile android targets)"
+
+  let outDir = "build/android/" & abiDir
+  if not dirExists outDir:
+    mkDir outDir
+
+  # -d:disableMarchNative: config.nims otherwise unconditionally passes
+  # -march=native (host-arch tuning), which is meaningless — and breaks the
+  # cross-compiler's include-path resolution — when targeting Android ARM
+  # from an x86_64 host.
+  #
+  # --passL:-lc++_shared: this library vendors LevelDB (C++), so the linked
+  # .so references C++ std symbols. Without this the .so is missing a
+  # `NEEDED libc++_shared.so` entry and fails to dlopen on-device with
+  # "cannot locate symbol", even though the build itself succeeds. Same
+  # class of fix vpavlin/logos-delivery's Android fork needed for
+  # liblogosdelivery.so (see its WRITEUP.md) — do not try to patch this in
+  # after the fact with patchelf, which corrupts DT_GNU_HASH; it must be a
+  # link-time flag.
+  #
+  # --passL:-llog: Nim's own runtime (system.nim's echoBinSafe on Android)
+  # calls __android_log_print, which lives in Android's liblog, not libc.
+  # Without this the link fails with "undefined symbol: __android_log_print"
+  # — confirmed empirically with a minimal `nim c --os:android` hello-world,
+  # not just inferred from delivery's recipe (which also passes this flag).
+  #
+  # --clang.exe / --clang.linkerexe (not --cc:env): Nim's `cc` setting
+  # defaults to `gcc` (see nim.cfg). `--cc:env` makes Nim read the compiler
+  # path from the `CC` env var at compile-config-resolution time — but that
+  # resolution happens inside the `exec()`'d `nim c` subprocess, one level
+  # below this task, and empirically loses the Makefile's `CC=<NDK clang>`
+  # somewhere in that nested-process chain (reproducible: a top-level `nim
+  # <task> foo.nims` task body sees `getEnv("CC")` correctly, but the
+  # grandchild `nim c --cc:env` it `exec()`s reports "Compiler 'env' doesn't
+  # support the requested target", i.e. an empty CC at that point — root
+  # cause not fully isolated). Baking the resolved path directly into the
+  # generated command string via `--cc:clang --clang.exe:<path>
+  # --clang.linkerexe:<path>` sidesteps env-var propagation entirely: the
+  # path is a literal argument by the time the subprocess sees it, not
+  # something it has to re-resolve from its own environment.
+  exec "nim c" & " --out:" & outDir & "/" & name & ".so" &
+    " --threads:on --app:lib --opt:size --noMain --mm:refc --header --d:metrics " &
+    "--nimMainPrefix:libstorage -d:noSignalHandler -d:chronicles_runtime_filtering " &
+    "-d:chronicles_log_level=TRACE -d:disableMarchNative --passL:-lc++_shared " &
+    "--passL:-llog --cc:clang --clang.exe:" & ccExe & " --clang.linkerexe:" & ccExe &
+    " --cpu:" & cpu & " --os:android -d:androidNDK " &
+    params & " " & srcDir & name & ".nim"
+
+task libstorageAndroid, "Build libstorage.so for Android (single ABI; set CPU/ABIDIR env vars)":
+  var params = ""
+  when compiles(commandLineParams):
+    for param in commandLineParams():
+      if param.len > 0 and param.startsWith("-"):
+        params.add " " & param
+
+  buildLibraryAndroid "libstorage", "library/", params
