@@ -105,7 +105,11 @@ proc fetchManifest*(
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   ## Fetch and decode a manifest
-  return await self.manifestProto.fetchManifest(cid, advertise, transport)
+  let blockExc = self.engine.contextFor(transport)
+  if blockExc.isNil:
+    return failure($transport & " transport is not enabled")
+  return
+    await self.manifestProto.fetchManifest(cid, advertise, blockExc.network.transport)
 
 proc isAdvertised*(
     self: StorageNodeRef, cid: Cid
@@ -150,8 +154,11 @@ proc findPeer*(self: StorageNodeRef, peerId: PeerId): Future[?PeerRecord] {.asyn
 
 proc connect*(
     self: StorageNodeRef, peerId: PeerId, addrs: seq[MultiAddress]
-): Future[void] =
-  self.switch.connect(peerId, addrs)
+): Future[void] {.async.} =
+  await self.switch.connect(peerId, addrs)
+  let blockExc = self.engine.contextFor(DownloadTransport.Direct)
+  if not blockExc.isNil:
+    blockExc.addRequestedPeer(peerId)
 
 proc updateExpiry*(
     self: StorageNodeRef, manifestCid: Cid, expiry: SecondsSince1970

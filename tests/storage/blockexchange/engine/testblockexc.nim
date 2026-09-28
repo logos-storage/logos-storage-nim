@@ -49,6 +49,7 @@ asyncchecksuite "BlockExchange - Basic Block Transfer":
     # Start nodes and connect them
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder])
 
   teardown:
     await cluster.components.stop()
@@ -157,6 +158,74 @@ asyncchecksuite "BlockExchange - Presence Discovery":
 
     leecher.downloadManager.cancelDownload(treeCid)
 
+asyncchecksuite "BlockExchange - Discovered Providers":
+  var
+    cluster: NodesCluster
+    provider: NodesComponents
+    leecher: NodesComponents
+    dataset: TestDataset
+
+  setup:
+    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    provider = cluster.components[0]
+    leecher = cluster.components[1]
+
+    let blocks = await makeRandomBlocks(4 * 1024, 1024.NBytes)
+    dataset = makeDataset(blocks).tryGet()
+
+    await provider.assignBlocks(dataset)
+    await cluster.components.start()
+
+  teardown:
+    await cluster.components.stop()
+
+  test "Provider found through discovery should join the swarm":
+    let
+      providerId = provider.switch.peerInfo.peerId
+      treeCid = dataset.manifest.treeCid
+      desc = DownloadDesc(md: dataset.manifestDesc, count: dataset.blocks.len.uint64)
+      download = leecher.downloadManager.startDownload(desc)
+
+    leecher.mockProviders(@[provider])
+    leecher.engine.searchForNewPeers(download)
+
+    check eventually leecher.switch.isConnected(providerId)
+    check await download.waitForPeerInSwarm(providerId)
+
+    leecher.downloadManager.cancelDownload(treeCid)
+
+asyncchecksuite "BlockExchange - Requested Peers":
+  var
+    cluster: NodesCluster
+    seeder: NodesComponents
+    leecher: NodesComponents
+    dataset: TestDataset
+
+  setup:
+    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    seeder = cluster.components[0]
+    leecher = cluster.components[1]
+
+    let blocks = await makeRandomBlocks(4 * 1024, 1024.NBytes)
+    dataset = makeDataset(blocks).tryGet()
+
+    await seeder.assignBlocks(dataset)
+    await cluster.components.start()
+    await connectNodes(cluster)
+
+  teardown:
+    await cluster.components.stop()
+
+  test "Download should use a requested peer when discovery finds none":
+    leecher.engine.contextFor(DownloadTransport.Direct).addRequestedPeer(
+      seeder.switch.peerInfo.peerId
+    )
+
+    await leecher.downloadDataset(dataset)
+
+    for blk in dataset.blocks:
+      check (await blk.cid in leecher.localStore)
+
 asyncchecksuite "BlockExchange - Multi-Peer Download":
   var
     cluster: NodesCluster
@@ -180,6 +249,7 @@ asyncchecksuite "BlockExchange - Multi-Peer Download":
 
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder1, seeder2])
 
   teardown:
     await cluster.components.stop()
@@ -241,6 +311,7 @@ asyncchecksuite "BlockExchange - Download Lifecycle":
     await seeder.assignBlocks(dataset)
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder])
 
   teardown:
     await cluster.components.stop()
@@ -468,6 +539,7 @@ asyncchecksuite "BlockExchange - Mixed Local and Network":
 
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder])
 
   teardown:
     await cluster.components.stop()
@@ -509,6 +581,7 @@ asyncchecksuite "BlockExchange - Re-download from Local":
 
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder])
 
   teardown:
     await cluster.components.stop()
@@ -544,6 +617,7 @@ asyncchecksuite "BlockExchange - NetworkStore getBlocks":
     await seeder.assignBlocks(dataset)
     await cluster.components.start()
     await connectNodes(cluster)
+    leecher.mockProviders(@[seeder])
 
   teardown:
     await cluster.components.stop()

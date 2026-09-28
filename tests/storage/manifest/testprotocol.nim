@@ -4,6 +4,7 @@ import pkg/questionable/results
 import pkg/storage/stores
 import pkg/storage/blocktype as bt
 import pkg/storage/manifest
+import pkg/storage/peertransport
 
 import ../../asynctest
 import ../helpers
@@ -17,6 +18,7 @@ asyncchecksuite "Manifest protocol":
     serverStore: BlockStore
     clientStore: BlockStore
     clientProto: ManifestProtocol
+    clientTransport: PeerTransport
   let
     manifest = Manifest.new(
       treeCid = Cid.example, blockSize = 123.NBytes, datasetSize = 234.NBytes
@@ -40,9 +42,9 @@ asyncchecksuite "Manifest protocol":
         )
       ]
 
-    serverSwitch.mount(ManifestProtocol.new(serverSwitch, serverStore, discovery))
-    clientProto =
-      ManifestProtocol.new(clientSwitch, clientStore, discovery, retries = 1)
+    serverSwitch.mount(ManifestProtocol.new(serverStore, discovery))
+    clientProto = ManifestProtocol.new(clientStore, discovery, retries = 1)
+    clientTransport = DirectPeerTransport.new(clientSwitch)
 
     await serverSwitch.start()
     await clientSwitch.start()
@@ -54,14 +56,20 @@ asyncchecksuite "Manifest protocol":
     await serverSwitch.stop()
 
   test "Should serve an advertised manifest":
-    let fetched =
-      (await clientProto.fetchManifest(manifestBlk.cid, advertise = true)).tryGet()
+    let fetched = (
+      await clientProto.fetchManifest(
+        manifestBlk.cid, advertise = true, transport = clientTransport
+      )
+    ).tryGet()
 
     check fetched.treeCid == manifest.treeCid
 
   test "Should store a fetched manifest without advertising it":
-    discard
-      (await clientProto.fetchManifest(manifestBlk.cid, advertise = false)).tryGet()
+    discard (
+      await clientProto.fetchManifest(
+        manifestBlk.cid, advertise = false, transport = clientTransport
+      )
+    ).tryGet()
 
     check:
       (await clientStore.hasBlock(manifestBlk.cid)).tryGet()
@@ -71,4 +79,8 @@ asyncchecksuite "Manifest protocol":
   test "Should not serve a manifest that is not advertised":
     (await serverStore.setAdvertise(manifestBlk.cid, false)).tryGet()
 
-    check (await clientProto.fetchManifest(manifestBlk.cid, advertise = true)).isErr
+    check (
+      await clientProto.fetchManifest(
+        manifestBlk.cid, advertise = true, transport = clientTransport
+      )
+    ).isErr

@@ -133,12 +133,20 @@ proc startMixTransport*(
   if not s.config.mixEnabled or mixProto.isNil:
     return
 
-  let mixTransport = newMixTransport(mixProto)
-  s.storageNode.engine.enableMixNetwork(mixTransport)
-  s.storageNode.manifestProtocol.attachMixTransport(mixTransport)
+  let
+    engine = s.storageNode.engine
+    directNetwork = engine.contextFor(DownloadTransport.Direct).network
+    mixTransport = newMixTransport(mixProto)
+    mixNetwork = BlockExcNetwork.new(
+      directNetwork.switch,
+      MixPeerTransport.new(mixTransport),
+      maxInflight = directNetwork.sendConcurrencyLimit,
+    )
+  engine.attach(
+    BlockExcContext.new(mixNetwork, engine.localStore, engine.downloadManager)
+  )
   (await mixTransport.start()).isOkOr:
-    await s.storageNode.engine.disableMixNetwork()
-    s.storageNode.manifestProtocol.detachMixTransport()
+    await engine.detach(DownloadTransport.Mix)
     raise newException(StorageError, "Failed to start MixTransport: " & error)
   s.mixTransport = mixTransport
 
@@ -204,7 +212,9 @@ proc start*(self: StorageServer) {.async.} =
     switch.mount(dhtProxyProto)
 
     self.storageNode.discovery.mixProto = mixProto
-    self.storageNode.engine.networks.direct.excludeRelays(relayPool.keys.toSeq)
+    self.storageNode.engine.contextFor(DownloadTransport.Direct).network.excludeRelays(
+      relayPool.keys.toSeq
+    )
 
     await self.startMixTransport(mixProto)
 
@@ -281,8 +291,7 @@ proc stop*(s: StorageServer) {.async.} =
     try:
       await s.mixTransport.stop()
     finally:
-      await s.storageNode.engine.disableMixNetwork()
-      s.storageNode.manifestProtocol.detachMixTransport()
+      await s.storageNode.engine.detach(DownloadTransport.Mix)
       s.mixTransport = nil
 
   proc stopSwitch(): Future[void] {.async: (raises: [CancelledError]).} =
@@ -506,9 +515,6 @@ proc new*(
       addressPolicy = kadAddressPolicy,
     )
 
-    directNetwork = BlockExcNetwork.new(switch)
-    networks = newBlockExcNetworks(directNetwork)
-
     repoData =
       case config.repoKind
       of repoFS:
@@ -545,7 +551,6 @@ proc new*(
       numberOfBlocksPerInterval = config.blockMaintenanceNumberOfBlocks,
     )
 
-    peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new(retries = config.blockRetries)
     advertiser = Advertiser.new(
       repoStore,
@@ -554,12 +559,10 @@ proc new*(
       autonat = autonatService,
       advertiseContent = config.advertiseContent,
     )
-    blockDiscovery = DiscoveryEngine.new(peerStore, networks, discovery)
-    engine = BlockExcEngine.new(
-      repoStore, networks, blockDiscovery, advertiser, peerStore, downloadManager
-    )
+    blockDiscovery = DiscoveryEngine.new(discovery)
+    engine = BlockExcEngine.new(repoStore, blockDiscovery, advertiser, downloadManager)
     store = NetworkStore.new(engine, repoStore)
-    manifestProto = ManifestProtocol.new(switch, repoStore, discovery)
+    manifestProto = ManifestProtocol.new(repoStore, discovery)
 
     storageNode = StorageNodeRef.new(
       switch = switch,
@@ -570,7 +573,14 @@ proc new*(
       taskPool = taskPool,
     )
 
-  switch.mount(networks.dispatchProtocol)
+  engine.attach(
+    BlockExcContext.new(
+      BlockExcNetwork.new(switch, DirectPeerTransport.new(switch)),
+      repoStore,
+      downloadManager,
+    )
+  )
+  switch.mount(engine.newBlockExcProtocol())
   switch.mount(manifestProto)
   switch.mount(discovery.kad)
 

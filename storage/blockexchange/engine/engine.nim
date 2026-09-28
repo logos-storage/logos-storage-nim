@@ -7,10 +7,11 @@
 ## This file may not be copied, modified, or distributed except according to
 ## those terms.
 
-import std/[sequtils, sets, options, algorithm, sugar, tables]
+import std/[sequtils, sets, options, algorithm, tables, random]
 
 import pkg/chronos
 import pkg/libp2p/[cid, switch, multihash, multicodec]
+import pkg/libp2p/protocols/protocol
 import pkg/metrics
 import pkg/questionable
 import pkg/questionable/results
@@ -23,10 +24,8 @@ import ../../utils
 import ../../utils/trackedfutures
 import ../../merkletree
 import ../../manifest
-import ../../mix
 import ../../logutils
 import ../protocol/message
-import ../protocol/presence
 import ../protocol/constants
 
 import ../network
@@ -39,18 +38,13 @@ import ./downloadmanager
 import ./peertracker
 import ./swarm
 import ./scheduler
-import ./peerselection
+import ./blockexccontext
 
-export peers, downloadmanager, discovery, swarm, scheduler, peerselection
+export peers, downloadmanager, discovery, swarm, scheduler, blockexccontext
 
 logScope:
   topics = "storage blockexcengine"
 
-declareCounter(
-  storage_block_exchange_want_have_lists_received,
-  "storage blockexchange wantHave lists received",
-)
-declareCounter(storage_block_exchange_blocks_sent, "storage blockexchange blocks sent")
 declareCounter(
   storage_block_exchange_blocks_received, "storage blockexchange blocks received"
 )
@@ -69,17 +63,12 @@ declareCounter(
 const
   # Don't do more than one discovery request per `DiscoveryRateLimit` seconds.
   DiscoveryRateLimit = 3.seconds
-  PeerTrackerSweepInterval = 15.seconds
 
 type
   BlockExcEngine* = ref object of RootObj
     localStore*: BlockStore # Local block store for this instance
-    networks*: BlockExcNetworks
-    peers*: PeerContextStore # Peers we're currently actively exchanging with
-    mixPeers*: PeerContextStore
-    mixPeerTracker: PeerInFlightTracker
-    peerSelectionPolicies: array[DownloadTransport, PresencePeerSelectionPolicy]
-    presenceQueryPolicies: array[DownloadTransport, PresenceQueryPolicy]
+    contexts: array[DownloadTransport, BlockExcContext]
+      ## Independent protocol instances. Mix is absent until enabled at startup.
     trackedFutures: TrackedFutures # Tracks futures of blockexc tasks
     blockexcRunning: bool # Indicates if the blockexc task is running
     downloadManager*: DownloadManager
@@ -98,27 +87,19 @@ type
   DownloadHandle* = DownloadHandleGeneric[Block]
   DownloadHandleOpaque* = DownloadHandleGeneric[void]
 
-func peersFor*(self: BlockExcEngine, transport: DownloadTransport): PeerContextStore =
-  if transport == DownloadTransport.Mix: self.mixPeers else: self.peers
+func contextFor*(self: BlockExcEngine, transport: DownloadTransport): BlockExcContext =
+  self.contexts[transport]
 
-func trackerFor(
-    self: BlockExcEngine, transport: DownloadTransport
-): PeerInFlightTracker =
-  if transport == DownloadTransport.Mix:
-    self.mixPeerTracker
-  else:
-    self.downloadManager.peerTracker
+func contextFor(self: BlockExcEngine, download: ActiveDownload): BlockExcContext =
+  self.contexts[download.ctx.transport]
 
 proc waitForComplete*[T](
     h: DownloadHandleGeneric[T]
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   return await h.completionFuture
 
-proc requestWantBlocks*(
-  self: BlockExcEngine,
-  peer: PeerId,
-  blockRange: BlockRange,
-  transport: DownloadTransport = DownloadTransport.Direct,
+proc requestWantBlocks(
+  self: BlockExcEngine, download: ActiveDownload, peer: PeerId, blockRange: BlockRange
 ): Future[WantBlocksResult[seq[BlockDeliveryView]]] {.
   async: (raises: [CancelledError])
 .}
@@ -126,6 +107,14 @@ proc requestWantBlocks*(
 proc downloadWorker(
   self: BlockExcEngine, download: ActiveDownload
 ) {.async: (raises: []).}
+
+proc broadcastWantHave(
+  self: BlockExcEngine,
+  download: ActiveDownload,
+  start: uint64,
+  count: uint64,
+  peers: seq[PeerId],
+) {.async: (raises: [CancelledError]).}
 
 proc ensureDownloadWorker(
   self: BlockExcEngine, download: ActiveDownload
@@ -139,17 +128,6 @@ proc startDownload(
   self: BlockExcEngine, desc: DownloadDesc, missingBlocks: seq[uint64]
 ): ActiveDownload {.gcsafe, raises: [].}
 
-proc peerTrackerSweepLoop(self: BlockExcEngine) {.async: (raises: []).} =
-  try:
-    while self.blockexcRunning:
-      await sleepAsync(PeerTrackerSweepInterval)
-      await self.downloadManager.peerTracker.sweep()
-      await self.mixPeerTracker.sweep()
-  except CancelledError:
-    discard
-  except CatchableError as exc:
-    warn "Peer tracker sweep loop failed", err = exc.msg
-
 proc start*(self: BlockExcEngine) {.async: (raises: []).} =
   ## Start the blockexc task
   ##
@@ -161,14 +139,18 @@ proc start*(self: BlockExcEngine) {.async: (raises: []).} =
     return
 
   self.blockexcRunning = true
-  self.trackedFutures.track(self.peerTrackerSweepLoop())
+  for blockExc in self.contexts:
+    if not blockExc.isNil:
+      blockExc.start()
 
 proc stop*(self: BlockExcEngine) {.async: (raises: []).} =
   ## Stop the blockexc
   ##
 
   await self.trackedFutures.cancelTracked()
-  await self.networks.stop()
+  for blockExc in self.contexts:
+    if not blockExc.isNil:
+      await blockExc.stop()
   await self.discovery.stop()
   await self.advertiser.stop()
 
@@ -181,29 +163,80 @@ proc stop*(self: BlockExcEngine) {.async: (raises: []).} =
 
   trace "NetworkStore stopped"
 
-proc searchForNewPeers(self: BlockExcEngine, cid: Cid, transport: DownloadTransport) =
-  if self.lastDiscRequest + DiscoveryRateLimit < Moment.now():
+proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
+  let
+    cid = download.manifestCid
+    transport = download.ctx.transport
+  if not self.discovery.lookupPending(download):
+    if self.lastDiscRequest + DiscoveryRateLimit >= Moment.now():
+      return
     trace "Searching for new peers for", cid = cid
     storage_block_exchange_discovery_requests_total.inc()
     self.lastDiscRequest = Moment.now()
-    self.discovery.queueFindBlocksReq(@[cid], transport)
+
+  proc joinSwarm(
+      providers: seq[PeerRecord]
+  ): Future[void] {.async: (raises: [CancelledError]).} =
+    if download.cancelled:
+      return
+
+    let blockExc = self.contextFor(download)
+    if blockExc.isNil:
+      trace "Skipping providers because selected transport is unavailable",
+        transport = transport
+      return
+
+    let swarm = download.ctx.swarm
+    var
+      connected: seq[PeerRecord]
+      unconnected: seq[PeerRecord]
+      busy: HashSet[PeerId]
+    for batch in download.pendingBatches.values:
+      busy.incl(batch.peerId)
+    for provider in providers:
+      if swarm.getPeer(provider.peerId).isSome or
+          not blockExc.dialCooldownExpired(provider.peerId):
+        continue
+      if provider.peerId in blockExc.peers:
+        connected.add(provider)
+      else:
+        unconnected.add(provider)
+    shuffle(connected)
+    shuffle(unconnected)
+
+    var dialing: seq[PeerRecord]
+    for provider in connected & unconnected:
+      let peerId = provider.peerId
+      if swarm.addPeer(peerId, BlockAvailability.unknown()) or
+          swarm.replaceUnknownPeer(peerId, BlockAvailability.unknown(), busy):
+        busy.incl(peerId)
+        dialing.add(provider)
+
+    let dialed = await allFinished(dialing.mapIt(blockExc.network.dialPeer(it)))
+    var joined: seq[PeerId]
+    for i, f in dialed:
+      let peerId = dialing[i].peerId
+      if f.failed:
+        trace "Failed to dial discovered provider", peer = peerId
+        discard swarm.removePeer(peerId)
+        blockExc.recordDialFailure(peerId)
+      else:
+        joined.add(peerId)
+
+    if joined.len > 0 and not download.cancelled:
+      let (windowStart, windowCount) = download.ctx.currentPresenceWindow()
+      await self.broadcastWantHave(download, windowStart, windowCount, joined)
+
+  self.discovery.queueFindBlocksReq(download, joinSwarm)
 
 proc banAndDropPeer(
     self: BlockExcEngine, download: ActiveDownload, peerId: PeerId
 ) {.async: (raises: [CancelledError]).} =
   download.ctx.swarm.banPeer(peerId)
   download.handlePeerFailure(peerId)
-  let network = self.networks.networkFor(download.ctx.transport)
-  if not network.isNil:
-    await network.dropPeer(peerId)
-
-proc evictPeer(self: BlockExcEngine, peer: PeerId, transport: DownloadTransport) =
-  ## Cleanup disconnected peer
-  ##
-
-  trace "Evicting disconnected/departed peer", peer
-  self.peersFor(transport).remove(peer)
-  self.trackerFor(transport).clearPeer(peer)
+  let blockExc = self.contextFor(download)
+  if not blockExc.isNil:
+    await blockExc.network.dropPeer(peerId)
 
 proc validateBlockDeliveryView(self: BlockExcEngine, view: BlockDeliveryView): ?!void =
   without proof =? view.proof:
@@ -277,7 +310,7 @@ proc sendWantBlocksRequest(
   let
     requestStartTime = Moment.now()
     requestResult = await self.requestWantBlocks(
-      peer.id, BlockRange(treeCid: treeCid, ranges: ranges), download.ctx.transport
+      download, peer.id, BlockRange(treeCid: treeCid, ranges: ranges)
     )
     rttMicros = (Moment.now() - requestStartTime).microseconds.uint64
 
@@ -463,26 +496,24 @@ proc broadcastWantHave(
     download: ActiveDownload,
     start: uint64,
     count: uint64,
-    peers: seq[PeerContext],
+    peers: seq[PeerId],
 ) {.async: (raises: [CancelledError]).} =
-  let rangeAddress = BlockAddress.init(download.treeCid, start)
-  let network = self.networks.networkFor(download.ctx.transport)
-  if network.isNil:
+  let blockExc = self.contextFor(download)
+  if blockExc.isNil:
     return
-  for peerCtx in peers:
-    if not download.addPeerIfAbsent(
-      peerCtx.id,
-      BlockAvailability.unknown(),
-      self.presenceQueryPolicies[download.ctx.transport],
-    ):
-      # Skip presence request for peer with Complete availability, or when
-      # QueryAdmittedPeers is selected and swarm admission failed.
+  let
+    rangeAddress = BlockAddress.init(download.treeCid, start)
+    network = blockExc.network
+  for peerId in peers:
+    let swarmPeer = download.ctx.swarm.getPeer(peerId)
+    if swarmPeer.isSome and swarmPeer.get().availability.kind == bakComplete:
+      # Skip presence request for peer with Complete availability.
       continue
 
     try:
       await network.request
         .sendWantList(
-          peerCtx.id,
+          peerId,
           @[rangeAddress],
           priority = 0,
           cancel = false,
@@ -494,47 +525,31 @@ proc broadcastWantHave(
         )
         .wait(DefaultWantHaveSendTimeout)
     except AsyncTimeoutError:
-      warn "Want-have send timed out", peer = peerCtx.id
+      warn "Want-have send timed out", peer = peerId
     except CatchableError as err:
-      warn "Want-have send failed", peer = peerCtx.id, error = err.msg
+      warn "Want-have send failed", peer = peerId, error = err.msg
 
 proc downloadWorker(
     self: BlockExcEngine, download: ActiveDownload
 ) {.async: (raises: []).} =
   ## Continuously schedules batches to peers until download completes.
   ## Supports concurrent batch requests per peer based on BDP pipeline depth.
+  let blockExc = self.contextFor(download)
+  if blockExc.isNil:
+    return
   let
     treeCid = download.treeCid
     retryInterval = self.downloadManager.retryInterval
-    peers = self.peersFor(download.ctx.transport)
-    network = self.networks.networkFor(download.ctx.transport)
-    peerTracker = self.trackerFor(download.ctx.transport)
-    peerSelection = self.peerSelectionPolicies[download.ctx.transport]
+    peers = blockExc.peers
+    network = blockExc.network
+    peerTracker = blockExc.peerTracker
   logScope:
     treeCid = treeCid
 
   try:
-    let
-      (windowStart, windowCount) = download.ctx.currentPresenceWindow()
-      maxSwarmPeers = download.ctx.swarm.config.deltaMax
-
-    let connectedPeers = peerSelection.selectInitialPresencePeers(
-      peers, download.ctx.providerPeers, maxSwarmPeers
-    )
-
-    if connectedPeers.len > 0:
-      trace "Initial presence window broadcast",
-        treeCid = treeCid,
-        windowStart = windowStart,
-        windowCount = windowCount,
-        totalBlocks = download.ctx.totalBlocks,
-        peerCount = connectedPeers.len
-
-      await self.broadcastWantHave(download, windowStart, windowCount, connectedPeers)
-      trace "Initial broadcast sent, proceeding to batch loop"
-    else:
-      trace "No connected peers for initial broadcast, triggering discovery"
-      self.searchForNewPeers(download.manifestCid, download.ctx.transport)
+    if not download.fetchLocal:
+      blockExc.admitRequestedPeers(download.ctx.swarm)
+      self.searchForNewPeers(download)
 
     while not download.cancelled and not download.isDownloadComplete():
       let ctx = download.ctx
@@ -544,11 +559,7 @@ proc downloadWorker(
         ctx.trimPresenceBeforeWatermark()
 
         # Broadcast want-have for the new window to swarm peers only
-        var swarmPeers: seq[PeerContext] = @[]
-        for peerId in ctx.swarm.connectedPeers():
-          let peerCtx = peers.get(peerId)
-          if not peerCtx.isNil:
-            swarmPeers.add(peerCtx)
+        let swarmPeers = ctx.swarm.members()
 
         trace "Advancing presence window",
           treeCid = treeCid,
@@ -563,30 +574,35 @@ proc downloadWorker(
       if not download.fetchLocal and ctx.shouldBroadcastAvailability():
         let broadcastRanges = ctx.getAvailabilityBroadcast()
         if broadcastRanges.len > 0:
-          trace "Broadcasting availability to swarm",
-            treeCid = treeCid,
-            rangeCount = broadcastRanges.len,
-            swarmPeers = ctx.swarm.peerCount()
+          let advertised = (await self.localStore.isAdvertised(treeCid)).valueOr:
+            warn "Unable to read advertise state", treeCid = treeCid, err = error.msg
+            false
 
-          let presence = BlockPresence(
-            address: BlockAddress(treeCid: treeCid, index: broadcastRanges[0].start),
-            kind: BlockPresenceType.HaveRange,
-            ranges: broadcastRanges,
-          )
+          if advertised:
+            trace "Broadcasting availability to swarm",
+              treeCid = treeCid,
+              rangeCount = broadcastRanges.len,
+              swarmPeers = ctx.swarm.peerCount()
 
-          for peerId in ctx.swarm.connectedPeers():
-            let peerOpt = ctx.swarm.getPeer(peerId)
-            if peerOpt.isSome and peerOpt.get().availability.kind == bakComplete:
-              continue
+            let presence = BlockPresence(
+              address: BlockAddress(treeCid: treeCid, index: broadcastRanges[0].start),
+              kind: BlockPresenceType.HaveRange,
+              ranges: broadcastRanges,
+            )
 
-            try:
-              await network.request.sendPresence(peerId, @[presence]).wait(
-                DefaultWantHaveSendTimeout
-              )
-            except AsyncTimeoutError:
-              trace "Availability broadcast send timed out", peer = peerId
-            except CatchableError as err:
-              trace "Failed to broadcast availability", peer = peerId, error = err.msg
+            for peerId in ctx.swarm.members():
+              let peerOpt = ctx.swarm.getPeer(peerId)
+              if peerOpt.isSome and peerOpt.get().availability.kind == bakComplete:
+                continue
+
+              try:
+                await network.request.sendPresence(peerId, @[presence]).wait(
+                  DefaultWantHaveSendTimeout
+                )
+              except AsyncTimeoutError:
+                trace "Availability broadcast send timed out", peer = peerId
+              except CatchableError as err:
+                trace "Failed to broadcast availability", peer = peerId, error = err.msg
 
           ctx.markAvailabilityBroadcasted()
 
@@ -656,23 +672,20 @@ proc downloadWorker(
       var shouldBroadcast = false
 
       if swarm.peersNeeded() != shHealthy:
-        self.searchForNewPeers(download.manifestCid, download.ctx.transport)
+        blockExc.admitRequestedPeers(swarm)
+        self.searchForNewPeers(download)
 
       if swarm.peersWithRange(start, count).len == 0:
         shouldBroadcast = true
 
       if shouldBroadcast:
-        let connectedPeers =
-          peerSelection.selectPresencePeers(peers, download.ctx.providerPeers)
+        let swarmPeers = swarm.members()
 
-        if connectedPeers.len > 0:
+        if swarmPeers.len > 0:
           trace "Broadcasting want-have for batch range",
-            treeCid = treeCid,
-            start = start,
-            count = count,
-            peerCount = connectedPeers.len
+            treeCid = treeCid, start = start, count = count, peerCount = swarmPeers.len
 
-          await self.broadcastWantHave(download, start, count, connectedPeers)
+          await self.broadcastWantHave(download, start, count, swarmPeers)
           # Give peers a short time to respond with presence
           await sleepAsync(50.milliseconds)
         else:
@@ -694,6 +707,10 @@ proc downloadWorker(
           batchCount = count
 
         for peerId in staleUnknown:
+          let swarmPeer = swarm.getPeer(peerId)
+          if swarmPeer.isSome:
+            swarmPeer.get().touch()
+
           try:
             await network.request
               .sendWantList(
@@ -818,8 +835,8 @@ proc startTreeDownloadGeneric[T: Block | void](
   ## - T = Block: Returns actual block data (for streaming)
   ## - T = void: Returns success/failure only (for prefetching)
 
-  if transport == DownloadTransport.Mix and not self.networks.isMixEnabled:
-    return failure("Mix transport is not enabled")
+  if self.contexts[transport].isNil:
+    return failure($transport & " transport is not enabled")
 
   let
     desc = toDownloadDesc(
@@ -942,237 +959,19 @@ proc getDownloadProgress*(
 ): Option[DownloadProgress] =
   self.downloadManager.getDownloadProgress(downloadId, treeCid)
 
-proc blockPresenceHandler*(
-    self: BlockExcEngine,
-    peer: PeerId,
-    blocks: seq[BlockPresence],
-    transport: DownloadTransport = DownloadTransport.Direct,
-) {.async: (raises: []).} =
-  trace "Received block presence from peer", peer, len = blocks.len
-  let peerCtx = self.peersFor(transport).get(peer)
-  if peerCtx.isNil:
-    return
-
-  for blk in blocks:
-    if presence =? Presence.init(blk):
-      if presence.have:
-        let
-          treeCid = presence.address.treeCid
-          downloadOpt = self.downloadManager.getDownload(blk.downloadId, treeCid)
-
-        if downloadOpt.isSome and downloadOpt.get().ctx.transport == transport:
-          let availability =
-            case presence.presenceType
-            of BlockPresenceType.Complete:
-              trace "peer has complete tree", peer = peer, treeCid = treeCid
-              BlockAvailability.complete()
-            of BlockPresenceType.HaveRange:
-              trace "peer has ranges",
-                peer = peer, treeCid = treeCid, len = presence.ranges.len
-              if presence.ranges.len > 0:
-                BlockAvailability.fromRanges(presence.ranges)
-              else:
-                BlockAvailability.unknown()
-            of BlockPresenceType.DontHave:
-              trace "peer doesn't have anything", peer = peer, treeCid = treeCid
-              BlockAvailability.unknown()
-
-          downloadOpt.get().updatePeerAvailability(peer, availability)
-
-          # try to propagate peer availability to other downloads for the same tree CID
-          self.downloadManager.downloads.withValue(treeCid, innerTable):
-            for otherId, otherDownload in innerTable[]:
-              if otherId != blk.downloadId and otherDownload.ctx.transport == transport:
-                otherDownload.updatePeerAvailability(peer, availability)
-
-proc wantListHandler*(
-    self: BlockExcEngine,
-    peer: PeerId,
-    wantList: WantList,
-    transport: DownloadTransport = DownloadTransport.Direct,
-) {.async: (raises: []).} =
-  trace "Received want list from peer", peer, entries = wantList.entries.len
-
-  let peerCtx = self.peersFor(transport).get(peer)
-  if peerCtx.isNil:
-    return
-
-  if peerCtx.wantListBusy:
-    debug "Dropping want list, handler already in flight for peer", peer
-    return
-
-  peerCtx.wantListBusy = true
-  defer:
-    peerCtx.wantListBusy = false
-
-  var
-    presence: seq[BlockPresence]
-    iterBudget: uint64 = MaxRangeIterationsPerMessage
-
-  try:
-    for e in wantList.entries:
-      storage_block_exchange_want_have_lists_received.inc()
-
-      without advertised =? (await self.localStore.isAdvertised(e.address.treeCid)), err:
-        warn "Unable to read advertise state",
-          treeCid = e.address.treeCid, err = err.msg
-        continue
-
-      if not advertised:
-        trace "Not serving presence", peer = peer, treeCid = e.address.treeCid
-        continue
-
-      if e.rangeCount > 0:
-        let
-          startIdx = e.address.index.uint64
-          count = e.rangeCount
-          treeCid = e.address.treeCid
-
-        if count > MaxPresenceWindowBlocks:
-          warn "Rejecting oversized range query",
-            peer = peer, treeCid = treeCid, count = count, max = MaxPresenceWindowBlocks
-          continue
-
-        let effectiveCount = min(count, iterBudget)
-
-        trace "Processing range query",
-          treeCid = treeCid, start = startIdx, count = effectiveCount
-
-        let runtimeQuota = 100.milliseconds
-        var
-          ranges: seq[IndexRange] = @[]
-          rangeStart: uint64 = 0
-          inRange = false
-          lastIdle = Moment.now()
-
-        for i in 0'u64 ..< effectiveCount:
-          if (Moment.now() - lastIdle) >= runtimeQuota:
-            await idleAsync()
-            lastIdle = Moment.now()
-
-          let address = BlockAddress(treeCid: treeCid, index: startIdx + i)
-          let have =
-            try:
-              await address in self.localStore
-            except CancelledError:
-              raise
-            except CatchableError:
-              false
-
-          if have:
-            if not inRange:
-              rangeStart = startIdx + i
-              inRange = true
-          else:
-            if inRange:
-              ranges.add(
-                IndexRange(start: rangeStart, count: (startIdx + i) - rangeStart)
-              )
-              inRange = false
-
-        if inRange:
-          ranges.add(
-            IndexRange(
-              start: rangeStart, count: (startIdx + effectiveCount) - rangeStart
-            )
-          )
-
-        iterBudget -= effectiveCount
-
-        if ranges.len > 0:
-          trace "Have blocks in range", treeCid = treeCid, ranges = ranges
-          presence.add(
-            BlockPresence(
-              address: e.address,
-              kind: BlockPresenceType.HaveRange,
-              ranges: ranges,
-              downloadId: e.downloadId,
-            )
-          )
-        else:
-          trace "Don't have range",
-            treeCid = treeCid, start = startIdx, count = effectiveCount
-          if e.sendDontHave:
-            presence.add(
-              BlockPresence(
-                address: e.address,
-                kind: BlockPresenceType.DontHave,
-                downloadId: e.downloadId,
-              )
-            )
-      else:
-        let have =
-          try:
-            await e.address in self.localStore
-          except CancelledError:
-            raise
-          except CatchableError:
-            false
-
-        if have:
-          presence.add(
-            BlockPresence(
-              address: e.address,
-              kind: BlockPresenceType.HaveRange,
-              ranges: @[IndexRange(start: e.address.index, count: 1'u64)],
-              downloadId: e.downloadId,
-            )
-          )
-        elif e.sendDontHave:
-          presence.add(
-            BlockPresence(
-              address: e.address,
-              kind: BlockPresenceType.DontHave,
-              downloadId: e.downloadId,
-            )
-          )
-
-    if presence.len > 0:
-      let network = self.networks.networkFor(transport)
-      doAssert not network.isNil, "Selected download transport is unavailable"
-      trace "Sending presence to remote", items = presence.len
-      try:
-        await network.request.sendPresence(peer, presence).wait(
-          DefaultWantHaveSendTimeout
-        )
-      except AsyncTimeoutError:
-        warn "Presence response send timed out", peer = peer
-  except CancelledError as exc:
-    warn "Want list handling cancelled", error = exc.msg
-
-proc peerAddedHandler*(
-    self: BlockExcEngine,
-    peer: PeerId,
-    transport: DownloadTransport = DownloadTransport.Direct,
-) {.async: (raises: [CancelledError]).} =
-  ## Perform initial setup, such as want
-  ## list exchange
-  ##
-
-  trace "Setting up peer", peer
-  if peer notin self.peersFor(transport):
-    let peerCtx = PeerContext.new(peer)
-    self.peersFor(transport).add(peerCtx)
-
-proc localLookup(
-    self: BlockExcEngine, address: BlockAddress
-): Future[?!BlockDelivery] {.async: (raises: [CancelledError]).} =
-  (await self.localStore.getBlockAndProof(address.treeCid, address.index)).map(
-    (blkAndProof: (Block, StorageMerkleProof)) =>
-      BlockDelivery(address: address, blk: blkAndProof[0], proof: blkAndProof[1].some)
-  )
-
-proc requestWantBlocks*(
-    self: BlockExcEngine,
-    peer: PeerId,
-    blockRange: BlockRange,
-    transport: DownloadTransport = DownloadTransport.Direct,
+proc requestWantBlocks(
+    self: BlockExcEngine, download: ActiveDownload, peer: PeerId, blockRange: BlockRange
 ): Future[WantBlocksResult[seq[BlockDeliveryView]]] {.
     async: (raises: [CancelledError])
 .} =
-  let network = self.networks.networkFor(transport)
-  doAssert not network.isNil, "Selected download transport is unavailable"
-  let response = ?await network.sendWantBlocksRequest(peer, blockRange)
+  let blockExc = self.contextFor(download)
+  if blockExc.isNil:
+    return err(
+      wantBlocksError(
+        NoConnection, $download.ctx.transport & " transport is not enabled"
+      )
+    )
+  let response = ?await blockExc.network.sendWantBlocksRequest(peer, blockRange)
   var blockViews: seq[BlockDeliveryView]
 
   for btBlock in response.blocks:
@@ -1192,167 +991,58 @@ proc requestWantBlocks*(
 
   return ok(blockViews)
 
-proc configureNetwork(
-    self: BlockExcEngine, network: BlockExcNetwork, transport: DownloadTransport
-) =
-  proc blockWantListHandler(
-      peer: PeerId, wantList: WantList
-  ): Future[void] {.async: (raw: true, raises: []).} =
-    self.wantListHandler(peer, wantList, transport)
+proc attach*(self: BlockExcEngine, blockExc: BlockExcContext) =
+  doAssert self.contexts[blockExc.transport].isNil,
+    $blockExc.transport & " BlockExchange is already enabled"
+  self.contexts[blockExc.transport] = blockExc
+  if self.blockexcRunning:
+    blockExc.start()
 
-  proc blockPresenceHandler(
-      peer: PeerId, presence: seq[BlockPresence]
-  ): Future[void] {.async: (raw: true, raises: []).} =
-    self.blockPresenceHandler(peer, presence, transport)
+proc newBlockExcProtocol*(self: BlockExcEngine): LPProtocol =
+  let direct = self.contextFor(DownloadTransport.Direct)
+  doAssert not direct.isNil,
+    "Direct BlockExchange context must be attached before mounting"
 
-  proc peerAddedHandler(
-      peer: PeerId
-  ): Future[void] {.async: (raw: true, raises: [CancelledError]).} =
-    self.peerAddedHandler(peer, transport)
-
-  proc peerDepartedHandler(
-      peer: PeerId
+  proc handler(
+      conn: Connection, codec: string
   ): Future[void] {.async: (raises: [CancelledError]).} =
-    self.evictPeer(peer, transport)
+    for blockExc in self.contexts:
+      if not blockExc.isNil and blockExc.network.transport.accepts(conn):
+        await blockExc.network.handleConnection(conn)
+        return
+    await conn.close()
 
-  proc wantBlocksRequestHandler(
-      peer: PeerId, req: WantBlocksRequest
-  ): Future[seq[BlockDelivery]] {.async: (raises: [CancelledError]).} =
-    without advertised =? (await self.localStore.isAdvertised(req.treeCid)),
-      advertiseErr:
-      warn "Unable to read advertise state",
-        treeCid = req.treeCid, err = advertiseErr.msg
-      return @[]
-
-    if not advertised:
-      trace "Not serving blocks", peer = peer, treeCid = req.treeCid
-      return @[]
-
-    let maxIndex = high(Natural).uint64
-    var totalCount: uint64 = 0
-
-    trace "Received WantBlocks request",
-      peer = peer, treeCid = req.treeCid, ranges = req.ranges.len
-    for r in req.ranges:
-      if r.count == 0 or r.start > maxIndex or r.count - 1 > maxIndex - r.start or
-          r.start > uint64.high - r.count or r.count > uint64.high - totalCount:
-        warn "Rejecting WantBlocks request: invalid range",
-          peer = peer, start = r.start, count = r.count
-        return @[]
-      totalCount += r.count
-      if totalCount > MaxBlocksPerBatch:
-        warn "Rejecting WantBlocks request: total blocks exceeds cap",
-          peer = peer, total = totalCount
-        return @[]
-
-    var
-      blockDeliveries: seq[BlockDelivery]
-      notFoundCount = 0
-      totalRequested: uint64 = 0
-
-    for r in req.ranges:
-      totalRequested += r.count
-      trace "Processing WantBlocks range", peer = peer, start = r.start, count = r.count
-      for i in r.start ..< r.start + r.count:
-        let address = BlockAddress(treeCid: req.treeCid, index: i)
-
-        let res = await self.localLookup(address)
-        if res.isOk:
-          blockDeliveries.add(res.get)
-        else:
-          notFoundCount += 1
-
-    if notFoundCount > 0:
-      warn "Some blocks not found in WantBlocks request",
-        peer = peer,
-        treeCid = req.treeCid,
-        requested = totalRequested,
-        found = blockDeliveries.len,
-        notFound = notFoundCount
-
-    storage_block_exchange_blocks_sent.inc(blockDeliveries.len.int64)
-    return blockDeliveries
-
-  network.handlers = BlockExcHandlers(
-    onWantList: blockWantListHandler,
-    onPresence: blockPresenceHandler,
-    onWantBlocksRequest: wantBlocksRequestHandler,
-    onPeerJoined: peerAddedHandler,
-    onPeerDeparted: peerDepartedHandler,
+  # Both transports use this one mounted codec and its incoming-stream quota.
+  LPProtocol.new(
+    @[Codec], handler, maxIncomingStreamsTotal = direct.network.sendConcurrencyLimit
   )
 
-proc enableMixNetwork*(self: BlockExcEngine, mixTransport: MixTransport) =
-  doAssert not mixTransport.isNil
-  doAssert self.networks.mix.isNil, "Mix BlockExchange is already enabled"
-  let network = BlockExcNetwork.new(
-    self.networks.direct.switch,
-    maxInflight = self.networks.direct.sendConcurrencyLimit,
-    mixTransport = mixTransport,
-  )
-  self.configureNetwork(network, DownloadTransport.Mix)
-  self.networks.mix = network
-
-proc disableMixNetwork*(self: BlockExcEngine) {.async: (raises: []).} =
+proc detach*(
+    self: BlockExcEngine, transport: DownloadTransport
+) {.async: (raises: []).} =
   ## Remove BlockExchange's Mix instance after MixTransport has stopped, or
   ## when startup fails. This does not stop the shared transport service.
-  let network = self.networks.mix
-  self.networks.mix = nil
-  if not network.isNil:
-    await network.stop()
-  self.mixPeers = PeerContextStore.new()
-  self.mixPeerTracker = PeerInFlightTracker.new()
+  let blockExc = self.contexts[transport]
+  self.contexts[transport] = nil
+  if not blockExc.isNil:
+    await blockExc.stop()
 
 proc new*(
     T: type BlockExcEngine,
     localStore: BlockStore,
-    networks: BlockExcNetworks,
     discovery: DiscoveryEngine,
     advertiser: Advertiser,
-    peerStore: PeerContextStore,
     downloadManager: DownloadManager,
     selectionPolicy = spSequential,
-    directPeerSelectionPolicy: PresencePeerSelectionPolicy =
-      newPresencePeerSelectionPolicy(),
-    mixPeerSelectionPolicy: PresencePeerSelectionPolicy =
-      newPresencePeerSelectionPolicy(),
-    directPresenceQueryPolicy: PresenceQueryPolicy =
-      PresenceQueryPolicy.QuerySelectedPeers,
-    mixPresenceQueryPolicy: PresenceQueryPolicy = PresenceQueryPolicy.QuerySelectedPeers,
 ): BlockExcEngine =
-  doAssert not directPeerSelectionPolicy.isNil
-  doAssert not mixPeerSelectionPolicy.isNil
   let self = BlockExcEngine(
     localStore: localStore,
-    peers: peerStore,
-    mixPeers: PeerContextStore.new(),
-    mixPeerTracker: PeerInFlightTracker.new(),
-    peerSelectionPolicies: [directPeerSelectionPolicy, mixPeerSelectionPolicy],
-    presenceQueryPolicies: [directPresenceQueryPolicy, mixPresenceQueryPolicy],
     downloadManager: downloadManager,
-    networks: networks,
     trackedFutures: TrackedFutures(),
     discovery: discovery,
     advertiser: advertiser,
     selectionPolicy: selectionPolicy,
     activeDownloads: initHashSet[uint64](),
   )
-  self.configureNetwork(networks.direct, DownloadTransport.Direct)
-  if not networks.mix.isNil:
-    self.configureNetwork(networks.mix, DownloadTransport.Mix)
-
-  if directPeerSelectionPolicy.needsProviderTracking or
-      mixPeerSelectionPolicy.needsProviderTracking:
-    discovery.onProviders = proc(
-        cid: Cid, transport: DownloadTransport, providers: seq[PeerRecord]
-    ) {.gcsafe, raises: [].} =
-      if not self.peerSelectionPolicies[transport].needsProviderTracking:
-        return
-      for downloads in self.downloadManager.downloads.values:
-        for download in downloads.values:
-          if download.manifestCid == cid and download.ctx.transport == transport:
-            download.ctx.providerPeers.clear()
-            for provider in providers:
-              if provider.peerId in self.peersFor(transport):
-                download.ctx.providerPeers.incl(provider.peerId)
 
   return self
