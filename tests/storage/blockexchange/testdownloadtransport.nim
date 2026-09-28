@@ -126,27 +126,30 @@ asyncchecksuite "Download transport selection":
         let
           store = CacheStore.new()
           discovery = MockDiscovery.new()
-          network = BlockExcNetwork.new(switches[index])
-          networks = newBlockExcNetworks(network)
-          peers = PeerContextStore.new()
           manager = DownloadManager.new()
-          discoveryEngine = DiscoveryEngine.new(peers, networks, discovery)
+          discoveryEngine = DiscoveryEngine.new(discovery)
           advertiser =
             Advertiser.new(store, discovery, peerInfo = switches[index].peerInfo)
-          engine = BlockExcEngine.new(
-            store, networks, discoveryEngine, advertiser, peers, manager
-          )
+          engine = BlockExcEngine.new(store, discoveryEngine, advertiser, manager)
           manifest = ManifestProtocol.new(
-            switches[index], store, discovery, retries = 1, fetchTimeout = 15.seconds
+            store, discovery, retries = 1, fetchTimeout = 15.seconds
           )
           transport = newMixTransport(mixes[index])
         discovery.findBlockProvidersHandler = proc(
             d: MockDiscovery, cid: Cid, useMix: bool = false
         ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
           return @[provider]
-        engine.enableMixNetwork(transport)
-        manifest.attachMixTransport(transport)
-        switches[index].mount(networks.dispatchProtocol)
+        engine.attach(
+          BlockExcContext.new(BlockExcNetwork.new(switches[index]), store, manager)
+        )
+        engine.attach(
+          BlockExcContext.new(
+            BlockExcNetwork.new(switches[index], MixPeerTransport.new(transport)),
+            store,
+            manager,
+          )
+        )
+        switches[index].mount(engine.newBlockExcProtocol())
         switches[index].mount(manifest)
         stores.add(store)
         engines.add(engine)
@@ -181,11 +184,13 @@ asyncchecksuite "Download transport selection":
 
       # Start both fetches before awaiting either: both miss the local cache.
       let
-        directManifest = manifests[0].fetchManifest(
-          dataset.manifestCid, true, DownloadTransport.Direct
-        )
+        directTransport =
+          engines[0].contextFor(DownloadTransport.Direct).network.transport
+        mixTransport = engines[0].contextFor(DownloadTransport.Mix).network.transport
+        directManifest =
+          manifests[0].fetchManifest(dataset.manifestCid, true, directTransport)
         mixManifest =
-          manifests[0].fetchManifest(dataset.manifestCid, true, DownloadTransport.Mix)
+          manifests[0].fetchManifest(dataset.manifestCid, true, mixTransport)
       check (await directManifest).isOk
       check (await mixManifest).isOk
 
@@ -196,14 +201,10 @@ asyncchecksuite "Download transport selection":
           d: MockDiscovery, cid: Cid, useMix: bool = false
       ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
         return @[PeerRecord.init(provider.peerId, @[infos[^1].multiAddr])]
-      let directOnlyManifest = ManifestProtocol.new(
-        switches[0], CacheStore.new(), directOnlyDiscovery, retries = 1
-      )
-      directOnlyManifest.attachMixTransport(transports[0])
+      let directOnlyManifest =
+        ManifestProtocol.new(CacheStore.new(), directOnlyDiscovery, retries = 1)
       check (
-        await directOnlyManifest.fetchManifest(
-          dataset.manifestCid, true, DownloadTransport.Mix
-        )
+        await directOnlyManifest.fetchManifest(dataset.manifestCid, true, mixTransport)
       ).isErr
 
       for transport in [DownloadTransport.Direct, DownloadTransport.Mix]:
@@ -221,18 +222,19 @@ asyncchecksuite "Download transport selection":
 
       let
         peer = provider.peerId
-        directNetwork = engines[0].networks.direct
-        mixNetwork = engines[0].networks.mix
+        directCtx = engines[0].contextFor(DownloadTransport.Direct)
+        mixCtx = engines[0].contextFor(DownloadTransport.Mix)
+        directNetwork = directCtx.network
+        mixNetwork = mixCtx.network
       check peer in directNetwork.peers
       check peer in mixNetwork.peers
       check directNetwork.peers[peer] != mixNetwork.peers[peer]
       check not ((await directNetwork.peers[peer].connect()) of TransportStream)
       check (await mixNetwork.peers[peer].connect()) of TransportStream
-      check engines[0].peersFor(DownloadTransport.Direct).get(peer) !=
-        engines[0].peersFor(DownloadTransport.Mix).get(peer)
+      check directCtx.peers.get(peer) != mixCtx.peers.get(peer)
       await verifyRecipientPresenceLifecycle(
         mixNetwork,
-        engines[1].networks.mix,
+        engines[1].contextFor(DownloadTransport.Mix).network,
         peer,
         BlockAddress(treeCid: dataset.manifest.treeCid, index: 0),
       )
