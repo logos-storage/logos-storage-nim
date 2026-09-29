@@ -1,6 +1,10 @@
-import pkg/unittest2
+import std/sequtils
 
 import pkg/storage/utils
+import pkg/storage/utils/spr
+import pkg/unittest2
+
+import ../helpers
 
 suite "parseDuration":
   test "should parse durations":
@@ -13,3 +17,13 @@ suite "parseDuration":
     check res == minutes(7) # 1 shl 30, forced binary metric
     check parseDuration("3d", res) == 2 # '/' stops parse
     check res == days(3) # 1 shl 30, forced binary metric
+
+  test "should encode PeerInfo to SPR and parse it back":
+    let
+      info = examplePeerInfo()
+      peerRecord =
+        SignedPeerRecord.parse(info.toSpr().expect("invalid")).expect("invalid")
+
+    check peerRecord.data.peerId == info.peerId
+    check peerRecord.data.seqNo > 0
+    check peerRecord.data.addresses.mapIt(it.address).toSeq == info.addrs

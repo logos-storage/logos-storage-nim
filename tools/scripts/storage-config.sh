@@ -55,16 +55,10 @@ mix_pool_json() {
     }'
 }
 
-bootstrap_sprs() {
+node_sprs() {
     local network="$1"
     check_network "$network"
     raw_data "$network" | jq '[.[].spr]'
-}
-
-mix_proxy_sprs() {
-    local network="$1"
-    check_network "$network"
-    raw_data "$network" | jq '[.[].tcpSpr]'
 }
 
 full_config() {
@@ -76,7 +70,7 @@ full_config() {
         "nat": "${STORAGE_NAT:-any}",
         "network": "logos.${network}",
         "mix-enabled": true,
-        "dht-mix-proxy": $(mix_proxy_sprs "$network"),
+        "dht-mix-proxy": $(node_sprs "$network"),
         "mix-pool-json": $(mix_pool_json "$network" | jq -c 'tostring')
     }
 EOF
@@ -86,7 +80,7 @@ presets() {
     echoerr "Re-generating network presets."
 
     for network in "${_preset_order[@]}"; do
-        bootstrap_sprs "$network" | jq \
+        node_sprs "$network" | jq \
             --arg name "logos.${network}" \
             --arg description "${_networks[$network]}" \
             '{name: $name, description: $description, records: .}'
@@ -102,8 +96,7 @@ Generates configuration files and network presets for Logos Storage.
 Commands:
   raw_data <network>        Fetch raw storage-network data from fleets.logos.co
   mix_pool_json <network>   Generate mix pool JSON configuration
-  bootstrap_sprs <network>  List bootstrap SPRs
-  mix_proxy_sprs <network>  List mix proxy SPRs
+  node_sprs <network>       List node SPRs
   full_config <network>     Generate full node configuration JSON
   presets                   Generate network presets JSON for all networks
 
@@ -111,7 +104,7 @@ Networks:
   ${!_networks[*]}
 
 Examples:
-  $0 bootstrap_sprs dev
+  $0 node_sprs dev
   $0 full_config dev
   $0 presets
 EOF

@@ -140,11 +140,6 @@
 	url = https://github.com/status-im/nim-taskpools.git
 	ignore = untracked
 	branch = stable
-[submodule "vendor/logos-storage-nim-dht"]
-	path = vendor/logos-storage-nim-dht
-	url = https://github.com/logos-storage/logos-storage-nim-dht.git
-	ignore = untracked
-	branch = master
 [submodule "vendor/nim-datastore"]
 	path = vendor/nim-datastore
 	url = https://github.com/status-im/nim-datastore.git
