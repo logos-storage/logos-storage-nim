@@ -288,12 +288,8 @@ proc stop*(s: StorageServer) {.async.} =
     if not stopFut.finished():
       warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
 
-  var futures = @[
-    stopSwitch(),
-    s.storageNode.stop(),
-    s.repoStore.stop(),
-    s.maintenance.stop(),
-  ]
+  var futures =
+    @[stopSwitch(), s.storageNode.stop(), s.repoStore.stop(), s.maintenance.stop()]
 
   if s.autoRelayService.isSome and s.autoRelayService.get.isRunning:
     proc stopAutoRelay(): Future[void] {.async: (raises: []).} =
