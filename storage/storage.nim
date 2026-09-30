@@ -53,6 +53,9 @@ import ./mix
 logScope:
   topics = "storage node"
 
+# A kad dial abandoned before stop can hold switch.stop for the whole dialer timeout.
+const SwitchStopTimeout = 5.seconds
+
 type
   StorageServer* = ref object
     config: StorageConf
@@ -276,8 +279,17 @@ proc stop*(s: StorageServer) {.async.} =
       s.storageNode.manifestProtocol.detachMixTransport()
       s.mixTransport = nil
 
+  proc stopSwitch(): Future[void] {.async: (raises: []).} =
+    # race, not withTimeout: withTimeout waits for the cancelled stop to finish.
+    let stopFut = s.storageNode.switch.stop()
+    let timer = sleepAsync(SwitchStopTimeout)
+    discard await noCancel race(stopFut, timer)
+    await noCancel timer.cancelAndWait()
+    if not stopFut.finished():
+      warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
+
   var futures = @[
-    s.storageNode.switch.stop(),
+    stopSwitch(),
     s.storageNode.stop(),
     s.repoStore.stop(),
     s.maintenance.stop(),
