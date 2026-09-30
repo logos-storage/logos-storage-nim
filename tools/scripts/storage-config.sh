@@ -67,7 +67,7 @@ full_config() {
     cat <<EOF
     {
         "log-level": "${STORAGE_LOG_LEVEL:-info}",
-        "nat": "${STORAGE_NAT:-any}",
+        "nat": "${STORAGE_NAT:-auto}",
         "network": "logos.${network}",
         "mix-enabled": true,
         "dht-mix-proxy": $(node_sprs "$network"),
