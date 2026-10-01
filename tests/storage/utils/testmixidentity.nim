@@ -134,3 +134,16 @@ suite "mixidentity / pickMixCompatibleMultiAddr":
 
     if picked.isSome:
       check $picked.get == $circuitAddr
+
+suite "mixidentity / dialableMixAddressPolicy":
+  test "keeps a public TCP address":
+    check MultiAddress
+      .init("/ip4/204.168.234.45/tcp/8070")
+      .expect("valid")
+      .dialableMixAddressPolicy()
+
+  test "drops a public UDP address":
+    check not MultiAddress
+      .init("/ip4/204.168.234.45/udp/9090")
+      .expect("valid")
+      .dialableMixAddressPolicy()

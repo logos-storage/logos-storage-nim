@@ -53,6 +53,9 @@ import ./mix
 logScope:
   topics = "storage node"
 
+# A kad dial abandoned before stop can hold switch.stop for the whole dialer timeout.
+const SwitchStopTimeout = 5.seconds
+
 type
   StorageServer* = ref object
     config: StorageConf
@@ -155,6 +158,12 @@ proc start*(self: StorageServer) {.async.} =
   if self.holePunchHandler.isSome:
     for t in self.storageNode.switch.transports:
       t.networkReachability = NetworkReachability.NotReachable
+
+  # Set the announcedAddrs BEFORE the switch starts so the Identity
+  # push the correct address.
+  if self.config.nat.hasExtIp and self.config.listenPort != Port(0):
+    self.storageNode.switch.peerInfo.announcedAddrs =
+      @[getMultiAddrWithIpAndTcpPort(self.config.nat.extIp, self.config.listenPort)]
 
   await self.storageNode.switch.start()
 
@@ -276,12 +285,20 @@ proc stop*(s: StorageServer) {.async.} =
       s.storageNode.manifestProtocol.detachMixTransport()
       s.mixTransport = nil
 
-  var futures = @[
-    s.storageNode.switch.stop(),
-    s.storageNode.stop(),
-    s.repoStore.stop(),
-    s.maintenance.stop(),
-  ]
+  proc stopSwitch(): Future[void] {.async: (raises: [CancelledError]).} =
+    # We can't use withTimeout as it waits for cancellation of the wrapped future,
+    # and the part of switch.stop that takes time is blocked on a noCancel.
+    let
+      stop = s.storageNode.switch.stop()
+      timeout = race(stop, sleepAsync(SwitchStopTimeout))
+
+    discard await timeout
+    if not stop.finished():
+      # XXX not sure this doesn't have any ill effects.
+      warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
+
+  var futures =
+    @[stopSwitch(), s.storageNode.stop(), s.repoStore.stop(), s.maintenance.stop()]
 
   if s.autoRelayService.isSome and s.autoRelayService.get.isRunning:
     proc stopAutoRelay(): Future[void] {.async: (raises: []).} =
@@ -469,12 +486,24 @@ proc new*(
   except CatchableError as exc:
     raiseAssert("Failure in taskPool initialization:" & exc.msg)
 
+  var networkAddrs = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()[1]).concat()
+  if config.nat.hasExtIp:
+    networkAddrs.add(getMultiAddrWithIpAndTcpPort(config.nat.extIp, config.listenPort))
+
+  var kadAddressPolicy: PeerAddressPolicy = defaultAddressPolicy
+
+  # If the network is public, use dialable mix address policy to filter
+  # out private addresses and UDP addresses.
+  if isPublicNetwork(networkAddrs):
+    kadAddressPolicy = dialableMixAddressPolicy
+
   let
     discovery = Discovery.new(
       switch,
       bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
       dhtMixProxies = config.dhtMixProxies,
       isServer = config.nat.hasExtIp or config.autonatServer,
+      addressPolicy = kadAddressPolicy,
     )
 
     directNetwork = BlockExcNetwork.new(switch)

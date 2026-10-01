@@ -10,6 +10,7 @@
 {.push raises: [], gcsafe.}
 
 import std/net
+import std/sequtils
 import std/strutils
 import std/options
 
@@ -74,10 +75,19 @@ proc dialableAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
   # Use with switchBuilder.withAddressPolicy.
   # Filter the peerInfo.addrs updated by libp2p without
   # declaring another address mapper.
+
+  # Only TCP allowed (for now, when we add QUIC need to patch this).
+  if getTcpPort(ma).isNone:
+    return false
+
   if ma.isCircuitRelayMA():
     ma.hasPublicRelayTransport()
   else:
     ma.isPublicMA()
+
+proc isPublicNetwork*(networkAddrs: openArray[MultiAddress]): bool =
+  ## True when a bootstrap node or the extip has a public address.
+  networkAddrs.anyIt(it.isPublicMA())
 
 proc getMultiAddrWithIpAndTcpPort*(ip: IpAddress, port: Port): MultiAddress =
   ## Creates a MultiAddress with the specified IP address and TCP port

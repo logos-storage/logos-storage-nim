@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[json, os, tables]
+import std/[json, options, os, tables]
 
 import pkg/chronicles
 import pkg/libp2p
