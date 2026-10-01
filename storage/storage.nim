@@ -280,11 +280,13 @@ proc stop*(s: StorageServer) {.async.} =
       s.mixTransport = nil
 
   proc stopSwitch(): Future[void] {.async: (raises: []).} =
-    # race, not withTimeout: withTimeout waits for the cancelled stop to finish.
     let stopFut = s.storageNode.switch.stop()
     let timer = sleepAsync(SwitchStopTimeout)
+
     discard await noCancel race(stopFut, timer)
+
     await noCancel timer.cancelAndWait()
+
     if not stopFut.finished():
       warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
 
@@ -482,6 +484,9 @@ proc new*(
     networkAddrs.add(getMultiAddrWithIpAndTcpPort(config.nat.extIp, config.listenPort))
 
   var kadAddressPolicy: PeerAddressPolicy = defaultAddressPolicy
+
+  # If the network is public, use dialable mix address policy to filter
+  # out private addresses and UDP addresses.
   if isPublicNetwork(networkAddrs):
     kadAddressPolicy = dialableMixAddressPolicy
 
