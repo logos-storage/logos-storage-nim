@@ -286,7 +286,15 @@ proc stop*(s: StorageServer) {.async.} =
       s.mixTransport = nil
 
   proc stopSwitch(): Future[void] {.async: (raises: [CancelledError]).} =
-    if not (await withTimeout(s.storageNode.switch.stop(), SwitchStopTimeout)):
+    # We can't use withTimeout as it waits for cancellation of the wrapped future,
+    # and the part of switch.stop that takes time is blocked on a noCancel.
+    let
+      stop = s.storageNode.switch.stop()
+      timeout = race(stop, sleepAsync(SwitchStopTimeout))
+
+    discard await timeout
+    if not stop.finished():
+      # XXX not sure this doesn't have any ill effects.
       warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
 
   var futures =
