@@ -279,7 +279,7 @@ proc stop*(s: StorageServer) {.async.} =
       s.storageNode.manifestProtocol.detachMixTransport()
       s.mixTransport = nil
 
-  proc stopSwitch(): Future[void] {.async: (raises: []).} =
+  proc stopSwitch(): Future[void] {.async: (raises: [CancelledError]).} =
     if not (await withTimeout(s.storageNode.switch.stop(), SwitchStopTimeout)):
       warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
 
