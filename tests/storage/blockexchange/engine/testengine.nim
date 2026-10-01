@@ -464,14 +464,16 @@ asyncchecksuite "NetworkStore engine handlers":
       (await localStore.putBlock(blk)).tryGet()
       (await localStore.putCidAndProof(rootCid, i, blk.cid, tree.getProof(i).tryGet())).tryGet()
 
-    let req = WantBlocksRequest(
-      requestId: 1,
-      treeCid: rootCid,
-      ranges: @[IndexRange(start: 0'u64, count: blocks.len.uint64)],
-    )
+    let
+      reqLen = min(MaxBlocksPerBatch.int, blocks.len)
+      req = WantBlocksRequest(
+        requestId: 1,
+        treeCid: rootCid,
+        ranges: @[IndexRange(start: 0'u64, count: reqLen.uint64)],
+      )
 
     let delivered = await network.handlers.onWantBlocksRequest(peerId, req)
-    check delivered.len == blocks.len
+    check delivered.len == reqLen
 
   test "WantBlocks: serves no block of a tree that is not advertised":
     let

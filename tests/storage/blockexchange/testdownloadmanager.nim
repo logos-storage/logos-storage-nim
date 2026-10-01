@@ -896,11 +896,11 @@ suite "DownloadManager - Completion Future":
       md = testManifestDesc(Cid.example, 65536, 10)
       desc = DownloadDesc(md: md, count: 10)
       download = dm.startDownload(desc)
-      batch = dm.getNextBatch(download)
 
-    check batch.isSome
-
-    download.completeBatchLocal(batch.get.start, batch.get.count)
+    for i in 1 .. 5:
+      let batch = dm.getNextBatch(download)
+      check batch.isSome
+      download.completeBatchLocal(batch.get.start, batch.get.count)
 
     check download.ctx.scheduler.isEmpty()
     check download.ctx.received == 10
@@ -915,12 +915,10 @@ suite "DownloadManager - Completion Future":
       desc = DownloadDesc(md: md, count: 10)
       download = dm.startDownload(desc)
 
-    check not download.completionFuture.finished
-
-    let batch = dm.getNextBatch(download)
-    check batch.isSome
-
-    download.completeBatchLocal(batch.get.start, batch.get.count)
+    for i in 1 .. 5:
+      let batch = dm.getNextBatch(download)
+      check batch.isSome
+      download.completeBatchLocal(batch.get.start, batch.get.count)
 
     check download.completionFuture.finished
     check not download.completionFuture.failed
@@ -972,11 +970,11 @@ suite "DownloadManager - Completion Future":
       md = testManifestDesc(Cid.example, 65536, 10)
       desc = DownloadDesc(md: md, count: 10)
       download = dm.startDownload(desc)
-      batch = dm.getNextBatch(download)
 
-    check batch.isSome
-
-    download.completeBatchLocal(batch.get.start, batch.get.count)
+    for i in 1 .. 5:
+      let batch = dm.getNextBatch(download)
+      check batch.isSome
+      download.completeBatchLocal(batch.get.start, batch.get.count)
 
     check download.completionFuture.finished
     check not download.completionFuture.failed
