@@ -301,7 +301,7 @@ int setup(void **storage_ctx)
     libstorageNimMain();
 
     Resp *r = alloc_resp();
-    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\",\"network\":\"logos.dev\"}";
+    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\",\"network\":\"logos.test\"}";
     void *ctx = storage_new(cfg, (StorageCallback)callback, r);
 
     if (!ctx)

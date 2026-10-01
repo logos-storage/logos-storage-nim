@@ -1,8 +1,10 @@
+import std/sequtils
 import pkg/libp2p/multiaddress
 import pkg/libp2p_mix
 
 import ../asynctest
 import ./helpers
+import ./examples
 import ../../storage/discovery
 import ../../storage/rng
 import ../../storage/utils/mixidentity
@@ -70,3 +72,28 @@ suite "Discovery - Mix local address":
     disc.updateLocalMultiAddr()
 
     check $mixProto.localMixPubInfo.multiAddr == $mixUnsetMultiAddr()
+
+suite "Discovery - bootstrap addresses":
+  let
+    publicAddr = MultiAddress.init("/ip4/1.2.3.4/tcp/4001").expect("valid")
+    privateAddr = MultiAddress.init("/ip4/10.1.0.85/tcp/4001").expect("valid")
+
+  proc bootstrapAddrs(disc: Discovery): seq[string] =
+    disc.routingTable().peers[0].record.addresses.mapIt($it.address)
+
+  test "a private address of a bootstrap node is kept by default":
+    let disc = Discovery.new(
+      newStandardSwitch(),
+      bootstrapNodes = [(PeerId.example, @[publicAddr, privateAddr])],
+    )
+
+    check $privateAddr in disc.bootstrapAddrs
+
+  test "a private address of a bootstrap node is dropped by a public address policy":
+    let disc = Discovery.new(
+      newStandardSwitch(),
+      bootstrapNodes = [(PeerId.example, @[publicAddr, privateAddr])],
+      addressPolicy = dialableMixAddressPolicy,
+    )
+
+    check $privateAddr notin disc.bootstrapAddrs

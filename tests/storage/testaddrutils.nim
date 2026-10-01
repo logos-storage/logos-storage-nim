@@ -77,3 +77,15 @@ suite "addrutils - dialableAddressPolicy":
 
   test "drops a circuit address through a private relay":
     check not circuitAddr("172.17.0.1").dialableAddressPolicy()
+
+suite "addrutils - isPublicNetwork":
+  let
+    publicAddr = MultiAddress.init("/ip4/204.168.234.45/tcp/8070").expect("valid")
+    loopbackAddr = MultiAddress.init("/ip4/127.0.0.1/tcp/8070").expect("valid")
+    privateAddr = MultiAddress.init("/ip4/10.1.0.85/tcp/8070").expect("valid")
+
+  test "true when one address is public":
+    check isPublicNetwork(@[loopbackAddr, publicAddr])
+
+  test "false when every address is loopback or private":
+    check not isPublicNetwork(@[loopbackAddr, privateAddr])

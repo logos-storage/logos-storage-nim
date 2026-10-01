@@ -226,6 +226,7 @@ proc new*(
     bootstrapNodes: openArray[(PeerId, seq[MultiAddress])] = [],
     dhtMixProxies: openArray[SignedPeerRecord] = [],
     isServer = true,
+    addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -237,6 +238,7 @@ proc new*(
   self.kad = KadDHT.new(
     switch,
     bootstrapNodes = @bootstrapNodes,
+    config = KadDHTConfig.new(addressPolicy = addressPolicy),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

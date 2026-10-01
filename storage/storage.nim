@@ -477,12 +477,21 @@ proc new*(
   except CatchableError as exc:
     raiseAssert("Failure in taskPool initialization:" & exc.msg)
 
+  var networkAddrs = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()[1]).concat()
+  if config.nat.hasExtIp:
+    networkAddrs.add(getMultiAddrWithIpAndTcpPort(config.nat.extIp, config.listenPort))
+
+  var kadAddressPolicy: PeerAddressPolicy = defaultAddressPolicy
+  if isPublicNetwork(networkAddrs):
+    kadAddressPolicy = dialableMixAddressPolicy
+
   let
     discovery = Discovery.new(
       switch,
       bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
       dhtMixProxies = config.dhtMixProxies,
       isServer = config.nat.hasExtIp or config.autonatServer,
+      addressPolicy = kadAddressPolicy,
     )
 
     directNetwork = BlockExcNetwork.new(switch)
