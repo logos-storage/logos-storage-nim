@@ -86,6 +86,8 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
         for i, f in dialed:
           if f.failed:
             trace "Failed to dial discovered provider", peer = peers[i].peerId
+      else:
+        debug "Discovery lookup timed out", cid
   except CancelledError:
     trace "Discovery task cancelled"
     return

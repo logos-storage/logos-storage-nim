@@ -39,7 +39,7 @@ const
   TimeoutSafetyFactor* = 3.0
     # multiplier to account for variance (network jitter, congestion, GC pauses )
   MinBatchTimeout* = 5.seconds # min to avoid too aggressive timeouts
-  MaxBatchTimeout* = 45.seconds # max to handle high contention scenarios
+  MaxBatchTimeout* = 300.seconds # max to handle high contention scenarios
 
 static:
   doAssert (WeightCapacity + WeightThroughput + WeightRtt + WeightPenalty) == 1.0,

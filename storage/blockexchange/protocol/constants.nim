@@ -19,7 +19,7 @@ const
   # message size limits for protobuf control messages
   MaxMessageSize*: uint32 = 16.MiBs.uint32
 
-  TargetBatchBytes*: uint32 = 1024 * 1024
+  TargetBatchBytes*: uint32 = 1024 * 128
   MinBatchSize*: uint32 = 1
 
   # caps the number of entries decoded from a single WantList/blockPresences

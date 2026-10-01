@@ -13,7 +13,7 @@ import pkg/chronos
 const
   RttSampleCount* = 16
   MinRequestsPerPeer* = 2
-  MaxRequestsPerPeer* = 32
+  MaxRequestsPerPeer* = 128
   DefaultRequestsPerPeer* = 2
   DefaultPipelineDepth* = 2
   MinThroughputDuration* = 100.milliseconds

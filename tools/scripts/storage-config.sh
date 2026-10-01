@@ -46,7 +46,7 @@ mix_pool_json() {
     check_network "$network"
     raw_data "$network" | jq -c '{
       "version": 1,
-      "relays": map({
+      "relays": map(select(.role == "mp") | {
         "peerId": .peerId,
         "mixPubKey": .mixPubKey,
         "libp2pPubKey": .libp2pPubKey,
@@ -61,6 +61,12 @@ node_sprs() {
     raw_data "$network" | jq '[.[].spr]'
 }
 
+mix_proxy_sprs() {
+    local network="$1"
+    check_network "$network"
+    raw_data "$network" | jq '. | map(select(.role == "mp")) | [.[].spr]'
+}
+
 full_config() {
     local network="$1"
     check_network "$network"
@@ -70,7 +76,7 @@ full_config() {
         "nat": "${STORAGE_NAT:-auto}",
         "network": "logos.${network}",
         "mix-enabled": true,
-        "dht-mix-proxy": $(node_sprs "$network"),
+        "dht-mix-proxy": $(mix_proxy_sprs "$network"),
         "mix-pool-json": $(mix_pool_json "$network" | jq -c 'tostring')
     }
 EOF

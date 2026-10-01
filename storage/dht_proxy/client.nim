@@ -59,6 +59,8 @@ proc requestLookup(
     return success LookupResult(code: resp.code, providers: providers)
   except LPStreamError as exc:
     return failure("Stream error: " & exc.msg)
+  except CancelledError as exc:
+    raise exc
   except CatchableError as exc:
     return failure("Client error: " & exc.msg)
 
