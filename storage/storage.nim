@@ -280,14 +280,7 @@ proc stop*(s: StorageServer) {.async.} =
       s.mixTransport = nil
 
   proc stopSwitch(): Future[void] {.async: (raises: []).} =
-    let stopFut = s.storageNode.switch.stop()
-    let timer = sleepAsync(SwitchStopTimeout)
-
-    discard await noCancel race(stopFut, timer)
-
-    await noCancel timer.cancelAndWait()
-
-    if not stopFut.finished():
+    if not (await withTimeout(s.storageNode.switch.stop(), SwitchStopTimeout)):
       warn "Switch stop timed out, continuing", timeout = SwitchStopTimeout
 
   var futures =

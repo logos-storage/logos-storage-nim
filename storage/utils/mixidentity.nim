@@ -77,9 +77,6 @@ proc dialableMixAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
   ##  1. the address itself is dialable;
   ##  2. the address is a valid mix transport address, and its underlying multiaddr is
   ##     dialable.
-  if getTcpPort(ma).isNone:
-    return false
-
   if dialableAddressPolicy(ma):
     return true
 

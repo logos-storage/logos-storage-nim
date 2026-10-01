@@ -75,6 +75,11 @@ proc dialableAddressPolicy*(ma: MultiAddress): bool {.gcsafe, raises: [].} =
   # Use with switchBuilder.withAddressPolicy.
   # Filter the peerInfo.addrs updated by libp2p without
   # declaring another address mapper.
+
+  # Only TCP allowed (for now, when we add QUIC need to patch this).
+  if getTcpPort(ma).isNone:
+    return false
+
   if ma.isCircuitRelayMA():
     ma.hasPublicRelayTransport()
   else:
