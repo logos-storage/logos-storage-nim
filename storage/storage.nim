@@ -159,6 +159,12 @@ proc start*(self: StorageServer) {.async.} =
     for t in self.storageNode.switch.transports:
       t.networkReachability = NetworkReachability.NotReachable
 
+  # Set the announcedAddrs BEFORE the switch starts so the Identity
+  # push the correct address.
+  if self.config.nat.hasExtIp and self.config.listenPort != Port(0):
+    self.storageNode.switch.peerInfo.announcedAddrs =
+      @[getMultiAddrWithIpAndTcpPort(self.config.nat.extIp, self.config.listenPort)]
+
   await self.storageNode.switch.start()
 
   var realPort = Port(0)
