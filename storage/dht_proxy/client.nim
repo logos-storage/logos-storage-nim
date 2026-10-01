@@ -23,7 +23,7 @@ import ../logutils
 import ../utils/mixidentity
 import ./protocol
 
-const DefaultLookupTimeout* = 30.seconds
+const DefaultLookupTimeout* = 90.seconds
 
 logScope:
   topics = "storage dht-proxy client"
