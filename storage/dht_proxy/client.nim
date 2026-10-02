@@ -100,7 +100,16 @@ proc lookupProviders*(
     conn = mixProto.toConnection(
       destination,
       DhtProxyCodec,
-      MixParameters(expectReply: Opt.some(true), numSurbs: Opt.some(1'u8)),
+      MixParameters(
+        expectReply: Opt.some(true),
+        numSurbs: Opt.some(1'u8),
+        # Mix provides its timeout, but we are already using
+        # `withTimeout` below, so I set this to a "large" value.
+        # I could use `infinite` but being defensive:
+        # if the implementation uses `noCancel` somewhere,
+        # `withTimeout` will never trigger.
+        replyTimeout: Opt.some(2 * DefaultLookupTimeout),
+      ),
     ).valueOr:
       return failure("Failed to obtain Mix connection: " & error)
 
