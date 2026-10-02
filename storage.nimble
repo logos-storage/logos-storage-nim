@@ -1,6 +1,6 @@
 version = "0.5.2"
 author = "Logos Storage Team"
-description = "p2p data durability engine"
+description = "privacy-preserving p2p file sharing"
 license = "MIT"
 binDir = "build"
 srcDir = "."
