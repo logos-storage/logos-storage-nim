@@ -96,14 +96,12 @@ template setupAndTearDown*() {.dirty.} =
     blockDiscovery = Discovery.new(switch)
     peerStore = PeerContextStore.new()
     downloadManager = DownloadManager.new()
-    discovery =
-      DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
+    discovery = DiscoveryEngine.new(blockDiscovery)
     advertiser = Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
-    engine = BlockExcEngine.new(
-      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
-    )
+    engine = BlockExcEngine.new(localStore, discovery, advertiser, downloadManager)
+    engine.attach(BlockExcContext.new(network, localStore, downloadManager, peerStore))
     store = NetworkStore.new(engine, localStore)
-    let manifestProto = ManifestProtocol.new(switch, localStore, blockDiscovery)
+    let manifestProto = ManifestProtocol.new(localStore, blockDiscovery)
     switch.mount(manifestProto)
     node = StorageNodeRef.new(
       switch = switch,

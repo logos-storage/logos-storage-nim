@@ -8,6 +8,7 @@ import pkg/storage/chunker
 import pkg/storage/blocktype as bt
 import pkg/storage/blockexchange
 import pkg/storage/blockexchange/protocol/wantblocks
+import pkg/storage/stores
 import pkg/storage/downloadtransport
 import pkg/storage/mix
 import pkg/libp2p_mix_transport/streams
@@ -228,6 +229,21 @@ asyncchecksuite "Network - Direct provider registration":
     check peer notin network.peers
     check registrations == 0
 
+proc attachedEngine(networks: varargs[BlockExcNetwork]): BlockExcEngine =
+  let
+    store = CacheStore.new()
+    discovery = MockDiscovery.new()
+    manager = DownloadManager.new()
+    engine = BlockExcEngine.new(
+      store,
+      DiscoveryEngine.new(discovery),
+      Advertiser.new(store, discovery, peerInfo = examplePeerInfo()),
+      manager,
+    )
+  for network in networks:
+    engine.attach(BlockExcContext.new(network, store, manager))
+  engine
+
 asyncchecksuite "Network - MixTransport peer events":
   var switch1, switch2: Switch
 
@@ -241,16 +257,16 @@ asyncchecksuite "Network - MixTransport peer events":
   test "Protocol mode follows the supplied MixTransport":
     let
       directNetwork = BlockExcNetwork.new(switch1)
-      mixNetwork = BlockExcNetwork.new(switch1, mixTransport = MixTransport())
-    check not directNetwork.isMixDownload
-    check mixNetwork.isMixDownload
+      mixNetwork = BlockExcNetwork.new(switch1, MixPeerTransport.new(MixTransport()))
+    check directNetwork.transport.kind == DownloadTransport.Direct
+    check mixNetwork.transport.kind == DownloadTransport.Mix
     await directNetwork.stop()
     await mixNetwork.stop()
 
   test "Direct and Mix peer entries and departures are independent":
     let
       network = BlockExcNetwork.new(switch1)
-      mixNetwork = BlockExcNetwork.new(switch1, mixTransport = MixTransport())
+      mixNetwork = BlockExcNetwork.new(switch1, MixPeerTransport.new(MixTransport()))
       peer = switch2.peerInfo.peerId
     await network.handlePeerJoined(peer)
     await mixNetwork.handlePeerJoined(peer)
@@ -267,39 +283,36 @@ asyncchecksuite "Network - MixTransport peer events":
       inc directCalls
       return nil
 
-    let
-      network = BlockExcNetwork.new(switch1, connProvider = directConnection)
-      networks = newBlockExcNetworks(network)
-    check networks.networkFor(DownloadTransport.Mix).isNil
-    check not networks.isMixEnabled
+    let engine =
+      attachedEngine(BlockExcNetwork.new(switch1, connProvider = directConnection))
+    check engine.contextFor(DownloadTransport.Mix).isNil
     check directCalls == 0
-    await network.stop()
+    await engine.detach(DownloadTransport.Direct)
 
   test "Physical Mix relay connections do not become BlockExchange peers":
     let
-      directNetwork = BlockExcNetwork.new(switch1)
-      networks = newBlockExcNetworks(directNetwork)
-      network = BlockExcNetwork.new(switch1, mixTransport = MixTransport())
-    networks.mix = network
-    switch1.mount(networks.dispatchProtocol)
+      network = BlockExcNetwork.new(switch1, MixPeerTransport.new(MixTransport()))
+      engine = attachedEngine(BlockExcNetwork.new(switch1), network)
+    switch1.mount(engine.newBlockExcProtocol())
     await switch1.start()
     await switch2.start()
 
     await switch1.connect(switch2.peerInfo.peerId, switch2.peerInfo.addrs)
 
     check switch2.peerInfo.peerId notin network.peers
-    await networks.stop()
+    await engine.detach(DownloadTransport.Mix)
+    await engine.detach(DownloadTransport.Direct)
 
   test "Mounted dispatcher closes a Mix stream when Mix is disabled":
     let
       directNetwork = BlockExcNetwork.new(switch1)
-      networks = newBlockExcNetworks(directNetwork)
+      engine = attachedEngine(directNetwork)
       peer = switch2.peerInfo.peerId
       stream = newTransportStream(peer, peer, 1, Codec, StreamDirection.Inbound)
-    await networks.dispatchProtocol.handler(stream, Codec)
+    await engine.newBlockExcProtocol().handler(stream, Codec)
     check stream.closed
     check peer notin directNetwork.peers
-    await networks.stop()
+    await engine.detach(DownloadTransport.Direct)
 
 asyncchecksuite "Network - Test Limits":
   var

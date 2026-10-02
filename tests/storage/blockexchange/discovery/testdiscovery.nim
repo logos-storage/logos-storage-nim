@@ -18,6 +18,11 @@ import ../../helpers
 import ../../helpers/mockdiscovery
 import ../../examples
 
+proc ignoreProviders(
+    providers: seq[PeerRecord]
+): Future[void] {.async: (raises: [CancelledError]).} =
+  discard
+
 asyncchecksuite "Block Advertising and Discovery":
   let chunker = RandomChunker.new(Rng.instance(), size = 4096, chunkSize = 256)
 
@@ -57,21 +62,20 @@ asyncchecksuite "Block Advertising and Discovery":
 
     (await localStore.putBlock(manifestBlock)).tryGet()
 
-    discovery = DiscoveryEngine.new(
-      peerStore, newBlockExcNetworks(network), blockDiscovery, concurrentDiscReqs = 20
-    )
+    discovery = DiscoveryEngine.new(blockDiscovery, concurrentDiscReqs = 20)
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
-    engine = BlockExcEngine.new(
-      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
-    )
+    engine = BlockExcEngine.new(localStore, discovery, advertiser, downloadManager)
+    engine.attach(BlockExcContext.new(network, localStore, downloadManager, peerStore))
 
-    switch.mount(discovery.networks.dispatchProtocol)
+    switch.mount(network)
 
   test "Should discover want list":
-    var handles: seq[Future[?!bt.Block]]
+    var
+      handles: seq[Future[?!bt.Block]]
+      downloads: seq[ActiveDownload]
     for blk in blocks:
       let
         address = BlockAddress.init(blk.cid, 0)
@@ -79,6 +83,7 @@ asyncchecksuite "Block Advertising and Discovery":
         desc = DownloadDesc(md: md, startIndex: address.index.uint64, count: 1)
         download = engine.downloadManager.startDownload(desc)
       handles.add(download.getWantHandle(address))
+      downloads.add(download)
 
     blockDiscovery.publishBlockProvideHandler = proc(
         d: MockDiscovery, cid: Cid
@@ -88,16 +93,16 @@ asyncchecksuite "Block Advertising and Discovery":
     blockDiscovery.findBlockProvidersHandler = proc(
         d: MockDiscovery, cid: Cid, useMix: bool = false
     ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
-      let matching = blocks.filterIt(it.cid == cid)
-      for blk in matching:
-        let address = BlockAddress(treeCid: blk.cid, index: 0)
-        let dlOpt = engine.downloadManager.getDownload(blk.cid)
-        if dlOpt.isSome:
-          discard dlOpt.get().completeWantHandle(address, some(blk))
+      for i, download in downloads:
+        if download.manifestCid == cid:
+          let blk = blocks[i]
+          let address = BlockAddress(treeCid: blk.cid, index: 0)
+          discard download.completeWantHandle(address, some(blk))
 
     await engine.start()
 
-    discovery.queueFindBlocksReq(blocks.mapIt(it.cid))
+    for download in downloads:
+      discovery.queueFindBlocksReq(download, ignoreProviders)
 
     await allFuturesThrowing(allFinished(handles)).wait(10.seconds)
 

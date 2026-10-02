@@ -35,10 +35,6 @@ declareGauge(
 )
 
 type
-  PresenceQueryPolicy* {.pure.} = enum
-    QuerySelectedPeers
-    QueryAdmittedPeers
-
   RetriesExhaustedError* = object of StorageError
   DownloadTerminatedError* = object of StorageError
   BlockHandle* = Future[?!Block].Raising([CancelledError])
@@ -361,26 +357,20 @@ proc getSwarm(download: ActiveDownload): Swarm =
 proc updatePeerAvailability*(
     download: ActiveDownload, peerId: PeerId, availability: BlockAvailability
 ) =
-  if download.ctx.swarm.getPeer(peerId).isNone:
-    discard download.ctx.swarm.addPeer(peerId, availability)
-  else:
-    download.ctx.swarm.updatePeerAvailability(peerId, availability)
+  let swarm = download.ctx.swarm
+  if swarm.getPeer(peerId).isSome:
+    swarm.updatePeerAvailability(peerId, availability)
+    return
 
-proc addPeerIfAbsent*(
-    download: ActiveDownload,
-    peerId: PeerId,
-    availability: BlockAvailability,
-    queryPolicy: PresenceQueryPolicy = PresenceQueryPolicy.QuerySelectedPeers,
-): bool =
-  ## Attempts admission and returns whether to send a presence query, not
-  ## whether admission succeeded. Existing complete peers need no query.
-  let existingPeer = download.ctx.swarm.getPeer(peerId)
-  if existingPeer.isSome:
-    # peer already tracked, skip if bakComplete
-    return existingPeer.get().availability.kind != bakComplete
+  if swarm.addPeer(peerId, availability) or availability.kind == bakUnknown:
+    return
 
-  let admitted = download.ctx.swarm.addPeer(peerId, availability)
-  return queryPolicy == PresenceQueryPolicy.QuerySelectedPeers or admitted
+  var busy: HashSet[PeerId]
+  for batch in download.pendingBatches.values:
+    busy.incl(batch.peerId)
+
+  if not swarm.replaceUnknownPeer(peerId, availability, busy):
+    trace "Peer availability dropped, not admitted to swarm", peer = peerId
 
 proc handleBatchRetry*(
     download: ActiveDownload, start: uint64, count: uint64, waitTime: Duration

@@ -127,6 +127,28 @@ proc addPeer*(swarm: Swarm, peerId: PeerId, availability: BlockAvailability): bo
   swarm.peers[peerId] = SwarmPeer.new(availability)
   true
 
+proc replaceUnknownPeer*(
+    swarm: Swarm, peerId: PeerId, availability: BlockAvailability, busy: HashSet[PeerId]
+): bool =
+  if peerId in swarm.removedPeers:
+    return false
+
+  var
+    replaced = none(PeerId)
+    oldestSeen: Moment
+  for id, peer in swarm.peers:
+    if peer.availability.kind == bakUnknown and id notin busy and
+        (replaced.isNone or peer.lastSeen < oldestSeen):
+      replaced = some(id)
+      oldestSeen = peer.lastSeen
+
+  if replaced.isNone:
+    return false
+
+  swarm.peers.del(replaced.get)
+  swarm.peers[peerId] = SwarmPeer.new(availability)
+  true
+
 proc removePeer*(swarm: Swarm, peerId: PeerId): Option[SwarmPeer] =
   swarm.peers.withValue(peerId, peer):
     let res = some(peer[])
@@ -173,7 +195,7 @@ proc recordBatchSuccess*(
 
 proc activePeerCount*(swarm: Swarm): int =
   for peer in swarm.peers.values:
-    if not peer.isStale:
+    if not peer.isStale and peer.availability.kind != bakUnknown:
       result += 1
 
 proc peerCount*(swarm: Swarm): int =
@@ -188,7 +210,7 @@ proc peersNeeded*(swarm: Swarm): SwarmHealth =
   else:
     shHealthy
 
-proc connectedPeers*(swarm: Swarm): seq[PeerId] =
+proc members*(swarm: Swarm): seq[PeerId] =
   for peerId in swarm.peers.keys:
     result.add(peerId)
 
