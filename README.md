@@ -1,3 +1,17 @@
+> **This is a fork.** `fryorcraken/logos-storage-nim` adds Android
+> cross-compilation support (`make libstorage-android`, nimble task
+> `libstorageAndroid`) not yet available upstream, for
+> [`logos-android-wrap-poc`](https://github.com/fryorcraken/logos-android-wrap-poc).
+> Everything else is unmodified upstream code. Upstream:
+> [`logos-storage/logos-storage-nim`](https://github.com/logos-storage/logos-storage-nim).
+>
+> The Android build currently covers **arm64-v8a and x86_64 only** (the two
+> 64-bit ABIs). The 32-bit ABIs (`x86`, `armeabi-v7a`) fail on a real,
+> pre-existing bug in `storage/units.nim` (`NBytes = distinct Natural`
+> overflows a 32-bit `int` computing a compile-time constant) — see the
+> comment above the `libstorage-android-x86`/`libstorage-android-arm`
+> Makefile targets for detail. Out of scope for this fork to fix.
+
 # Logos Storage Filesharing Client
 
 > The Logos Storage project aims to create a filesharing client that allows sharing data privately in p2p networks.
