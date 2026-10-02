@@ -48,6 +48,7 @@ import ./storagetypes
 import ./logutils
 import ./nat
 import ./utils/natutils
+import ./utils/trackedfutures
 import ./mix
 
 logScope:
@@ -71,6 +72,7 @@ type
     natMapper*: Option[NatPortMapper]
     holePunchHandler: Option[connmanager.PeerEventHandler]
     bootstrapNodes: seq[SignedPeerRecord]
+    autonatDialFutures: TrackedFutures
     mixTransport: MixTransport
     isStarted: bool
 
@@ -233,27 +235,22 @@ proc start*(self: StorageServer) {.async.} =
       await peerInfo.update()
 
   # Connect to the Autonat servers (currently bootsrap nodes) in order to
-  # have connected peers for Autonat. The dials are run concurrently in case of
-  # a dead autonat server that could timeout.
-  proc connectAutonatServer(
-      record: SignedPeerRecord
-  ) {.async: (raises: [CancelledError]).} =
+  # have connected peers for Autonat. The dials run concurrently without delaying
+  # startup when an Autonat server is unreachable.
+  proc connectAutonatServer(record: SignedPeerRecord) {.async: (raises: []).} =
     try:
       let (peerId, addresses) = record.toPeerIdAndAddrs()
       await self.storageNode.switch.connect(peerId, addresses)
-    except CancelledError as exc:
-      raise exc
+    except CancelledError:
+      discard
     except CatchableError as e:
       warn "Cannot connect to bootstrap node", error = e.msg
 
-  # noCancel: cancelling allFutures does not cancel the
-  # connectAutonatServer futures.
-  await noCancel allFutures(
-    findAutonatServers(self.bootstrapNodes).mapIt(connectAutonatServer(it))
-  )
+  for record in findAutonatServers(self.bootstrapNodes):
+    self.autonatDialFutures.track(connectAutonatServer(record))
 
   # AutoNAT is not in switch.services because we want to start it
-  # after the bootstrap connections to have connected peers for the first probe.
+  # after starting the bootstrap connections for the first probe.
   if self.autonatService.isSome:
     await self.autonatService.get.start(self.storageNode.switch)
 
@@ -268,6 +265,8 @@ proc stop*(s: StorageServer) {.async.} =
     return
 
   notice "Stopping Storage node"
+
+  await s.autonatDialFutures.cancelTracked()
 
   if s.natMapper.isSome:
     s.natMapper.get.stop()
@@ -636,5 +635,6 @@ proc new*(
     natMapper: natMapper,
     holePunchHandler: holePunchHandler,
     bootstrapNodes: bootstrapNodes,
+    autonatDialFutures: TrackedFutures(),
     mixTransport: nil,
   )
