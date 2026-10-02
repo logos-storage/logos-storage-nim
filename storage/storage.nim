@@ -427,25 +427,17 @@ proc new*(
     info "AutoNAT server enabled"
     switchBuilder = switchBuilder.withAutonatV2Server()
   elif not config.nat.hasExtIp:
-    info "AutoNAT client enabled",
-      scheduleInterval = config.natScheduleInterval,
-      numPeersToAsk = config.natNumPeersToAsk,
-      maxQueueSize = config.natMaxQueueSize,
-      minConfidence = config.natMinConfidence
+    info "AutoNAT client enabled", scheduleInterval = config.natScheduleInterval
     autonatConfig = some(
       AutonatV2ServiceConfig.new(
         scheduleInterval = Opt.some(config.natScheduleInterval),
-        askNewConnectedPeers = false,
-        numPeersToAsk = config.natNumPeersToAsk,
-        maxQueueSize = config.natMaxQueueSize,
-        minConfidence = config.natMinConfidence,
         enableDialableCandidates = true,
       )
     )
 
     let observedAddrMinCount = min(config.natObservedAddrMinCount, bootstrapNodes.len)
-    switchBuilder = switchBuilder.withObservedAddrManager(
-      ObservedAddrManager.new(minCount = observedAddrMinCount)
+    switchBuilder = switchBuilder.withAddressManager(
+      AddressManagerConfig(minCount: observedAddrMinCount)
     )
     # libp2p keeps the private address in peerInfo.addrs.
     # Since Autonat V2 uses the observed public address,
@@ -600,7 +592,7 @@ proc new*(
       )
     )
 
-    autonatService.get.setStatusAndConfidenceHandler(
+    discard autonatService.get.reachabilityObservers.add(
       proc(
           networkReachability: NetworkReachability,
           confidence: Opt[float],

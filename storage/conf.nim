@@ -360,27 +360,6 @@ type
       name: "nat-schedule-interval"
     .}: Duration
 
-    natNumPeersToAsk* {.
-      desc: "Number of peers to contact per AutoNAT round",
-      defaultValue: 3,
-      name: "nat-num-peers-to-ask"
-    .}: int
-
-    natMaxQueueSize* {.
-      desc: "Number of past AutoNAT results kept to calculate confidence",
-      defaultValue: 3,
-      name: "nat-max-queue-size"
-    .}: int
-
-    natMinConfidence* {.
-      # With maxQueueSize=3, 0.6 confirms reachability on a 2/3 majority
-      # (2/3=0.667) instead of a 3/3 unanimous round, tolerating one inconsistent
-      # peer.
-      desc: "Minimum confidence threshold to confirm reachability",
-      defaultValue: 0.6,
-      name: "nat-min-confidence"
-    .}: float
-
     natObservedAddrMinCount* {.
       desc:
         "Minimum number of times that an address must show up in identify replies" &
@@ -449,17 +428,8 @@ func validateAutonatConfig*(config: StorageConf): ?!void =
         "AutoNAT has no one to probe and the node can never become reachable"
     )
 
-  if config.natMaxQueueSize < 1:
-    return failure "--nat-max-queue-size must be at least 1"
-
-  if config.natNumPeersToAsk < 1:
-    return failure "--nat-num-peers-to-ask must be at least 1"
-
   if config.natObservedAddrMinCount < 1:
     return failure "--nat-observed-addr-min-count must be at least 1"
-
-  if config.natMinConfidence < 0.0 or config.natMinConfidence > 1.0:
-    return failure "--nat-min-confidence must be between 0 and 1"
 
   if config.natScheduleInterval <= 0.seconds:
     return failure "--nat-schedule-interval must be greater than 0"

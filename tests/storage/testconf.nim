@@ -7,9 +7,6 @@ import ../../storage/nat
 proc validConfig(): StorageConf =
   StorageConf(
     nat: defaultNatConfig(),
-    natMaxQueueSize: 3,
-    natNumPeersToAsk: 5,
-    natMinConfidence: 0.7,
     natObservedAddrMinCount: 1,
     natScheduleInterval: DefaultNatScheduleInterval,
     natMaxRelays: 2,
@@ -61,30 +58,6 @@ suite "Conf - validateAutonatConfig":
 
     check config.validateAutonatConfig().isOk
 
-  test "rejects nat-max-queue-size below 1":
-    var config = validConfig()
-    config.natMaxQueueSize = 0
-
-    check config.validateAutonatConfig().isErr
-
-  test "accepts nat-max-queue-size of 1":
-    var config = validConfig()
-    config.natMaxQueueSize = 1
-
-    check config.validateAutonatConfig().isOk
-
-  test "rejects nat-num-peers-to-ask below 1":
-    var config = validConfig()
-    config.natNumPeersToAsk = 0
-
-    check config.validateAutonatConfig().isErr
-
-  test "accepts nat-num-peers-to-ask of 1":
-    var config = validConfig()
-    config.natNumPeersToAsk = 1
-
-    check config.validateAutonatConfig().isOk
-
   test "rejects nat-observed-addr-min-count below 1":
     var config = validConfig()
     config.natObservedAddrMinCount = 0
@@ -95,27 +68,6 @@ suite "Conf - validateAutonatConfig":
     var config = validConfig()
     config.natObservedAddrMinCount = 1
 
-    check config.validateAutonatConfig().isOk
-
-  test "rejects negative nat-min-confidence":
-    var config = validConfig()
-    config.natMinConfidence = -0.1
-
-    check config.validateAutonatConfig().isErr
-
-  test "rejects nat-min-confidence above 1":
-    var config = validConfig()
-    config.natMinConfidence = 1.1
-
-    check config.validateAutonatConfig().isErr
-
-  test "accepts nat-min-confidence bounds":
-    var config = validConfig()
-
-    config.natMinConfidence = 0.0
-    check config.validateAutonatConfig().isOk
-
-    config.natMinConfidence = 1.0
     check config.validateAutonatConfig().isOk
 
   test "rejects nat-schedule-interval of zero":

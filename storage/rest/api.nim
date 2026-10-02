@@ -21,6 +21,7 @@ import pkg/presto except toJson
 import pkg/metrics except toJson
 import pkg/stew/base10
 import pkg/confutils
+import pkg/serde/json as serde
 
 import pkg/libp2p
 import pkg/libp2p/routing_record
@@ -683,7 +684,7 @@ proc initDebugApi(
     try:
       # return pretty json for human readability
       return RestApiResponse.response(
-        DebugInfo.init(node, autonat, autoRelay, natMapper).toJson(pretty = true),
+        serde.toJson(DebugInfo.init(node, autonat, autoRelay, natMapper), pretty = true),
         contentType = "application/json",
         headers = headers,
       )
