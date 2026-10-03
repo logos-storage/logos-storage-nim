@@ -48,9 +48,7 @@
 #define END_SUITE printf(GRN "SUCCESS. Tests passed: %d\n" NC, passed + 1); \
         fflush(stdout);
 
-// We need 250 as max retries mainly for the start function in CI.
-// Other functions should be not need that many retries.
-#define MAX_RETRIES 250
+#define RESPONSE_TIMEOUT_MS 5000
 
 typedef struct
 {
@@ -111,7 +109,7 @@ static int get_ret(Resp *r)
     return ret;
 }
 
-// wait_resp waits until the async response is ready or max retries is reached.
+// wait_resp waits until the async response is ready or the timeout expires.
 // The resp is initially set to -1, to any code (RET_OK, RET_ERR, RET_PROGRESS) will
 // indicate that the response is ready to be consumed.
 static void wait_resp(Resp *r)
@@ -121,7 +119,7 @@ static void wait_resp(Resp *r)
         return;
     }
 
-    const long timeout_ms = MAX_RETRIES * 100;
+    const long timeout_ms = RESPONSE_TIMEOUT_MS;
     struct timespec deadline;
 
     clock_gettime(CLOCK_REALTIME, &deadline);
@@ -301,7 +299,7 @@ int setup(void **storage_ctx)
     libstorageNimMain();
 
     Resp *r = alloc_resp();
-    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\"}";
+    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\",\"no-bootstrap-node\":true,\"nat\":\"extip:127.0.0.1\"}}";
     void *ctx = storage_new(cfg, (StorageCallback)callback, r);
 
     if (!ctx)

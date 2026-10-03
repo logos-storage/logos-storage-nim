@@ -22,7 +22,7 @@ import pkg/metrics except toJson
 import pkg/stew/base10
 import pkg/confutils
 
-import pkg/libp2p
+import pkg/libp2p except toJson
 import pkg/libp2p/routing_record
 import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/services/autorelayservice
