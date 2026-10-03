@@ -2,199 +2,187 @@
 	path = vendor/nimbus-build-system
 	url = https://github.com/status-im/nimbus-build-system.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-libp2p"]
 	path = vendor/nim-libp2p
 	url = https://github.com/vacp2p/nim-libp2p.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nimcrypto"]
 	path = vendor/nimcrypto
 	url = https://github.com/cheatfate/nimcrypto.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-chronicles"]
 	path = vendor/nim-chronicles
 	url = https://github.com/status-im/nim-chronicles.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-metrics"]
 	path = vendor/nim-metrics
 	url = https://github.com/status-im/nim-metrics.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-secp256k1"]
 	path = vendor/nim-secp256k1
 	url = https://github.com/status-im/nim-secp256k1.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-stew"]
 	path = vendor/nim-stew
 	url = https://github.com/status-im/nim-stew.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/questionable"]
 	path = vendor/questionable
 	url = https://github.com/status-im/questionable.git
 	ignore = untracked
-	branch = main
 [submodule "vendor/asynctest"]
 	path = vendor/asynctest
 	url = https://github.com/status-im/asynctest.git
 	ignore = untracked
-	branch = main
 [submodule "vendor/nim-presto"]
 	path = vendor/nim-presto
 	url = https://github.com/status-im/nim-presto.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-confutils"]
 	path = vendor/nim-confutils
 	url = https://github.com/status-im/nim-confutils.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-libbacktrace"]
 	path = vendor/nim-libbacktrace
 	url = https://github.com/status-im/nim-libbacktrace.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-chronos"]
 	path = vendor/nim-chronos
 	url = https://github.com/status-im/nim-chronos.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-faststreams"]
 	path = vendor/nim-faststreams
 	url = https://github.com/status-im/nim-faststreams.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-json-serialization"]
 	path = vendor/nim-json-serialization
 	url = https://github.com/status-im/nim-json-serialization.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-serialization"]
 	path = vendor/nim-serialization
 	url = https://github.com/status-im/nim-serialization.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-bearssl"]
 	path = vendor/nim-bearssl
 	url = https://github.com/status-im/nim-bearssl.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/combparser"]
 	path = vendor/combparser
 	url = https://github.com/PMunch/combparser.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/stint"]
 	path = vendor/stint
 	url = https://github.com/status-im/stint.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-http-utils"]
 	path = vendor/nim-http-utils
 	url = https://github.com/status-im/nim-http-utils.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-toml-serialization"]
 	path = vendor/nim-toml-serialization
 	url = https://github.com/status-im/nim-toml-serialization.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-unittest2"]
 	path = vendor/nim-unittest2
 	url = https://github.com/status-im/nim-unittest2.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/dnsclient.nim"]
 	path = vendor/dnsclient.nim
 	url = https://github.com/ba0f3/dnsclient.nim.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-websock"]
 	path = vendor/nim-websock
 	url = https://github.com/status-im/nim-websock.git
 	ignore = untracked
-	branch = main
 [submodule "vendor/nim-contract-abi"]
 	path = vendor/nim-contract-abi
 	url = https://github.com/status-im/nim-contract-abi
+	ignore = untracked
 [submodule "vendor/nim-zlib"]
 	path = vendor/nim-zlib
 	url = https://github.com/status-im/nim-zlib
+	ignore = untracked
 [submodule "vendor/lrucache.nim"]
 	path = vendor/lrucache.nim
 	url = https://github.com/status-im/lrucache.nim
+	ignore = untracked
 [submodule "vendor/nim-blscurve"]
 	path = vendor/nim-blscurve
 	url = https://github.com/status-im/nim-blscurve.git
 	ignore = untracked
-	branch = master
-[submodule "vendor/nim-taskpools.git"]
-	ignore = untracked
-	branch = master
 [submodule "vendor/nim-taskpools"]
 	path = vendor/nim-taskpools
 	url = https://github.com/status-im/nim-taskpools.git
 	ignore = untracked
-	branch = stable
 [submodule "vendor/nim-datastore"]
 	path = vendor/nim-datastore
 	url = https://github.com/status-im/nim-datastore.git
+	ignore = untracked
 [submodule "vendor/nim-sqlite3-abi"]
 	path = vendor/nim-sqlite3-abi
 	url = https://github.com/arnetheduck/nim-sqlite3-abi.git
+	ignore = untracked
 [submodule "vendor/nim-protobuf-serialization"]
 	path = vendor/nim-protobuf-serialization
 	url = https://github.com/status-im/nim-protobuf-serialization
+	ignore = untracked
 [submodule "vendor/nim-results"]
 	path = vendor/nim-results
 	url = https://github.com/arnetheduck/nim-results
+	ignore = untracked
 [submodule "vendor/nim-testutils"]
 	path = vendor/nim-testutils
 	url = https://github.com/status-im/nim-testutils
+	ignore = untracked
 [submodule "vendor/npeg"]
 	path = vendor/npeg
 	url = https://github.com/zevv/npeg
+	ignore = untracked
 [submodule "vendor/constantine"]
 	path = vendor/constantine
 	url = https://github.com/mratsim/constantine.git
+	ignore = untracked
 [submodule "vendor/nim-serde"]
 	path = vendor/nim-serde
 	url = https://github.com/logos-storage/nim-serde.git
+	ignore = untracked
 [submodule "vendor/nim-leveldbstatic"]
 	path = vendor/nim-leveldbstatic
 	url = https://github.com/logos-storage/nim-leveldb.git
+	ignore = untracked
 [submodule "vendor/nim-zippy"]
 	path = vendor/nim-zippy
 	url = https://github.com/status-im/nim-zippy.git
+	ignore = untracked
 [submodule "vendor/nph"]
 	path = vendor/nph
 	url = https://github.com/arnetheduck/nph.git
+	ignore = untracked
 [submodule "vendor/nim-merkletree"]
 	path = vendor/nim-merkletree
 	url = https://github.com/logos-storage/nim-merkletree
+	ignore = untracked
 [submodule "vendor/nim-boringssl"]
 	path = vendor/nim-boringssl
 	url = https://github.com/vacp2p/nim-boringssl.git
 	ignore = untracked
-	branch = master
 [submodule "vendor/nim-lsquic"]
 	path = vendor/nim-lsquic
 	url = https://github.com/vacp2p/nim-lsquic.git
 	ignore = untracked
-	branch = main
 [submodule "vendor/nim-libplum"]
 	path = vendor/nim-libplum
 	url = https://github.com/logos-storage/nim-libplum.git
+	ignore = untracked
 [submodule "vendor/nim-nat-traversal"]
 	path = vendor/nim-nat-traversal
 	url = https://github.com/status-im/nim-nat-traversal.git
+	ignore = untracked
 [submodule "vendor/nim-libp2p-mix"]
 	path = vendor/nim-libp2p-mix
 	url = https://github.com/logos-co/nim-libp2p-mix
+	ignore = untracked
 [submodule "vendor/libp2p-mix-transport"]
 	path = vendor/libp2p-mix-transport
 	url = https://github.com/logos-storage/libp2p-mix-transport
+	ignore = untracked
