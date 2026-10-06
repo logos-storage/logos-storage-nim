@@ -32,7 +32,6 @@ template withUploadedFile(body: untyped) =
   let conf = %*{
     "data-dir": dataDir / "repo",
     "nat": "extip:127.0.0.1",
-    "no-bootstrap-node": true,
     "mix-enabled": true,
   }
   let node {.inject.} = (await createStorage($conf)).tryGet()

@@ -33,7 +33,7 @@ WORKDIR /app
 # vendor/ already has the checked-out submodules, so no `make update` here.
 COPY vendor/ vendor/
 COPY storage/ storage/
-COPY build.nims config.nims storage.nim network_presets.json ./
+COPY build.nims config.nims storage.nim ./
 
 # libplum static lib, linked by nim-libplum.
 RUN --mount=type=cache,target=/root/.ccache \

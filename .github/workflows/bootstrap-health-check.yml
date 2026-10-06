@@ -1,6 +1,6 @@
 name: Bootstrap nodes health check
 
-# Scheduled liveness check for the preset bootstrap nodes. Runs on a
+# Scheduled liveness check for the fleet bootstrap nodes. Runs on a
 # GitHub-hosted runner (public internet) so nodes advertising private/cloud
 # internal IPs are correctly seen as unreachable. On any unreachable node it
 # fails the job and opens/updates a tracking issue labelled `bootstrap-health`.
@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   ping:
-    name: Ping preset bootstrap nodes
+    name: Ping fleet bootstrap nodes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

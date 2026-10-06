@@ -93,7 +93,6 @@ storage_ctx_destroy(ctx);
 | `storage_ctx_repo` | | the data directory |
 | `storage_ctx_spr` | | the Signed Peer Record URI |
 | `storage_ctx_peer_id` | | the libp2p peer identity |
-| `storage_ctx_network` | | the network preset name |
 | `storage_ctx_debug` | | node information as JSON |
 | `storage_ctx_peer_debug` | `peerId` | a peer record as JSON, with `storage_enable_api_debug_peers` |
 | `storage_ctx_get_metrics` | | the metrics registry as JSON |
