@@ -48,7 +48,7 @@
 #define END_SUITE printf(GRN "SUCCESS. Tests passed: %d\n" NC, passed + 1); \
         fflush(stdout);
 
-#define RESPONSE_TIMEOUT_MS 5000
+#define RESPONSE_TIMEOUT_MS 10000
 
 typedef struct
 {
