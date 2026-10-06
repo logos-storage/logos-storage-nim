@@ -37,6 +37,21 @@ asyncchecksuite "Libstorage - config":
     if res.isErr:
       check "unable to load configuration" in res.error
 
+  test "rejects a config without bootstrap node and with nat auto":
+    let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
+
+    defer:
+      removeDir(dataDir)
+
+    let config = $ %*{"data-dir": dataDir, "nat": "auto"}
+    let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
+    let res = await request.process(addr server)
+
+    check res.isErr
+
+    if res.isErr:
+      check "--nat=auto requires --bootstrap-node" in res.error
+
   test "accepts a valid config":
     let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
 
@@ -44,7 +59,7 @@ asyncchecksuite "Libstorage - config":
       removeDir(dataDir)
 
     # %* escapes the path so that it can be used in JSON.
-    let config = $ %*{"data-dir": dataDir}
+    let config = $ %*{"data-dir": dataDir, "nat": "extip:127.0.0.1"}
     let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
     let res = await request.process(addr server)
 
@@ -59,7 +74,7 @@ asyncchecksuite "Libstorage - config":
     defer:
       removeDir(dataDir)
 
-    let config = $ %*{"data-dir": dataDir}
+    let config = $ %*{"data-dir": dataDir, "nat": "extip:127.0.0.1"}
     let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
     check (await request.process(addr server)).isOk
 
@@ -74,7 +89,11 @@ asyncchecksuite "Libstorage - config":
     defer:
       removeDir(dataDir)
 
-    let config = $ %*{"data-dir": dataDir, "api-bindaddr": DefaultApiBindAddress}
+    let config = $ %*{
+      "data-dir": dataDir,
+      "api-bindaddr": DefaultApiBindAddress,
+      "nat": "extip:127.0.0.1",
+    }
     let request = NodeLifecycleRequest.createShared(CREATE_NODE, config.cstring)
     check (await request.process(addr server)).isOk
 

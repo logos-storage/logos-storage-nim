@@ -1,12 +1,12 @@
 ## check_spr - bootstrap-node liveness checker.
 ##
-## Reads the bootstrap SPRs from the shared config file (network_presets.json by
-## default) and probes each one: a libp2p connection, then a Kad DHT ping, so a
-## node that is reachable but not serving the DHT is reported dead.
+## Downloads the SPRs of the nodes of a network from fleets.logos.co and probes
+## each one: a libp2p connection, then a Kad DHT ping, so a node that is
+## reachable but not serving the DHT is reported dead.
 ## It prints a per-node report — a human-readable table (alive rows green, dead
 ## red on a terminal) by default, or JSON with `--format json` — and exits
-## non-zero if any node is unreachable. The `--network` filter may be repeated to
-## probe several presets. A single `spr:` URI can also be passed for ad-hoc
+## non-zero if any node is unreachable. The `--network` option may be repeated to
+## probe several networks. A single `spr:` URI can also be passed for ad-hoc
 ## checks.
 ##
 ## IMPORTANT: run this from a host OUTSIDE the fleet VPCs (e.g. a GitHub-hosted
@@ -14,29 +14,30 @@
 ## reachable and defeat the purpose.
 ##
 ## Usage:
-##   check_spr [--source <file>] [--network <name>]... [--timeout <secs>]
+##   check_spr [--network <name>]... [--timeout <secs>]
 ##            [--format table|json] [--out <file>]
 ##   check_spr <spr-uri> [--timeout <secs>]
 ##   check_spr --help
 ##
 ## Run `check_spr --help` for a full description of every option.
 
-import std/[json, os, sequtils, strutils, typetraits, strformat, terminal]
+import std/[json, os, sequtils, strutils, typetraits, strformat, terminal, uri]
 
 import pkg/chronicles
 import pkg/chronos
+import pkg/chronos/apps/http/httpclient
+import pkg/stew/byteutils
 import pkg/libp2p
 import pkg/libp2p/crypto/rng
 import pkg/libp2p/protocols/kademlia
 
 import pkg/results
 
-import ../storage/presets
 import ../storage/utils/spr
 
 const
   DefaultTimeoutSecs = 10
-  DefaultSource = "network_presets.json"
+  Networks = ["logos.test", "logos.dev"]
 
 type OutputFormat = enum
   ## String values double as the accepted `--format` argument spellings, so the
@@ -114,20 +115,35 @@ proc probe(record: SignedPeerRecord, timeout: Duration): Future[Verdict] {.async
     return
       Verdict(alive: false, reason: "connected, but kad dht ping failed: " & exc.msg)
 
+proc fleetSprRecords(network: string): Future[seq[string]] {.async.} =
+  ## The SPRs of the nodes that fleets.logos.co lists for `network`.
+  let
+    url =
+      "https://fleets.logos.co/" & network.replace('.', '-') & "/storage-network.json"
+    session = HttpSessionRef.new()
+  defer:
+    await session.closeWait()
+
+  let response = await session.fetch(parseUri(url))
+  if response.status != 200:
+    raise newException(IOError, "cannot get " & url & ": HTTP " & $response.status)
+
+  for node in parseJson(string.fromBytes(response.data)):
+    result.add node["spr"].getStr
+
+  if result.len == 0:
+    raise newException(IOError, "no node listed in " & url)
+
 proc probeRecords(
-    source: string, networkFilters: seq[string], timeout: Duration
+    networks: seq[string], timeout: Duration
 ): Future[seq[Row]] {.async.} =
-  let presets = loadNetworkPresets(source)
-  for preset in presets:
-    # An empty filter list means "probe everything"; otherwise keep only presets
-    # whose name was named on the command line (--network may be repeated).
-    if networkFilters.len > 0 and preset.name notin networkFilters:
-      continue
-    for rec in preset.rawRecords:
+  for network in networks:
+    let records = await fleetSprRecords(network)
+    for rec in records:
       let parsed = SignedPeerRecord.parse(rec)
       if parsed.isErr:
         result.add Row(
-          network: preset.name,
+          network: network,
           alive: false,
           reason: "signed peer record parse failed: " & parsed.error.msg,
         )
@@ -138,7 +154,7 @@ proc probeRecords(
         (peerId, addresses) = record.toPeerIdAndAddrs()
         v = await probe(record, timeout)
       result.add Row(
-        network: preset.name,
+        network: network,
         peerId: $peerId,
         address: addresses.mapIt($it).deduplicate.join(", "),
         alive: v.alive,
@@ -222,10 +238,10 @@ proc parseFormat(s: string): OutputFormat =
 proc printHelp() =
   echo """check_spr - bootstrap-node liveness checker.
 
-Reads bootstrap SPRs from a config file and probes each one with a libp2p
-connection attempt. Prints a per-node report (a table by default, JSON with
---format json) and exits non-zero if any node is unreachable. A single spr: URI
-can be passed for an ad-hoc check.
+Downloads the SPRs of the nodes of a network from fleets.logos.co and probes
+each one with a libp2p connection attempt. Prints a per-node report (a table by
+default, JSON with --format json) and exits non-zero if any node is unreachable.
+A single spr: URI can be passed for an ad-hoc check.
 
 IMPORTANT: run from a host OUTSIDE the fleet VPCs (e.g. a GitHub-hosted runner),
 otherwise nodes advertising private/cloud-internal IPs appear reachable and
@@ -236,12 +252,9 @@ Usage:
   check_spr <spr-uri> [--timeout <secs>]
 
 Options:
-  --source <file>    Config file to read SPRs from (default: """ &
-    DefaultSource & """).
-  --network <name>   Restrict probing to the named preset. Repeat the flag to
-                     probe several, e.g.
+  --network <name>   Network to probe. Repeat the flag to probe several, e.g.
                      --network logos.test --network logos.dev
-                     Omit entirely to probe every preset in the config.
+                     Omit entirely to probe every network.
   --timeout <secs>   Per-node probe timeout in seconds (default: """ &
     $DefaultTimeoutSecs & """).
   --format <fmt>     Output format: "table" (default) or "json". "table" is the
@@ -253,16 +266,15 @@ Options:
   --help, -h         Show this help and exit.
 
 Arguments:
-  <spr-uri>          A single "spr:" URI to probe instead of reading the config
-                     file. Prints ALIVE/DEAD and exits with the matching status;
-                     this mode ignores --format and --out."""
+  <spr-uri>          A single "spr:" URI to probe instead of a network. Prints
+                     ALIVE/DEAD and exits with the matching status; this mode
+                     ignores --format and --out."""
 
 when isMainModule:
   setupLogging()
 
   var
-    source = DefaultSource
-    networkFilters: seq[string] = @[]
+    networks: seq[string] = @[]
     timeoutSecs = DefaultTimeoutSecs
     singleSpr = ""
     format = ofTable
@@ -276,10 +288,8 @@ when isMainModule:
     of "--help", "-h":
       printHelp()
       quit(QuitSuccess)
-    of "--source":
-      source = nextValue(params, i, "--source")
     of "--network":
-      networkFilters.add nextValue(params, i, "--network")
+      networks.add nextValue(params, i, "--network")
     of "--timeout":
       timeoutSecs = parseTimeout(nextValue(params, i, "--timeout"))
     of "--format":
@@ -316,7 +326,10 @@ when isMainModule:
   if decodeOnly:
     quit("Error: --decodeOnly is only valid with a single SPR.", QuitFailure)
 
-  let rows = waitFor probeRecords(source, networkFilters, timeout)
+  if networks.len == 0:
+    networks = @Networks
+
+  let rows = waitFor probeRecords(networks, timeout)
 
   if outFile.len > 0:
     # Files (and the JSON form) must stay plain — ANSI color codes would corrupt

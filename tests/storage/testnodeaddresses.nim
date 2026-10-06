@@ -27,12 +27,8 @@ suite "StorageServer - extip":
     let
       port = await nextFreePort(40500)
       config = StorageConf.load(
-        cmdLine = @[
-          "--data-dir=" & dataDir,
-          "--nat=extip:7.7.7.2",
-          "--listen-port=" & $port,
-          "--no-bootstrap-node",
-        ],
+        cmdLine =
+          @["--data-dir=" & dataDir, "--nat=extip:7.7.7.2", "--listen-port=" & $port],
         quitOnFailure = false,
       )
       server = StorageServer.new(config, PrivateKey.example)

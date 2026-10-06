@@ -187,19 +187,6 @@ proc storage_peer_id(
 
   return callback.okOrError(res, userData)
 
-proc storage_network(
-    ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
-): cint {.dynlib, exportc.} =
-  initializeLibrary()
-  checkLibstorageParams(ctx, callback, userData)
-
-  let reqContent = NodeInfoRequest.createShared(NodeInfoMsgType.NETWORK)
-  let res = storage_context.sendRequestToStorageThread(
-    ctx, RequestType.INFO, reqContent, callback, userData
-  )
-
-  return callback.okOrError(res, userData)
-
 proc storage_get_metrics(
     ctx: ptr StorageContext, callback: StorageCallback, userData: pointer
 ): cint {.dynlib, exportc.} =

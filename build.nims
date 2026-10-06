@@ -86,7 +86,7 @@ task checkSpr, "build check_spr used for checking bootstrap node health":
     srcDir = "tools/",
     params = "-d:release -d:chronicles_runtime_filtering -d:chronicles_log_level=WARN"
 
-task bootstrapHealthCheck, "ping preset bootstrap nodes; non-zero exit if any are unreachable":
+task bootstrapHealthCheck, "ping fleet bootstrap nodes; non-zero exit if any are unreachable":
   checkSprTask()
 
   # get CI param from make if present
@@ -96,7 +96,7 @@ task bootstrapHealthCheck, "ping preset bootstrap nodes; non-zero exit if any ar
       # Writes the JSON summary to a file before exiting, so the scheduled workflow
       args = "--network logos.dev --network logos.test --format json --out build/bootstrap-health-report.json"
       break
-  
+
   # can read it. check_spr exits non-zero when a node is unreachable, failing
   # the workflow run.
   exec "build/check_spr " & args

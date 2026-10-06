@@ -46,7 +46,6 @@ add_bootstrap_options() {
   local bootstrap_addr="$1" spr=""
   if [[ -z "$bootstrap_addr" ]]; then
     _echoerr "Node is a primary bootstrap node."
-    _config_opts+=(--no-bootstrap-node)
     return 0
   fi
 
