@@ -79,8 +79,6 @@ export CXXFLAGS
 	testLibstorage \
 	buildNatImage \
 	testNatIntegration \
-	updatePresetFile \
-	presets \
 	update
 
 ifeq ($(NIM_PARAMS),)
@@ -163,7 +161,7 @@ checkSpr: | build deps
 	echo -e $(BUILD_MSG) "build/check_spr" && \
 		$(ENV_SCRIPT) nim checkSpr $(NIM_PARAMS) build.nims
 
-# Pings the preset bootstrap nodes and fails if any are unreachable.
+# Pings the fleet bootstrap nodes and fails if any are unreachable.
 # Run from OUTSIDE the fleet VPCs (e.g. a GitHub-hosted runner) so nodes that
 # advertise private/cloud-internal IPs are correctly seen as unreachable.
 bootstrapHealthCheck: | build deps
@@ -289,11 +287,3 @@ else
 		$(ENV_SCRIPT) nim libstorageDynamic $(NIM_PARAMS) storage.nims
 endif
 endif # "variables.mk" was not includedMa
-################
-## Presets    ##
-################
-
-updatePresetFile:
-	bash ./tools/scripts/storage-config.sh presets > network_presets.json
-
-presets: updatePresetFile bootstrapHealthCheck

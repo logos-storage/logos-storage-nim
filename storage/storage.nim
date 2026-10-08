@@ -403,24 +403,9 @@ proc new*(
     .withSignedPeerRecord(true)
     .withCircuitRelay(relay)
 
-  let bootstrapNodes =
-    if config.noBootstrapNode:
-      # Sanity checks that the user isn't doing anything funny.
-      if config.bootstrapNodes.len > 0:
-        error "Cannot specify bootstrap nodes when using no-bootstrap flag"
-        raise newException(
-          ValueError, "Cannot specify bootstrap nodes when using no-bootstrap flag"
-        )
-
-      warn "Node has been marked with --no-bootstrap-node and will NOT be bootstrapped"
-      seq[SignedPeerRecord](@[])
-    elif config.bootstrapNodes.len > 0:
-      warn "Overriding network preset using custom bootstrap nodes",
-        nodes = config.bootstrapNodes
-      config.bootstrapNodes
-    else:
-      info "Bootstrapping node using a predefined network", network = $config.network
-      config.network.bootstrapNodes
+  let bootstrapNodes = config.bootstrapNodes
+  if bootstrapNodes.len == 0:
+    warn "Node has no bootstrap node and will NOT be bootstrapped"
 
   var autonatConfig = none(AutonatV2ServiceConfig)
   if config.autonatServer:

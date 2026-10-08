@@ -61,13 +61,6 @@ proc readValue*(r: var JsonReader, val: var Duration) =
     raise newException(SerializationError, "Cannot parse the duration: " & input)
   val = dur
 
-proc readValue(r: var JsonReader, val: var NetworkPreset) =
-  let name = r.readValue(string)
-  let res = NetworkPresets.find(name)
-  if res.isNone:
-    raise newException(SerializationError, "Invalid network preset: " & name)
-  val = res.get()
-
 type NodeLifecycleRequest* = object
   operation: NodeLifecycleMsgType
   configJson: cstring

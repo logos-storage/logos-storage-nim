@@ -44,15 +44,12 @@ import ./stores
 import ./units
 import ./utils
 import ./nat
-import ./presets
 import ./utils/natutils
 
 from ./blockexchange/engine/downloadmanager import DefaultBlockRetries
 from ./dht_proxy/protocol import DefaultMaxInFlightLookups
 
-export
-  units, net, storagetypes, defs, logutils, presets, completeCmdArg, parseCmdArg,
-  NatConfig
+export units, net, storagetypes, defs, logutils, completeCmdArg, parseCmdArg, NatConfig
 
 export
   DefaultQuotaBytes, DefaultBlockTtl, DefaultBlockInterval, DefaultNumBlocksPerInterval,
@@ -179,25 +176,10 @@ type
     bootstrapNodes* {.
       desc:
         "Specifies one or more bootstrap nodes to use when " &
-        "connecting to the network. When specified, overrides " &
-        "the network preset option.",
+        "connecting to the network.",
       abbr: "b",
       name: "bootstrap-node"
     .}: seq[SignedPeerRecord]
-
-    noBootstrapNode* {.
-      desc:
-        "Pass this switch to not bootstrap the node at all. This " &
-        "is typically only useful if you are creating a new Logos Storage " & "network.",
-      name: "no-bootstrap-node",
-      defaultValue: false
-    .}: bool
-
-    network* {.
-      desc: "The network to connect to. Options are: \n" & NetworkPresetsDescription,
-      name: "network",
-      defaultValue: DefaultNetworkPreset
-    .}: NetworkPreset
 
     dhtMixProxies* {.
       desc: "Peers used as dht-proxy destinations when Mix is enabled",
@@ -443,11 +425,8 @@ func validateAutonatConfig*(config: StorageConf): ?!void =
   if config.isRelayServer and not config.nat.hasExtIp:
     return failure "--relay-server requires --nat=extip:<IP>"
 
-  if config.noBootstrapNode and not config.nat.hasExtIp:
-    return failure(
-      "--no-bootstrap-node requires --nat=extip:<IP>: without bootstrap peers " &
-        "AutoNAT has no one to probe and the node can never become reachable"
-    )
+  if config.bootstrapNodes.len == 0 and not config.nat.hasExtIp:
+    return failure "--nat=auto requires --bootstrap-node"
 
   if config.natMaxQueueSize < 1:
     return failure "--nat-max-queue-size must be at least 1"
@@ -590,14 +569,6 @@ proc parseCmdArg*(T: type Duration, val: string): T {.raises: [ConfigurationErro
     raise newException(ConfigurationError, "Invalid duration: " & val)
   dur
 
-proc parseCmdArg*(
-    T: type NetworkPreset, p: string
-): NetworkPreset {.raises: [ConfigurationError].} =
-  let res = NetworkPresets.find(p)
-  if res.isNone:
-    raise newException(ConfigurationError, "Invalid network preset: " & p)
-  return res.get()
-
 proc readValue*(
     r: var TomlReader, val: var SignedPeerRecord
 ) {.raises: [SerializationError, IOError].} =
@@ -666,17 +637,6 @@ proc readValue*(
   except CatchableError as err:
     r.lex.raiseTomlErr(err.msg)
 
-proc readValue*(
-    r: var TomlReader, val: var NetworkPreset
-) {.raises: [SerializationError, IOError].} =
-  let
-    str = r.readValue(string)
-    preset = NetworkPresets.find(str)
-  if preset.isNone:
-    r.lex.raiseTomlErr("Invalid network preset: " & str)
-
-  val = preset.get()
-
 # no idea why confutils needs this:
 proc completeCmdArg*(T: type NBytes, val: string): seq[string] =
   discard
@@ -686,9 +646,6 @@ proc completeCmdArg*(T: type Duration, val: string): seq[string] =
 
 proc completeCmdArg*(T: type ThreadCount, val: string): seq[string] =
   discard
-
-proc completeCmdArg*(T: type NetworkPreset, val: string): seq[string] =
-  NetworkPresets.findByPrefix(val)
 
 # silly chronicles, colors is a compile-time property
 proc stripAnsi*(v: string): string =

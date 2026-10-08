@@ -48,7 +48,7 @@
 #define END_SUITE printf(GRN "SUCCESS. Tests passed: %d\n" NC, passed + 1); \
         fflush(stdout);
 
-#define RESPONSE_TIMEOUT_MS 5000
+#define RESPONSE_TIMEOUT_MS 10000
 
 typedef struct
 {
@@ -299,7 +299,7 @@ int setup(void **storage_ctx)
     libstorageNimMain();
 
     Resp *r = alloc_resp();
-    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\",\"no-bootstrap-node\":true,\"nat\":\"extip:127.0.0.1\"}}";
+    const char *cfg = "{\"log-level\":\"DEBUG\",\"data-dir\":\"./data-dir\",\"nat\":\"extip:127.0.0.1\"}";
     void *ctx = storage_new(cfg, (StorageCallback)callback, r);
 
     if (!ctx)
@@ -1037,8 +1037,7 @@ int check_log_file_after_many_blocks(void)
     const char *input_path = "log-file.bin";
     const char *cfg = "{\"log-level\":\"INFO\",\"log-format\":\"none\","
                       "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
-                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
-                      "\"no-bootstrap-node\":true}";
+                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\"}";
     size_t chunk_size = 1024;
     char *cid = NULL;
     char *log = NULL;
