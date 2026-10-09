@@ -31,11 +31,10 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
         with:
-          submodules: recursive
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nim and Nimble
+        uses: ./.github/actions/setup-nim
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}

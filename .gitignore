@@ -19,11 +19,6 @@ build/
 # Coverage data shall be put in an ignored coverage/ directory
 coverage/
 
-# Nimble packages
-/vendor/.nimble
-/vendor/packages/
-# /vendor/*/
-
 # Nimble user files
 nimble.develop
 nimble.paths
@@ -38,9 +33,7 @@ nimble.paths
 # local settings overrides (e.g. WEB3_URL)
 .env
 
-.update.timestamp
 storage.nims
-nimbus-build-system.paths
 docker/hostdatadir
 docker/prometheus-data
 .DS_Store
@@ -58,3 +51,6 @@ tests/cbindings/log-file.bin
 nimbledeps
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Isolated CI/developer compiler and Nimble binaries
+.toolchain/

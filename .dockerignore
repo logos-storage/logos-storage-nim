@@ -3,3 +3,6 @@ build
 docs
 metrics
 nimcache
+nimbledeps
+.toolchain
+.git/modules

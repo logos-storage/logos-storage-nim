@@ -26,7 +26,7 @@ concurrency:
 
 env:
   cache_nonce: 0 # Allows for easily busting actions/cache caches
-  nim_version: pinned
+  nim_version: v2.2.12
   storage_binary_base: logos-storage
   c_bindings_lib_base: libstorage
   build_dir: build
@@ -78,11 +78,9 @@ jobs:
           fi
       - name: Checkout sources
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nim and Nimble
+        uses: ./.github/actions/setup-nim
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}
@@ -219,12 +217,9 @@ jobs:
           if [[ "${{ matrix.os }}" == "linux" ]]; then
             sudo apt-get update && sudo apt-get install -y zip
           fi
+          # Nimble dependencies compile their native sources into libstorage.a.
           zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}-static.zip" \
             "${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.a" \
-            "vendor/nim-nat-traversal/vendor/libnatpmp-upstream/libnatpmp.a" \
-            "vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc/build/libminiupnpc.a" \
-            "vendor/nim-libbacktrace/install/usr/lib/libbacktrace.a" \
-            "vendor/nim-libplum/vendor/libplum/libplum.a" \
             "library/${{ env.c_bindings_lib_base }}.h"
 
       - name: Upload ${{ env.c_bindings_lib_base }} static to workflow artifacts

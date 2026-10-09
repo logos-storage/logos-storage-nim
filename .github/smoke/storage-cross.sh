@@ -19,8 +19,8 @@ test -f "$LIBDIR/bin/libstorage.dll"   || { echo "::error::libstorage.dll missin
 test -f "$LIBDIR/lib/libstorage.dll.a" || { echo "::error::import library missing -- consumers cannot link the DLL"; exit 1; }
 test -f "$LIBDIR/include/libstorage.h" || { echo "::error::public header missing"; exit 1; }
 
-# A missing DLL fails to load on Windows.
-for dep in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libmcfgthread-2.dll; do
+# A missing DLL fails to load on Windows. The Nix C++ driver embeds libstdc++.
+for dep in libgcc_s_seh-1.dll libwinpthread-1.dll libmcfgthread-2.dll; do
   test -f "$LIBDIR/bin/$dep" || { echo "::error::$dep not staged beside libstorage.dll"; exit 1; }
 done
 

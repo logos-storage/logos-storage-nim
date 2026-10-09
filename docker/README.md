@@ -3,6 +3,18 @@
  Logos Storage provides pre-built docker images and they are stored in the [logosstorage/logos-storage-nim](https://hub.docker.com/repository/docker/logosstorage/logos-storage-nim) repository.
 
 
+## Build
+
+From the repository root:
+
+```sh
+docker build -f docker/storage.Dockerfile -t logos-storage .
+```
+
+The build installs the pinned Nim/Nimble toolchain and resolves `storage.nimble` into `/opt/nimbledeps` inside the builder. It needs neither a recursive checkout nor a lockfile. Use `--build-arg MAKE_PARALLEL=4` to control compiler parallelism and `--build-arg NIMFLAGS="-d:disableMarchNative"` for additional flags.
+
+The NAT test image uses the same toolchain setup: `make buildNatImage`.
+
 ## Run
 
  We can run Logos Storage Docker image using CLI

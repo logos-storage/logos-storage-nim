@@ -1,15 +1,5 @@
-include "build.nims"
-
 import std/os
 const currentDir = currentSourcePath()[0 .. ^(len("config.nims") + 1)]
-
-when getEnv("NIMBUS_BUILD_SYSTEM") == "yes" and
-    # BEWARE
-    # In Nim 1.6, config files are evaluated with a working directory
-    # matching where the Nim command was invocated. This means that we
-    # must do all file existence checks with full absolute paths:
-    system.fileExists(currentDir & "nimbus-build-system.paths"):
-  include "nimbus-build-system.paths"
 
 when defined(release):
   switch(
@@ -92,14 +82,13 @@ else:
   on
 --warningAsError:
   "ProveField:on"
---define:
-  "libp2p_multicodec_exts:../../../storage/multicodec_exts.nim"
---define:
-  "libp2p_multihash_exts:../../../storage/multihash_exts.nim"
---define:
-  "libp2p_contentids_exts:../../../storage/contentids_exts.nim"
---define:
-  "libp2p_multiaddress_exts:../../../storage/multiaddress_exts.nim"
+# Extension files belong to this project, regardless of where Nimble installs libp2p.
+# Use compiler path separators, including when targeting Windows from Linux.
+for extension in ["multicodec", "multihash", "contentids", "multiaddress"]:
+  switch(
+    "define",
+    "libp2p_" & extension & "_exts:" & currentDir & "/storage/" & extension & "_exts.nim",
+  )
 
 when (NimMajor, NimMinor) >= (1, 4):
   --warning:
@@ -117,10 +106,6 @@ when (NimMajor, NimMinor, NimPatch) >= (1, 6, 11):
 when (NimMajor, NimMinor) >= (2, 0):
   --mm:
     refc
-
-# Nim 2.2.12 rejects the merkletree compress closure.
-when (NimMajor, NimMinor, NimPatch) >= (2, 2, 12):
-  switch("legacy", "procParamTypeBackendAliases")
 
 switch("define", "withoutPCRE")
 

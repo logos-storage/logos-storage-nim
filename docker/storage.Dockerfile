@@ -2,11 +2,11 @@
 ARG BUILDER=ubuntu:24.04
 ARG IMAGE=${BUILDER}
 ARG BUILD_HOME=/src
-ARG MAKE_PARALLEL=${MAKE_PARALLEL:-4}
-ARG NIMFLAGS="${NIMFLAGS:-"-d:disableMarchNative"}"
-ARG USE_LIBBACKTRACE=${USE_LIBBACKTRACE:-1}
+ARG MAKE_PARALLEL=4
+ARG NIMFLAGS="-d:disableMarchNative"
+ARG USE_LIBBACKTRACE=1
 ARG APP_HOME=/logosstorage
-ARG NAT_IP_AUTO=${NAT_IP_AUTO:-false}
+ARG NAT_IP_AUTO=false
 
 # Build
 FROM ${BUILDER} AS builder
@@ -15,15 +15,20 @@ ARG MAKE_PARALLEL
 ARG NIMFLAGS
 ARG USE_LIBBACKTRACE
 
-RUN apt-get update && apt-get install -y git cmake curl make bash lcov build-essential
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake curl make bash build-essential ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-c"]
-ENV BASH_ENV="/etc/bash_env"
+COPY tools/scripts/setup-nim.sh tools/scripts/toolchain-versions.sh /opt/bootstrap/
+RUN /opt/bootstrap/setup-nim.sh /opt/toolchain
+ENV PATH="/opt/toolchain/bin:${PATH}"
+ENV NIMBLE_DIR=/opt/nimbledeps
+ENV NIMBLE_FLAGS=--useSystemNim
 
 WORKDIR ${BUILD_HOME}
 COPY . .
-RUN make -j ${MAKE_PARALLEL} update
-RUN make -j ${MAKE_PARALLEL}
+RUN make NIMFLAGS="${NIMFLAGS} --parallelBuild:${MAKE_PARALLEL}" USE_LIBBACKTRACE="${USE_LIBBACKTRACE}"
 
 # Create
 FROM ${IMAGE}

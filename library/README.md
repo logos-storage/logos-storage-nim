@@ -36,6 +36,17 @@ sequenceDiagram
     Go-->>App: done
 ```
 
+## Building
+
+From the repository root, use the isolated Nimble package directory:
+
+```sh
+nimble --nimbleDir:./nimbledeps libstorageDynamic -d:release
+nimble --nimbleDir:./nimbledeps libstorageStatic -d:release
+```
+
+The equivalent Make targets are `make libstorage` and `make STATIC=1 libstorage`. Outputs are placed in `build/`; the public C header is `library/libstorage.h`. See the [main README](../README.md#build-and-run) for prerequisites and dependency updates.
+
 ## C API
 
 C-exported interface for the Logos Storage shared library.

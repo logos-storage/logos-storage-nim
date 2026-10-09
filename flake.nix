@@ -36,28 +36,7 @@
               # to be compatible with logos-storage-module.
               libc = "ucrt";
             };
-            overlays = [
-              # nixpkgs 26.05 ships Nim 2.2.4, the project pins 2.2.10.
-              # We prefer override the Nim version and keep the release branch
-              # for nixpkgs-windows.url rather than pinning to a specific commit on
-              # unstable branch and have the Nim version up to date.
-              (final: prev: {
-                nim-unwrapped-2_2 = prev.nim-unwrapped-2_2.overrideAttrs (old: rec {
-                  version = "2.2.10";
-                  src = prev.fetchurl {
-                    url = "https://nim-lang.org/download/nim-${version}.tar.xz";
-                    hash = "sha256-eVe37QBCBrzxC8xPO0dEFTh45i8kMVUqmo6dP0Do1dU=";
-                  };
-                  # Rewrite patch for 2.2.10.
-                  patches = builtins.filter
-                    (p: baseNameOf (toString p) != "extra-mangling-2.patch") old.patches;
-                  # This flag turns on code that 2.2.10 no longer compiles.
-                  # nixpkgs dropped it in the same commit that moved to 2.2.10.
-                  kochArgs = builtins.filter
-                    (f: f != "-d:nativeStacktrace") old.kochArgs;
-                });
-              })
-            ];
+
           };
     in rec {
       packages = forAllSystems (system: let
@@ -76,8 +55,7 @@
         inherit config lib pkgs self;
       };
 
-      # Native only: a mingw-hosted dev shell would have to run on Windows, and
-      # the nixosTest driver needs a Linux VM.
+      # A mingw-hosted dev shell would have to run on Windows.
       devShells = forNativeSystems (system: let
         pkgs = pkgsFor system;
       in {
@@ -86,15 +64,20 @@
             packages.${system}.logos-storage-nim
             packages.${system}.libstorage
           ];
-          # Not using buildInputs to override fakeGit and fakeCargo.
+          # Use real tools in interactive shells instead of the build-time version shim.
           nativeBuildInputs = with pkgs; [ git cargo nodejs_20 ];
+          shellHook = ''
+            export NIMBLE_DIR="$PWD/nimbledeps"
+            export NIMBLE_FLAGS="--useSystemNim"
+          '';
         };
       });
 
-      checks = forNativeSystems (system: let
+      # The NixOS test driver requires a Linux host.
+      checks = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: let
         pkgs = pkgsFor system;
       in {
-        logos-storage-nim-test = pkgs.nixosTest {
+        logos-storage-nim-test = pkgs.testers.nixosTest {
           name = "logos-storage-nim-test";
           nodes = {
             server = { config, pkgs, ... }: {
@@ -108,10 +91,10 @@
           };
           testScript = ''
             print("Starting test: logos-storage-nim-test")
-            machine.start()
-            machine.wait_for_unit("logos-storage-nim.service")
-            machine.succeed("test -d /var/lib/logos-storage-nim-test")
-            machine.wait_until_succeeds("journalctl -u logos-storage-nim.service | grep 'Started Storage node'", 10)
+            server.start()
+            server.wait_for_unit("logos-storage-nim.service")
+            server.succeed("test -d /var/lib/logos-storage-nim-test")
+            server.wait_until_succeeds("journalctl -u logos-storage-nim.service | grep 'Started Storage node'", 10)
           '';
         };
       });

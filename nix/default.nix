@@ -10,21 +10,20 @@
     "x86_64-linux" "aarch64-linux"
     "x86_64-darwin" "aarch64-darwin"
   ],
-  # Perform 2-stage bootstrap instead of 3-stage to save time.
-  quickAndDirty ? true,
 }:
 
-assert pkgs.lib.assertMsg ((src.submodules or true) == true)
-  "Unable to build without submodules. Append '?submodules=1#' to the URI.";
-
 let
-  inherit (pkgs) lib writeScriptBin callPackage;
+  inherit (pkgs) lib callPackage;
 
+  source = src;
   revision = lib.substring 0 8 (src.rev or "dirty");
   hostPlatform = pkgs.stdenv.hostPlatform;
   isWindows = hostPlatform.isWindows;
+  compiler = if hostPlatform.isDarwin then "clang" else "gcc";
 
   tools = callPackage ./tools.nix {};
+  toolchain = import ./toolchain.nix { inherit pkgs; };
+  dependencies = import ./dependencies.nix { inherit pkgs; };
 
   # Determine the compiler.
   # pkgs.stdenv is the mingw compiler for windows.
@@ -36,13 +35,12 @@ let
   # -lws2_32: Windows sockets, used by boringssl, libplum and miniupnpc.
   # -lbcrypt: Windows CNG, the random source for boringssl, libplum and Nim.
   # -liphlpapi: IP Helper API used by miniupnpc and libplum.
-  # -lstdc++: nim links LevelDB's C++ objects through gcc, not g++.
   # -lwinpthread: pthread_time.h inlines clock_gettime into a clock_gettime64 call.
   # --out-implib because nim emits only the .dll, and CMake's find_library
   # ignores a bare .dll.
   windowsNimFlags = [
     "--passL:-lws2_32" "--passL:-lbcrypt" "--passL:-liphlpapi"
-    "--passL:-lwinpthread" "--passL:-lstdc++"
+    "--passL:-lwinpthread"
     "--passL:-Wl,--out-implib,build/libstorage.dll.a"
   ];
 
@@ -59,7 +57,11 @@ in stdenv.mkDerivation rec {
 
   version = "${tools.findKeyValue "version = \"([0-9]+\.[0-9]+\.[0-9]+)\"" ../storage.nimble}-${revision}";
 
-  inherit src;
+  src = lib.cleanSourceWith {
+    src = source;
+    filter = path: type:
+      !(builtins.elem (baseNameOf path) [ "nimbledeps" "nimcache" "build" ".toolchain" "nimble.paths" "nimble.lock" ]);
+  };
 
   # Dependencies that should exist in the runtime environment.
   buildInputs = with pkgs; [
@@ -72,83 +74,47 @@ in stdenv.mkDerivation rec {
 
   # Dependencies that should only exist in the build environment.
   nativeBuildInputs = let
-    # Fix for Nim compiler calling 'git rev-parse' and 'lsb_release'.
-    fakeGit = writeScriptBin "git" "echo ${version}";
+    # Version banners are evaluated at compile time in the network-free sandbox.
+    fakeGit = pkgs.buildPackages.writeShellScriptBin "git" "echo ${version}";
   in with pkgs.buildPackages; [
-    cmake
-    which
-    fakeGit
-  ] ++ lib.optionals hostPlatform.isLinux [
-    lsb-release
-  ] ++ lib.optionals hostPlatform.isDarwin [
-    darwin.cctools
-  ] ++ lib.optionals isWindows [
-    # Paired with USE_SYSTEM_NIM=1 below: nimbus-build-system would
-    # otherwise build the Nim compiler itself as a Windows binary.
-    nim-2_2
-    gnumake
-    # Only nim-boringssl's Windows branch has hand-written asm
-    # https://github.com/vacp2p/nim-boringssl/blob/c9505c71ecc67fd232d6ab23e5ae5810957e514f/prelude.nim#L321-L324
-    nasm
-  ];
+    toolchain.nim toolchain.nimble cmake which fakeGit
+  ] ++ lib.optionals hostPlatform.isLinux [ lsb-release ]
+    ++ lib.optionals hostPlatform.isDarwin [ darwin.cctools ]
+    ++ lib.optionals isWindows [ nasm ];
 
   # Disable CPU optimizations that make binary not portable.
   NIMFLAGS = lib.concatStringsSep " " (
     [ "-d:disableMarchNative" "-d:git_revision_override=${revision}" ]
-    ++ lib.optionals isWindows windowsNimFlags
+    ++ lib.optionals isWindows ([ "--os:windows" "--cpu:amd64" ] ++ windowsNimFlags)
   );
 
-  makeFlags = targets ++ [
-    "V=${toString verbosity}"
-    "QUICK_AND_DIRTY_COMPILER=${if quickAndDirty then "1" else "0"}"
-    "QUICK_AND_DIRTY_NIMBLE=${if quickAndDirty then "1" else "0"}"
-  ] ++ lib.optionals isWindows [
-    "USE_SYSTEM_NIM=1"
-  ];
-
-  postPatch = lib.optionalString isWindows ''
-    chmod -R +w .
-
-    # Skip the LevelDB setup
-    mkdir -p vendor/nim-leveldbstatic/build
-    touch vendor/nim-leveldbstatic/build/Makefile
-  '';
+  makeFlags = targets ++ [ "V=${toString verbosity}" ];
 
   configurePhase = ''
-    # Avoid Nim cache permission errors.
-    export XDG_CACHE_HOME=$TMPDIR
-    # Force build of Nimble from dist/nimble source.
-    export NIMBLE_COMMIT=""
-    patchShebangs . vendor/nimbus-build-system > /dev/null
-    # nixpkgs only passes makeFlags to its own make so USE_SYSTEM_NIM=1 is passed here.
-    make nimbus-build-system-paths ${lib.optionalString isWindows "USE_SYSTEM_NIM=1"}
-  '';
+    runHook preConfigure
+    export XDG_CACHE_HOME=$TMPDIR/cache
+    export NIMBLE_DIR=$PWD/nimbledeps
+    export NIMBLE_FLAGS="--offline --useSystemNim ${if verbosity > 1 then "--debug" else if verbosity > 0 then "--verbose" else ""}"
+    ${dependencies.prepare}
+    cp ${dependencies.lock} nimble.lock
+    patchShebangs . > /dev/null
 
-  preBuild = lib.optionalString (!isWindows) ''
-    pushd vendor/nimbus-build-system/vendor/Nim
-    mkdir dist
-    cp -r ${callPackage ./nimble.nix {}}    dist/nimble
-    cp -r ${callPackage ./checksums.nix {}} dist/checksums
-    cp -r ${callPackage ./csources.nix {}}  csources_v3
-    chmod 777 -R dist/nimble csources_v3
-    popd
-  '' + lib.optionalString isWindows ''
-    # For --app:staticlib nim runs a hardcoded `ar` (extccomp.nim:86), with no
-    # config key to override it, and a cross stdenv only has $AR.
+    # LevelDB compiles its C++ sources through Nim. Its CMake invocation only
+    # configures a build tree, which is unused and selects a native generator
+    # even when cross compiling. Skip that configuration step on Windows.
+    ${lib.optionalString isWindows ''
+      for leveldb in "$NIMBLE_DIR"/pkgs2/leveldbstatic-*; do
+        mkdir -p "$leveldb/build"
+        touch "$leveldb/build/Makefile"
+      done
+    ''}
+    # LevelDB and libbacktrace contain C++ objects, so link with the C++ driver.
+    export NIMFLAGS="$NIMFLAGS --parallelBuild:$NIX_BUILD_CORES --cc:${compiler} --${compiler}.exe:$CC --${compiler}.linkerexe:$CXX --${compiler}.cpp.exe:$CXX --${compiler}.cpp.linkerexe:$CXX"
+    # Nim's static archive action invokes ar directly, also for cross builds.
     mkdir -p $TMPDIR/arshim
-    ln -sf "$(command -v $AR)" $TMPDIR/arshim/ar
+    ln -s "$(command -v $AR)" $TMPDIR/arshim/ar
     export PATH=$TMPDIR/arshim:$PATH
-
-    # Put the Windows archive where nat_traversal/miniupnpc.nim:29 looks for it,
-    # at the miniupnpc root. nimbus-build-system detects Windows with $(OS),
-    # which reports the build machine os, not the target os.
-    make -C vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc -f Makefile.mingw \
-      CC="$CC" AR="$AR" RANLIB="$RANLIB" libminiupnpc.a
-
-    make -C vendor/nim-nat-traversal/vendor/libnatpmp-upstream \
-      CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-      CFLAGS="-Wall -Os -DENABLE_STRNATPMPERR -DNATPMP_MAX_RETRIES=4 -DNATPMP_STATICLIB" \
-      libnatpmp.a
+    runHook postConfigure
   '';
 
   installPhase = ''
