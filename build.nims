@@ -8,6 +8,18 @@ proc truthy(val: string): bool =
   const truthySwitches = @["yes", "1", "on", "true"]
   return val in truthySwitches
 
+proc compilerCommand(lang = "c"): string =
+  # Nimble installs dependencies before running a task. Let its compiler action
+  # supply their paths too: getPaths() is empty in Nimble 0.26 custom tasks.
+  result =
+    quoteShell(nimbleExe) & " --nimbleDir:" & quoteShell(getEnv("NIMBLE_DIR")) &
+    " --nim:" & quoteShell(findExe("nim")) & " " & lang
+
+proc compilerParams(): string =
+  result = " --noNimblePath --path:" & quoteShell(currentSourcePath.parentDir)
+  for param in commandLineParams:
+    result.add " " & quoteShell(param)
+
 proc buildBinary(
     srcName: string,
     outName = os.lastPathPart(srcName),
@@ -18,20 +30,13 @@ proc buildBinary(
   if not dirExists "build":
     mkDir "build"
 
-  # allow something like "nim nimbus --verbosity:0 --hints:off nimbus.nims"
-  var extra_params = params
-  when defined(commandLineParams):
-    for param in commandLineParams():
-      extra_params &= " " & param
-  else:
-    for i in 2 ..< paramCount():
-      extra_params &= " " & paramStr(i)
+  let extra_params = params & compilerParams()
 
   let
     # Place build output in 'build' folder, even if name includes a longer path.
     cmd =
-      "nim " & lang & " --out:build/" & outName & " " & extra_params & " " & srcDir &
-      srcName & ".nim"
+      compilerCommand(lang) & " --out:build/" & outName & " " & extra_params & " " &
+      srcDir & srcName & ".nim"
 
   exec(cmd)
 
@@ -39,26 +44,27 @@ proc buildLibrary(name: string, srcDir = "./", params = "", `type` = "dynamic") 
   if not dirExists "build":
     mkDir "build"
 
+  let params = params & compilerParams()
   if `type` == "dynamic":
     let lib_name = (
       when defined(windows): name & ".dll"
       elif defined(macosx): name & ".dylib"
       else: name & ".so"
     )
-    exec "nim c" & " --out:build/" & lib_name &
+    exec compilerCommand() & " --out:build/" & lib_name &
       " --threads:on --app:lib --opt:size --noMain --mm:refc --header --d:metrics " &
       "--nimMainPrefix:libstorage -d:noSignalHandler " &
       "-d:chronicles_runtime_filtering " & "-d:chronicles_log_level=TRACE " & params &
       " " & srcDir & name & ".nim"
   else:
-    exec "nim c" & " --out:build/" & name &
+    exec compilerCommand() & " --out:build/" & name &
       ".a --threads:on --app:staticlib --opt:size --noMain --mm:refc --header --d:metrics " &
       "--nimMainPrefix:libstorage -d:noSignalHandler " &
       "-d:chronicles_runtime_filtering " & "-d:chronicles_log_level=TRACE " & params &
       " " & srcDir & name & ".nim"
 
 proc test(name: string, outName = name, srcDir = "tests/", params = "", lang = "c") =
-  buildBinary name, outName, srcDir, params
+  buildBinary name, outName, srcDir, params, lang
   exec "build/" & outName
 
 task storage, "build logos storage binary":
@@ -86,19 +92,21 @@ task checkSpr, "build check_spr used for checking bootstrap node health":
     srcDir = "tools/",
     params = "-d:release -d:chronicles_runtime_filtering -d:chronicles_log_level=WARN"
 
-task bootstrapHealthCheck, "ping preset bootstrap nodes; non-zero exit if any are unreachable":
+task bootstrapHealthCheck,
+  "ping preset bootstrap nodes; non-zero exit if any are unreachable":
   checkSprTask()
 
-  # get CI param from make if present
-  var args = ""
-  for i in 2 ..< paramCount():
-    if "ci" in paramStr(i) and truthy paramStr(i).split('=')[1]:
-      # Writes the JSON summary to a file before exiting, so the scheduled workflow
-      args = "--network logos.dev --network logos.test --format json --out build/bootstrap-health-report.json"
-      break
-  
-  # can read it. check_spr exits non-zero when a node is unreachable, failing
-  # the workflow run.
+  var ci = truthy(getEnv("CI"))
+  when declared(commandLineParams):
+    for param in commandLineParams:
+      if param.startsWith("-d:ci=") or param.startsWith("-d:ci:"):
+        ci = truthy(param[6 .. ^1])
+  let args =
+    if ci:
+      "--network logos.dev --network logos.test --format json --out build/bootstrap-health-report.json"
+    else:
+      ""
+  # check_spr writes the CI summary and fails when a node is unreachable.
   exec "build/check_spr " & args
 
 task testStorage, "Build & run Logos Storage tests":
@@ -119,9 +127,6 @@ task testNatIntegration,
 
 task testLibstorage, "Run libstorage Nim tests":
   test "testLibstorage", outName = "testLibstorage"
-
-task build, "build Logos Storage binary":
-  storageTask()
 
 task test, "Run tests":
   testStorageTask()
@@ -181,22 +186,8 @@ task showCoverage, "open coverage html":
   if findExe("open") != "":
     exec("open coverage/report/index.html")
 
-task libstorageDynamic, "Generate bindings":
-  var params = ""
-  when compiles(commandLineParams):
-    for param in commandLineParams():
-      if param.len > 0 and param.startsWith("-"):
-        params.add " " & param
+task libstorageDynamic, "Build the shared C library":
+  buildLibrary "libstorage", "library/", `type` = "dynamic"
 
-  let name = "libstorage"
-  buildLibrary name, "library/", params, "dynamic"
-
-task libstorageStatic, "Generate bindings":
-  var params = ""
-  when compiles(commandLineParams):
-    for param in commandLineParams():
-      if param.len > 0 and param.startsWith("-"):
-        params.add " " & param
-
-  let name = "libstorage"
-  buildLibrary name, "library/", params, "static"
+task libstorageStatic, "Build the static C library":
+  buildLibrary "libstorage", "library/", `type` = "static"

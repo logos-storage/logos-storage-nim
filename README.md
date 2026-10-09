@@ -16,15 +16,19 @@
 
 ## Build and Run
 
-To build the project, clone it and run:
+Install Nim 2.2.12, Nimble 0.26.0 or newer, Git, Make, CMake, and a C/C++ toolchain. Native dependency sources are fetched by Nimble; a recursive submodule checkout is no longer needed for the Nimble build.
+
+From the project root:
 
 ```bash
-make update && make
-# Tip: use -j{ncpu} to for parallel execution, eg:
-# make -j12 update && make -j12
+nimble --nimbleDir:./nimbledeps build -d:release
+# Or use the Makefile:
+make
 ```
 
-The executable will be placed under the `build` directory under the project root.
+Both commands put the executable in `build/storage`. The Makefile keeps packages in `./nimbledeps`; override this with `NIMBLE_DIR=/absolute/path` if needed. Always pass `--nimbleDir` when invoking Nimble directly to keep this project's packages separate from your account packages.
+
+`storage.nimble` declares compatible dependency ranges and pins revisions where releases are unsuitable. Builds do not require a lockfile, including when Storage is used as a dependency. `make update` resolves the manifest and generates `nimble.paths` for editor/direct compiler use.
 
 Run the client with:
 
@@ -57,6 +61,8 @@ Currently, only Go bindings are provided in this repo. However, Rust bindings fo
 
 ```bash
 make libstorage
+# Direct Nimble equivalent:
+nimble --nimbleDir:./nimbledeps libstorageDynamic -d:release
 ```
 
 This produces the shared library under `build/`.
@@ -67,7 +73,7 @@ See https://github.com/logos-storage/logos-storage-go-bindings-example.
 
 ### Static vs Dynamic build
 
-By default, Logos Storage builds a dynamic library (`libstorage.so`/`libstorage.dylib`/`libstroage.dll`), which you can load at runtime.
+By default, Logos Storage builds a dynamic library (`libstorage.so`/`libstorage.dylib`/`libstorage.dll`), which you can load at runtime.
 
 If you prefer a static library (`libstorage.a`), set the `STATIC` flag:
 
@@ -77,6 +83,8 @@ make libstorage
 
 # Build static
 make STATIC=1 libstorage
+# Or:
+nimble --nimbleDir:./nimbledeps libstorageStatic -d:release
 ```
 
 ### Limitation
@@ -87,10 +95,20 @@ Callbacks must be fast and non-blocking; otherwise, the working thread will hang
 
 Feel free to dive in, contributions are welcomed! Open an issue or submit PRs.
 
+### Tests
+
+```bash
+make test                 # unit tests
+make testIntegration      # integration tests
+make testLibstorage       # C example and Nim library tests
+```
+
+Pass additional compiler options with `NIMFLAGS`, for example `make NIMFLAGS="--parallelBuild:4"`. Use `make USE_LIBBACKTRACE=0` for a debug build without libbacktrace.
+
 ### Linting and formatting
 
 `logos-storage-nim` uses [nph](https://github.com/arnetheduck/nph) for formatting our code and it is required to adhere to its styling.
 If you are setting up fresh setup, in order to get `nph` run `make build-nph`.
 In order to format files run `make nph/<file/folder you want to format>`.
-If you want you can install Git pre-commit hook using `make install-nph-commit`, which will format modified files prior committing them.
+If you want you can install Git pre-commit hook using `make install-nph-hook`, which will format modified files prior committing them.
 If you are using VSCode and the [NimLang](https://marketplace.visualstudio.com/items?itemName=NimLang.nimlang) extension you can enable "Format On Save" (eq. the `nim.formatOnSave` property) that will format the files using `nph`.
