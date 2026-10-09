@@ -1,0 +1,13 @@
+diff --git a/src/nimblepkg/nimblesat.nim b/src/nimblepkg/nimblesat.nim
+--- a/src/nimblepkg/nimblesat.nim
++++ b/src/nimblepkg/nimblesat.nim
+@@ -1319,6 +1319,8 @@
+ proc getSolvedPkgFromInstalledPkgs*(satResult: SATResult, solvedPkg: SolvedPackage, options: Options, vcsRevision: Sha1Hash = notSetSha1Hash): Option[PackageInfo] =
+   for pkg in satResult.pkgList:
+-    if pkg.basicInfo.name == solvedPkg.pkgName and pkg.basicInfo.version == solvedPkg.version:
++    if pkg.basicInfo.name == solvedPkg.pkgName and
++       (pkg.basicInfo.version == solvedPkg.version or
++        solvedPkg.version in pkg.metaData.specialVersions):
+       # If vcsRevision is specified (from lock file), also check that it matches
+       if vcsRevision != notSetSha1Hash and pkg.metaData.vcsRevision != vcsRevision:
+         continue

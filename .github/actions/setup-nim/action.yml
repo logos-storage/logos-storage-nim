@@ -1,0 +1,93 @@
+name: Setup Nim and Nimble
+description: Install the pinned toolchain and isolated Storage dependencies
+inputs:
+  os:
+    description: Operating system to build for
+    required: true
+  cpu:
+    description: Native runner CPU
+    default: amd64
+  nim_version:
+    description: Nim version (must match tools/scripts/toolchain-versions.sh)
+    default: v2.2.12
+  shell:
+    description: Shell used by build steps
+    default: bash --noprofile --norc -e -o pipefail
+  coverage:
+    description: Whether coverage tools are needed
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install Linux build tools
+      if: inputs.os == 'linux'
+      shell: ${{ inputs.shell }} {0}
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends build-essential cmake curl git xz-utils ca-certificates lcov
+
+    - name: Install macOS build tools
+      if: inputs.os == 'macos'
+      shell: ${{ inputs.shell }} {0}
+      run: brew install cmake
+
+    - name: Install Windows build tools
+      if: inputs.os == 'windows'
+      uses: msys2/setup-msys2@v2
+      with:
+        path-type: inherit
+        msystem: UCRT64
+        install: >-
+          base-devel git curl tar xz
+          mingw-w64-ucrt-x86_64-toolchain
+          mingw-w64-ucrt-x86_64-cmake
+          mingw-w64-ucrt-x86_64-ntldd-git
+
+    - name: Cache toolchain
+      uses: actions/cache@v5
+      with:
+        path: .toolchain
+        key: nimble-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/scripts/setup-nim.sh', 'tools/scripts/toolchain-versions.sh') }}
+
+    - name: Install Nim and Nimble
+      shell: ${{ inputs.shell }} {0}
+      env:
+        REQUESTED_NIM: ${{ inputs.nim_version }}
+      run: |
+        source tools/scripts/toolchain-versions.sh
+        test "${REQUESTED_NIM#v}" = "$NIM_VERSION"
+        tools/scripts/setup-nim.sh "$PWD/.toolchain"
+        compiler_bin="$PWD/.toolchain/nim-$NIM_VERSION/bin"
+        toolchain_bin="$PWD/.toolchain/bin"
+        nimble_dir="$PWD/nimbledeps"
+        if [[ "${{ inputs.os }}" == windows ]]; then
+          compiler_bin=$(cygpath -m "$compiler_bin")
+          toolchain_bin=$(cygpath -m "$toolchain_bin")
+          nimble_dir=$(cygpath -m "$nimble_dir")
+        fi
+        echo "$toolchain_bin" >> "$GITHUB_PATH"
+        echo "$compiler_bin" >> "$GITHUB_PATH"
+        echo "NIMBLE_DIR=$nimble_dir" >> "$GITHUB_ENV"
+        echo "NIMBLE_FLAGS=--useSystemNim" >> "$GITHUB_ENV"
+        case "${{ inputs.os }}" in
+          linux) ncpu=$(nproc) ;;
+          macos) ncpu=$(sysctl -n hw.ncpu) ;;
+          windows) ncpu=${NUMBER_OF_PROCESSORS:-2} ;;
+        esac
+        echo "ncpu=$ncpu" >> "$GITHUB_ENV"
+        echo "NIMFLAGS=${NIMFLAGS:-} --parallelBuild:$ncpu -d:disableMarchNative" >> "$GITHUB_ENV"
+
+    - name: Cache dependency downloads
+      uses: actions/cache@v5
+      with:
+        path: nimbledeps
+        key: nimble-deps-${{ runner.os }}-${{ runner.arch }}-${{ inputs.nim_version }}-${{ hashFiles('storage.nimble', 'tools/scripts/toolchain-versions.sh') }}-${{ env.cache_nonce }}
+
+    - name: Set up compiler cache
+      uses: hendrikmuhs/ccache-action@v1.2.23
+      with:
+        key: nimble-${{ runner.os }}-${{ runner.arch }}-${{ inputs.nim_version }}
+
+    - name: Resolve Storage dependencies
+      shell: ${{ inputs.shell }} {0}
+      run: make deps

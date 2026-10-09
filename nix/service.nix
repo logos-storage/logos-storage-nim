@@ -1,9 +1,8 @@
-{ self, config, lib, pkgs, circomCompatPkg, ... }:
+{ self, config, lib, pkgs, ... }:
 
 let
   inherit (lib)
-    types mkEnableOption mkOption mkIf literalExpression
-    mdDoc;
+    types mkEnableOption mkOption mkIf literalExpression;
 
   toml = pkgs.formats.toml { };
 
@@ -16,9 +15,9 @@ in
 
       package = mkOption {
         type = types.package;
-        default = pkgs.callPackage ./default.nix { src = self; inherit circomCompatPkg; };
-        defaultText = literalExpression "pkgs.storage";
-        description = mdDoc "Package to use as Nim Logos Storage node.";
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.logos-storage-nim;
+        defaultText = literalExpression "self.packages.\${pkgs.stdenv.hostPlatform.system}.logos-storage-nim";
+        description = "Package to use as Nim Logos Storage node.";
       };
 
       settings = mkOption {

@@ -18,7 +18,6 @@ jobs:
     uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@b154b108f97f13b796fbf56b23911dbe89c33e2e
     secrets: inherit
     with:
-      submodules: recursive
       timeout-minutes: 120
       targets: libstorage logos-storage-nim
       smoke-file: .github/smoke/storage-cross.sh

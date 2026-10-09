@@ -4,7 +4,7 @@
 # Build context = project root.
 FROM ubuntu:24.04
 
-ARG NIM_VERSION=2.2.12
+ARG MAKE_PARALLEL=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make cmake git curl ca-certificates xz-utils \
@@ -24,29 +24,14 @@ RUN git clone --depth=1 --branch miniupnpd_2_3_9 \
     && install -m 755 miniupnpd /usr/local/sbin/miniupnpd-nft \
     && rm -rf /tmp/miniupnp-nft
 
-RUN curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" \
-    | tar -xJ -C /opt
-RUN ln -s "/opt/nim-${NIM_VERSION}/bin/nim" /usr/local/bin/nim
+COPY tools/scripts/setup-nim.sh tools/scripts/toolchain-versions.sh /opt/bootstrap/
+RUN /opt/bootstrap/setup-nim.sh /opt/toolchain
+ENV PATH="/usr/lib/ccache:/opt/toolchain/bin:${PATH}"
+ENV NIMBLE_DIR=/opt/nimbledeps
+ENV NIMBLE_FLAGS=--useSystemNim
 
 WORKDIR /app
-
-# vendor/ already has the checked-out submodules, so no `make update` here.
-COPY vendor/ vendor/
-COPY storage/ storage/
-COPY build.nims config.nims storage.nim network_presets.json ./
-
-# libplum static lib, linked by nim-libplum.
+COPY . .
 RUN --mount=type=cache,target=/root/.ccache \
-    export PATH="/usr/lib/ccache:$PATH" && \
-    rm -rf vendor/nim-libplum/vendor/libplum/build && \
-    cmake -B vendor/nim-libplum/vendor/libplum/build \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-        vendor/nim-libplum/vendor/libplum && \
-    make -j"$(nproc)" -C vendor/nim-libplum/vendor/libplum/build && \
-    cp vendor/nim-libplum/vendor/libplum/build/libplum.a \
-        vendor/nim-libplum/vendor/libplum/libplum.a
-
-RUN --mount=type=cache,target=/root/.ccache \
-    export PATH="/usr/lib/ccache:$PATH" && \
-    USE_SYSTEM_NIM=1 vendor/nimbus-build-system/scripts/env.sh \
-        nim storage -d:disable_libbacktrace build.nims
+    make NIMFLAGS="--parallelBuild:${MAKE_PARALLEL} -d:disableMarchNative" USE_LIBBACKTRACE=0
+# The scenarios invoke /app/build/storage and mount their own router scripts.

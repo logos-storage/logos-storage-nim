@@ -83,12 +83,11 @@ else:
 --warningAsError:
   "ProveField:on"
 # Extension files belong to this project, regardless of where Nimble installs libp2p.
+# Use compiler path separators, including when targeting Windows from Linux.
 for extension in ["multicodec", "multihash", "contentids", "multiaddress"]:
   switch(
     "define",
-    "libp2p_" & extension & "_exts:" & currentDir / "storage" / (
-      extension & "_exts.nim"
-    ),
+    "libp2p_" & extension & "_exts:" & currentDir & "/storage/" & extension & "_exts.nim",
   )
 
 when (NimMajor, NimMinor) >= (1, 4):

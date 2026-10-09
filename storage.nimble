@@ -4,12 +4,12 @@ description = "privacy-preserving p2p file sharing"
 license = "MIT"
 binDir = "build"
 bin = @["storage"]
-skipDirs = @["vendor", "nimbledeps", "nimcache", "tests", "docs"]
+skipDirs = @["nimbledeps", "nimcache", "tests", "docs"]
 srcDir = "."
 installDirs = @["storage", "library"]
 installFiles = @[
   "storage.nim", "build.nims", "config.nims", "network_presets.json",
-  "LICENSE-APACHE", "LICENSE-MIT"
+  "LICENSE-APACHEv2", "LICENSE-MIT"
 ]
 
 # Keep packages in a separate Nimble directory (see README.md).

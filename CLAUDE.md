@@ -5,11 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# First-time setup (initializes nimbus-build-system submodule)
+# First-time setup (resolves isolated Nimble dependencies)
 make update && make
 
 # Parallel build (faster)
-make -j$(nproc) update && make -j$(nproc)
+make NIMFLAGS="--parallelBuild:$(nproc)"
 
 # Build the storage binary only
 make
@@ -38,7 +38,7 @@ make testIntegration
 make testAll
 
 # Run a single test file directly
-$(ENV_SCRIPT) nim c -r tests/storage/testblockexchange.nim
+nimble --nimbleDir:./nimbledeps c -r tests/storage/testblockexchange.nim
 
 # Run C bindings test
 make testLibstorage
@@ -73,8 +73,8 @@ make coverage && make show-coverage
 
 ## Key Development Notes
 
-- **Nim version**: pinned to `v2.2.12` (see `Makefile`). Override with `NIM_COMMIT=<version>`.
-- **Memory model**: ORC (`--mm:refc`) for Nim ≥ 2.0, refc for the C library build.
+- **Nim version**: 2.2.12 (see `tools/scripts/toolchain-versions.sh` and `storage.nimble`). Packages are isolated in `nimbledeps/`; no lockfile is required.
+- **Memory model**: refc (`--mm:refc`), including the C library build.
 - **Error handling**: uses `questionable/results` (`?!T`, `?T`) throughout — avoid bare exceptions. The codebase enforces `{.push raises: [].}` broadly.
 - **Logging**: uses `chronicles` with runtime filtering. Topics are set per-module via `logScope`. Build with `-d:chronicles_log_level=TRACE` to enable all log levels.
 - **Style**: `--styleCheck:error` is enabled — identifiers must match declaration casing exactly.

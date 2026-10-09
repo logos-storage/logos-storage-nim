@@ -16,7 +16,9 @@
 
 ## Build and Run
 
-Install Nim 2.2.12, Nimble 0.26.0 or newer, Git, Make, CMake, and a C/C++ toolchain. Native dependency sources are fetched by Nimble; a recursive submodule checkout is no longer needed for the Nimble build.
+Install Nim 2.2.12, Nimble 0.26.0 or newer, Git, Make, CMake, and a C/C++ toolchain. Native dependency sources are fetched by Nimble; no recursive checkout is needed.
+
+For Nix builds, see [nix/README.md](nix/README.md); for container builds, see [docker/README.md](docker/README.md). CI and containers use the pinned toolchain in `tools/scripts/toolchain-versions.sh`.
 
 From the project root:
 

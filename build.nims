@@ -13,7 +13,7 @@ proc compilerCommand(lang = "c"): string =
   # supply their paths too: getPaths() is empty in Nimble 0.26 custom tasks.
   result =
     quoteShell(nimbleExe) & " --nimbleDir:" & quoteShell(getEnv("NIMBLE_DIR")) &
-    " --nim:" & quoteShell(findExe("nim")) & " " & lang
+    " --nim:" & quoteShell(findExe("nim")) & " " & getEnv("NIMBLE_FLAGS") & " " & lang
 
 proc compilerParams(): string =
   result = " --noNimblePath --path:" & quoteShell(currentSourcePath.parentDir)
@@ -46,11 +46,19 @@ proc buildLibrary(name: string, srcDir = "./", params = "", `type` = "dynamic") 
 
   let params = params & compilerParams()
   if `type` == "dynamic":
-    let lib_name = (
-      when defined(windows): name & ".dll"
-      elif defined(macosx): name & ".dylib"
-      else: name & ".so"
-    )
+    # Tasks run on the build machine; --os selects the library's target.
+    var targetOS = hostOS
+    for param in commandLineParams:
+      let flag = param.split({'=', ':'}, maxsplit = 1)
+      if flag.len == 2 and flag[0] == "--os":
+        targetOS = flag[1].toLowerAscii()
+    let lib_name =
+      name & (
+        case targetOS
+        of "windows": ".dll"
+        of "macosx": ".dylib"
+        else: ".so"
+      )
     exec compilerCommand() & " --out:build/" & lib_name &
       " --threads:on --app:lib --opt:size --noMain --mm:refc --header --d:metrics " &
       "--nimMainPrefix:libstorage -d:noSignalHandler " &
