@@ -47,6 +47,9 @@ proc complete*(_: type BlockAvailability): BlockAvailability =
 proc fromRanges*(
     _: type BlockAvailability, ranges: seq[IndexRange]
 ): BlockAvailability =
+  if ranges.len == 0:
+    return BlockAvailability.unknown()
+
   BlockAvailability(kind: bakRanges, ranges: ranges)
 
 proc fromBitmap*(
