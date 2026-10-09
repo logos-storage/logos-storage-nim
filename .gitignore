@@ -19,6 +19,9 @@ build/
 # Coverage data shall be put in an ignored coverage/ directory
 coverage/
 
+# C bindings emitted by nim-ffi's genBindings() on every libstorage build
+/library/generated/
+
 # Nimble packages
 /vendor/.nimble
 /vendor/packages/

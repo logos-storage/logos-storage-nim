@@ -170,15 +170,24 @@ bootstrapHealthCheck: | build deps
 	echo -e $(BUILD_MSG) "build/check_spr" && \
 		$(ENV_SCRIPT) nim bootstrapHealthCheck $(NIM_PARAMS) $(BOOTSTRAP_HEALTH_CHECK_PARAMS) build.nims
 
+# The generated header decodes the CBOR wire with TinyCBOR, which nim-ffi vendors.
+TINYCBOR_DIR := ../../vendor/nim-ffi/ffi/codegen/templates/cpp/vendor
+TINYCBOR_SRCS := $(TINYCBOR_DIR)/tinycbor/cborencoder.c \
+	$(TINYCBOR_DIR)/tinycbor/cborencoder_close_container_checked.c \
+	$(TINYCBOR_DIR)/tinycbor/cborparser.c \
+	$(TINYCBOR_DIR)/tinycbor/cborparser_dup_string.c \
+	$(TINYCBOR_DIR)/tinycbor/cborerrorstrings.c
+CBINDINGS_CFLAGS := -I$(TINYCBOR_DIR) -I$(TINYCBOR_DIR)/tinycbor
+
 # Builds a C example that uses the libstorage C library and runs it
 testLibstorageC: | build deps
 	$(MAKE) $(if $(ncpu),-j$(ncpu),) libstorage
 	cd tests/cbindings && \
 	if [ "$(detected_OS)" = "Windows" ]; then \
-		gcc -o storage.exe storage.c -L../../build -lstorage -pthread && \
+		gcc -o storage.exe storage.c $(TINYCBOR_SRCS) $(CBINDINGS_CFLAGS) -L../../build -lstorage -pthread && \
 		PATH=../../build:$$PATH ./storage.exe; \
 	else \
-		gcc -o storage storage.c -L../../build -lstorage -Wl,-rpath,../../ -pthread && \
+		gcc -o storage storage.c $(TINYCBOR_SRCS) $(CBINDINGS_CFLAGS) -L../../build -lstorage -Wl,-rpath,../../ -pthread && \
 		LD_LIBRARY_PATH=../../build ./storage; \
 	fi
 
