@@ -28,7 +28,7 @@ The generated header includes `<tinycbor/cbor.h>`. Compile and link the TinyCBOR
 
 ## Call model
 
-Every entry point except `storage_version` and `storage_revision` is asynchronous. A call encodes its arguments, hands them to the worker thread and returns at once; the answer arrives on the result callback.
+Every entry point except `storage_version` and `storage_revision` is asynchronous. A call encodes its arguments, hands them to the worker thread and returns at once; the answer arrives on the result callback. A non-zero return means the send failed and the callback has already fired with the error.
 
 ```mermaid
 sequenceDiagram
@@ -62,14 +62,14 @@ The result callback receives one of:
 
 The generated header offers two layers. Use the typed `storage_ctx_*` wrappers: they encode the request, decode the reply and hand it to you as a C struct. The raw `storage_*` exports take a CBOR buffer and exist for a host that encodes the wire itself.
 
-Reply values and error strings belong to the binding and live only for the duration of the callback, so copy what you keep. Request-side strings are borrowed; wrap them with `nimffi_str()`.
+Reply values and error strings belong to the binding and live only for the duration of the callback, so copy what you keep. Request-side strings are borrowed `const char*` values.
 
 ## Lifecycle
 
 ```c
 StorageCtx *ctx = NULL;  // filled by the create callback
 
-storage_ctx_create(nimffi_str(config_json), on_created, user_data);
+storage_ctx_create(config_json, on_created, user_data);
 storage_ctx_start(ctx, on_reply, user_data);
 storage_ctx_stop(ctx, on_reply, user_data);
 storage_ctx_destroy(ctx);
@@ -135,11 +135,12 @@ storage_ctx_remove_event_listener(ctx, id);
 | Event | Payload | Fired by |
 | --- | --- | --- |
 | `on_download_chunk` | `cid`, `data` | `storage_download_stream`, once per chunk |
+| `on_download_done` | `cid`, `error` | `storage_download_stream`, once after the last chunk; empty `error` on success |
 | `on_upload_progress` | `sessionId`, `storedBytes` | `storage_upload_file`, once per stored block |
 
 The event queue has 1024 slots. When a slow listener lets it fill, nim-ffi drops the event and marks the context stuck. A stuck context refuses every new request until it is destroyed. Copy the payload and return.
 
-Replies and events come from two different threads. The reply of `storage_download_stream` can reach the host before its last `on_download_chunk` events. Count the received bytes against the `datasetSize` of the manifest when the host needs every chunk before it continues.
+Replies and events come from two different threads. The reply of `storage_download_stream` can reach the host before its last `on_download_chunk` events. Wait for `on_download_done`, which comes after the last chunk on the same queue, when the host needs every chunk before it continues.
 
 ## Upload
 

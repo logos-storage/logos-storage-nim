@@ -68,7 +68,7 @@ when isMainModule:
       echo "Invalid value for --log-level. " & err.msg
     quit QuitFailure
 
-  if err =? config.setupMetrics().errorOption:
+  if err =? (waitFor config.setupMetrics()).errorOption:
     fatal "Failed to start metrics server", err = err.msg
     quit QuitFailure
 

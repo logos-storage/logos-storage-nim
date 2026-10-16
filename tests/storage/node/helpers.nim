@@ -27,10 +27,10 @@ proc toTimesDuration*(d: chronos.Duration): times.Duration =
   initDuration(seconds = d.seconds)
 
 proc drain*(
-    stream: LPStream | Result[lpstream.LPStream, ref CatchableError]
+    stream: LPStream | Result[LPStream, ref CatchableError]
 ): Future[seq[byte]] {.async.} =
   let stream =
-    when typeof(stream) is Result[lpstream.LPStream, ref CatchableError]:
+    when typeof(stream) is Result[LPStream, ref CatchableError]:
       stream.tryGet()
     else:
       stream

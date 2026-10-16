@@ -175,7 +175,7 @@ static int is_resp_ok(Resp *r, char **res)
 }
 
 // Every Result[string, string] reply typedef shares this signature.
-static void on_str_reply(int err_code, const NimFfiStr *reply, const char *err_msg, void *user_data)
+static void on_str_reply(int err_code, const char *const *reply, const char *err_msg, void *user_data)
 {
     Resp *r = (Resp *)user_data;
 
@@ -191,7 +191,7 @@ static void on_str_reply(int err_code, const NimFfiStr *reply, const char *err_m
 
     if (err_code == RET_OK && reply)
     {
-        r->msg = dup_n(reply->data ? reply->data : "", reply->len);
+        r->msg = strdup(*reply ? *reply : "");
     }
     else if (err_msg)
     {
@@ -257,12 +257,18 @@ static pthread_cond_t events_cond = PTHREAD_COND_INITIALIZER;
 static char chunks[4096];
 static size_t chunks_len;
 static int upload_progress_count;
+static int download_done_count;
+static size_t chunks_len_at_done;
+static char download_done_error[256];
 
-static void reset_chunks(void)
+static void reset_download_events(void)
 {
     pthread_mutex_lock(&events_mutex);
     chunks_len = 0;
     chunks[0] = '\0';
+    download_done_count = 0;
+    chunks_len_at_done = 0;
+    download_done_error[0] = '\0';
     pthread_mutex_unlock(&events_mutex);
 }
 
@@ -271,9 +277,14 @@ static bool upload_progress_seen(void)
     return upload_progress_count > 0;
 }
 
-static bool hello_world_streamed(void)
+static bool download_done_seen(void)
 {
-    return chunks_len >= strlen("Hello World!");
+    return download_done_count >= 1;
+}
+
+static bool second_download_done_seen(void)
+{
+    return download_done_count >= 2;
 }
 
 // The caller holds events_mutex.
@@ -306,6 +317,21 @@ static void on_download_chunk(const OnDownloadChunkPayload *evt, void *user_data
     chunks_len += n;
     chunks[chunks_len] = '\0';
 
+    pthread_cond_broadcast(&events_cond);
+    pthread_mutex_unlock(&events_mutex);
+}
+
+static void on_download_done(const OnDownloadDonePayload *evt, void *user_data)
+{
+    if (!evt)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&events_mutex);
+    download_done_count += 1;
+    chunks_len_at_done = chunks_len;
+    snprintf(download_done_error, sizeof(download_done_error), "%s", evt->error ? evt->error : "");
     pthread_cond_broadcast(&events_cond);
     pthread_mutex_unlock(&events_mutex);
 }
@@ -348,7 +374,7 @@ static StorageCtx *create_ctx(const char *cfg)
 {
     Resp *r = alloc_resp();
 
-    storage_ctx_create(nimffi_str(cfg), on_created, r);
+    storage_ctx_create(cfg, on_created, r);
 
     wait_resp(r);
 
@@ -379,6 +405,11 @@ int setup(StorageCtx **storage_ctx)
     (*storage_ctx) = ctx;
 
     if (storage_ctx_add_on_download_chunk_listener(ctx, on_download_chunk, NULL) == 0)
+    {
+        return RET_ERR;
+    }
+
+    if (storage_ctx_add_on_download_done_listener(ctx, on_download_done, NULL) == 0)
     {
         return RET_ERR;
     }
@@ -552,7 +583,7 @@ int update_log_level(StorageCtx *storage_ctx, const char *log_level)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_log_level(storage_ctx, nimffi_str(log_level), on_str_reply, r) != RET_OK)
+    if (storage_ctx_log_level(storage_ctx, log_level, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -569,7 +600,7 @@ int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
     const char *payload = "hello world";
     NimFfiBytes chunk = {.data = (uint8_t *)payload, .len = strlen(payload)};
 
-    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), chunk.len, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, filepath, chunk.len, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -583,7 +614,7 @@ int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
 
     r = alloc_resp();
 
-    if (storage_ctx_upload_chunk(storage_ctx, nimffi_str(session_id), &chunk, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_chunk(storage_ctx, session_id, &chunk, on_str_reply, r) != RET_OK)
     {
         free(session_id);
         free_resp(r);
@@ -598,7 +629,7 @@ int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
 
     r = alloc_resp();
 
-    if (storage_ctx_upload_finalize(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_finalize(storage_ctx, session_id, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -626,7 +657,7 @@ int upload_cancel(StorageCtx *storage_ctx)
     char *session_id = NULL;
     uint64_t chunk_size = 64 * 1024;
 
-    if (storage_ctx_upload_init(storage_ctx, nimffi_str("hello.txt"), chunk_size, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, "hello.txt", chunk_size, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -640,7 +671,7 @@ int upload_cancel(StorageCtx *storage_ctx)
 
     r = alloc_resp();
 
-    if (storage_ctx_upload_cancel(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_cancel(storage_ctx, session_id, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -658,7 +689,7 @@ int check_upload_file(StorageCtx *storage_ctx, const char *filepath, char **res)
     char *session_id = NULL;
     uint64_t chunk_size = 64 * 1024;
 
-    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), chunk_size, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, filepath, chunk_size, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -672,7 +703,7 @@ int check_upload_file(StorageCtx *storage_ctx, const char *filepath, char **res)
 
     r = alloc_resp();
 
-    if (storage_ctx_upload_file(storage_ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_file(storage_ctx, session_id, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -706,7 +737,7 @@ int download_init(StorageCtx *storage_ctx, const char *cid)
     Resp *r = alloc_resp();
     uint64_t chunk_size = 64 * 1024;
 
-    if (storage_ctx_download_init(storage_ctx, nimffi_str(cid), chunk_size, true, false, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_init(storage_ctx, cid, chunk_size, true, false, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -725,12 +756,12 @@ int check_download_stream(StorageCtx *storage_ctx, const char *cid, const char *
         return RET_ERR;
     }
 
-    reset_chunks();
+    reset_download_events();
 
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_stream(storage_ctx, nimffi_str(cid), chunk_size,
-                                    nimffi_str(filepath), on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_stream(storage_ctx, cid, chunk_size,
+                                    filepath, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -739,7 +770,23 @@ int check_download_stream(StorageCtx *storage_ctx, const char *cid, const char *
     int ret = is_resp_ok(r, NULL);
 
     pthread_mutex_lock(&events_mutex);
-    wait_events(hello_world_streamed);
+    wait_events(download_done_seen);
+    if (download_done_count != 1)
+    {
+        fprintf(stderr, "on_download_done fired %d times\n", download_done_count);
+        ret = RET_ERR;
+    }
+    if (download_done_error[0] != '\0')
+    {
+        fprintf(stderr, "on_download_done error on success: %s\n", download_done_error);
+        ret = RET_ERR;
+    }
+    if (chunks_len_at_done < strlen("Hello World!") || chunks_len_at_done != chunks_len)
+    {
+        fprintf(stderr, "on_download_done came before the last chunk: %zu of %zu bytes\n",
+                chunks_len_at_done, chunks_len);
+        ret = RET_ERR;
+    }
     if (strncmp(chunks, "Hello World!", strlen("Hello World!")) != 0)
     {
         fprintf(stderr, "streamed content mismatch, res:%s\n", chunks);
@@ -764,6 +811,42 @@ int check_download_stream(StorageCtx *storage_ctx, const char *cid, const char *
     return ret;
 }
 
+// Keeps the count of check_download_stream: FIFO events put a duplicate done event first.
+int check_download_stream_error(StorageCtx *storage_ctx)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_download_stream(storage_ctx, "not-a-cid", 64 * 1024, "", on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    if (is_resp_ok(r, NULL) == RET_OK)
+    {
+        fprintf(stderr, "stream of an invalid cid succeeded\n");
+        return RET_ERR;
+    }
+
+    int ret = RET_OK;
+
+    pthread_mutex_lock(&events_mutex);
+    wait_events(second_download_done_seen);
+    if (download_done_count != 2)
+    {
+        fprintf(stderr, "on_download_done fired %d times over two streams\n", download_done_count);
+        ret = RET_ERR;
+    }
+    if (download_done_error[0] == '\0')
+    {
+        fprintf(stderr, "on_download_done has no error after a failed stream\n");
+        ret = RET_ERR;
+    }
+    pthread_mutex_unlock(&events_mutex);
+
+    return ret;
+}
+
 int check_download_chunk(StorageCtx *storage_ctx, const char *cid)
 {
     char *res = NULL;
@@ -775,7 +858,7 @@ int check_download_chunk(StorageCtx *storage_ctx, const char *cid)
 
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_chunk(storage_ctx, nimffi_str(cid), on_bytes_reply, r) != RET_OK)
+    if (storage_ctx_download_chunk(storage_ctx, cid, on_bytes_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -798,7 +881,7 @@ int check_download_cancel(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_cancel(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_cancel(storage_ctx, cid, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -812,7 +895,7 @@ int check_download_manifest(StorageCtx *storage_ctx, const char *cid)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_ctx_download_manifest(storage_ctx, nimffi_str(cid), false, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_manifest(storage_ctx, cid, false, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -859,7 +942,7 @@ int check_download_manifest_private(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_manifest(storage_ctx, nimffi_str(cid), true, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_manifest(storage_ctx, cid, true, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -873,7 +956,7 @@ int check_download_init_private(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_init(storage_ctx, nimffi_str(cid), 0, false, true, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_init(storage_ctx, cid, 0, false, true, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -886,7 +969,7 @@ int check_download_privacy_mismatch(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_download_init(storage_ctx, nimffi_str(cid), 0, false, false, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_init(storage_ctx, cid, 0, false, false, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -898,7 +981,7 @@ int check_download_privacy_mismatch(StorageCtx *storage_ctx, const char *cid)
 
     // Reusing a direct session must not silently accept a private request.
     r = alloc_resp();
-    if (storage_ctx_download_init(storage_ctx, nimffi_str(cid), 0, false, true, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_download_init(storage_ctx, cid, 0, false, true, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -967,7 +1050,7 @@ int check_exists(StorageCtx *storage_ctx, const char *cid, bool expected)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_ctx_exists(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
+    if (storage_ctx_exists(storage_ctx, cid, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -992,7 +1075,7 @@ int check_advertise(StorageCtx *storage_ctx, const char *cid, bool advertise)
     Resp *r = alloc_resp();
     char *res = NULL;
 
-    if (storage_ctx_set_advertise(storage_ctx, nimffi_str(cid), advertise, on_str_reply, r) != RET_OK)
+    if (storage_ctx_set_advertise(storage_ctx, cid, advertise, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1005,7 +1088,7 @@ int check_advertise(StorageCtx *storage_ctx, const char *cid, bool advertise)
 
     r = alloc_resp();
 
-    if (storage_ctx_get_advertise(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
+    if (storage_ctx_get_advertise(storage_ctx, cid, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1029,7 +1112,7 @@ int check_delete(StorageCtx *storage_ctx, const char *cid)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_delete(storage_ctx, nimffi_str(cid), on_str_reply, r) != RET_OK)
+    if (storage_ctx_delete(storage_ctx, cid, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1133,7 +1216,7 @@ int check_log_file_after_many_blocks(void)
     char *session_id = NULL;
     Resp *r = alloc_resp();
 
-    if (!path || storage_ctx_upload_init(ctx, nimffi_str(path), chunk_size, true, on_str_reply, r) != RET_OK)
+    if (!path || storage_ctx_upload_init(ctx, path, chunk_size, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(path);
@@ -1150,7 +1233,7 @@ int check_log_file_after_many_blocks(void)
 
     r = alloc_resp();
 
-    if (storage_ctx_upload_file(ctx, nimffi_str(session_id), on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_file(ctx, session_id, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         free(session_id);
@@ -1211,6 +1294,7 @@ int main(void)
     free(path);
 
     RUN_TEST(check_download_stream(storage_ctx, cid, "downloaded_hello.txt"));
+    RUN_TEST(check_download_stream_error(storage_ctx));
     RUN_TEST(check_download_chunk(storage_ctx, cid));
     RUN_TEST(check_download_cancel(storage_ctx, cid));
     RUN_TEST(check_download_manifest(storage_ctx, cid));

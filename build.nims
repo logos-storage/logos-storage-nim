@@ -35,7 +35,8 @@ proc buildBinary(
 
   exec(cmd)
 
-const cBindingsDir = "library/generated"
+# Relative to `library/`: nim-ffi resolves -d:ffiOutputDir against the compiled file.
+const cBindingsDir = "generated"
 
 ## `-d:ffiSrcPath` is required: the derived path needs `getcwd` at compile time.
 const cBindingsFlags =
