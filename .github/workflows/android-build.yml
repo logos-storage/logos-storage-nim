@@ -1,0 +1,95 @@
+name: Android build (fork)
+
+# Added in the fryorcraken/logos-storage-nim fork. Proves that
+# `make libstorage-android` — the Android cross-compilation support this fork
+# adds on top of upstream logos-storage/logos-storage-nim — actually produces
+# a valid libstorage.so. Not present upstream.
+#
+# Only arm64-v8a and x86_64 (64-bit ABIs). x86 and armeabi-v7a (32-bit) fail
+# on a real, pre-existing bug in storage's own source — storage/units.nim's
+# `NBytes = distinct Natural` overflows int32's range when computing a
+# compile-time constant (~21.4B bytes) — see the NOTE above the
+# libstorage-android-x86/-arm Makefile targets. Out of scope for this fork
+# to fix (would mean changing a core type used throughout the storage
+# engine); modern Android devices are effectively all 64-bit regardless.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+env:
+  cache_nonce: 0
+  nim_version: pinned
+  # NDK r27 is the current official LTS release (developer.android.com/ndk/downloads),
+  # and matches the NDK already installed locally (~/android-ndk/android-ndk-r27c).
+  # No upstream Android CI exists in logos-messaging/logos-delivery to cross-check
+  # against — that repo's Android make targets aren't wired into any of its own
+  # workflows — so this is the best available anchor, not a value copied from
+  # a known-working CI config. Revisit if a build fails against it.
+  android_ndk_release: r27c
+  android_target: "30"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  android-build:
+    name: libstorage-android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            make_target: libstorage-android-arm64
+          - abi: x86_64
+            make_target: libstorage-android-amd64
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # Download the NDK directly rather than going through
+      # android-actions/setup-android + `sdkmanager --install ndk;...`: that
+      # path bootstraps sdkmanager via a `tools` package that no longer
+      # exists in current Android SDK repository metadata
+      # ("Warning: Failed to find package 'tools'", hard-fails the action
+      # before any NDK install is attempted). Only the NDK is actually
+      # needed here — not the full SDK/cmdline-tools/sdkmanager stack — so
+      # fetch it directly from Google's own NDK archive instead.
+      - name: Download Android NDK ${{ env.android_ndk_release }}
+        run: |
+          curl -fsSL -o ndk.zip \
+            "https://dl.google.com/android/repository/android-ndk-${{ env.android_ndk_release }}-linux.zip"
+          unzip -q ndk.zip
+          echo "ANDROID_NDK_HOME=${PWD}/android-ndk-${{ env.android_ndk_release }}" >> "$GITHUB_ENV"
+
+      - name: Setup Nimbus Build System
+        uses: ./.github/actions/nimbus-build-system
+        with:
+          os: linux
+          nim_version: ${{ env.nim_version }}
+
+      - name: Build libstorage.so for ${{ matrix.abi }}
+        env:
+          ANDROID_TARGET: ${{ env.android_target }}
+        run: |
+          make -j${ncpu} ${{ matrix.make_target }}
+
+      - name: Verify output
+        run: |
+          f="build/android/${{ matrix.abi }}/libstorage.so"
+          test -f "$f" || { echo "::error::$f was not produced"; exit 1; }
+          file "$f"
+
+      - name: Upload libstorage.so (${{ matrix.abi }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: libstorage-android-${{ matrix.abi }}
+          path: build/android/${{ matrix.abi }}/libstorage.so
+          if-no-files-found: error
