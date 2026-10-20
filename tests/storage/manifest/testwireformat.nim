@@ -147,6 +147,16 @@ suite "Manifest decode error handling":
     corrupted[0] = 0x12
     check Manifest.decode(corrupted).isErr
 
+  test "Should reject a size field above high(int)":
+    const twoPow63 = @[0x80'u8, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01]
+    var
+      blockSize = Expected_minimal[0 ..< 43] & twoPow63 & Expected_minimal[46 .. ^1]
+      datasetSize = Expected_minimal[0 ..< 47] & twoPow63 & Expected_minimal[50 .. ^1]
+    blockSize[1] += 7
+    datasetSize[1] += 7
+    check Manifest.decode(blockSize).isErr
+    check Manifest.decode(datasetSize).isErr
+
   test "Should skip an unknown field and decode to the canonical manifest":
     var withUnknown = Expected_minimal
     withUnknown[1] = withUnknown[1] + 0x02'u8
