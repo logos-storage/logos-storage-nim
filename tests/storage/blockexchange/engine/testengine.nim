@@ -99,6 +99,7 @@ asyncchecksuite "NetworkStore engine handlers":
     blocks: seq[Block]
 
   setup:
+    blocks = @[]
     chunker = RandomChunker.new(Rng.instance(), size = 1024'nb, chunkSize = 256'nb)
 
     while true:
@@ -507,6 +508,55 @@ asyncchecksuite "NetworkStore engine handlers":
 
     await blockExc.wantListHandler(peerId, wantList)
     await done
+
+  test "Skip a want list entry whose index exceeds Natural":
+    var presenceSent = false
+
+    proc sendPresence(
+        peerId: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      presenceSent = true
+
+    network.request = BlockExcRequest(sendPresence: sendPresence)
+
+    let wantList = WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: high(Natural).uint64 + 1),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+        )
+      ],
+      full: false,
+    )
+
+    await blockExc.wantListHandler(peerId, wantList)
+    check not presenceSent
+
+  test "Skip a want list range that crosses Natural":
+    var presenceSent = false
+
+    proc sendPresence(
+        peerId: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      presenceSent = true
+
+    network.request = BlockExcRequest(sendPresence: sendPresence)
+
+    let wantList = WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: high(Natural).uint64 - 1),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+          rangeCount: 4,
+        )
+      ],
+      full: false,
+    )
+
+    await blockExc.wantListHandler(peerId, wantList)
+    check not presenceSent
 
   test "WantBlocks: rejects range with count = 0":
     let req = WantBlocksRequest(
