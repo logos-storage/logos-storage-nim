@@ -3,6 +3,7 @@ import std/options
 import pkg/unittest2
 import pkg/libp2p/cid
 import pkg/storage/manifest
+import pkg/storage/storagetypes
 import pkg/storage/units
 
 ## All Expected_* consts were generated from the minprotobuf encoder and are
@@ -141,6 +142,19 @@ suite "Manifest decode error handling":
     var corrupted = Expected_minimal
     corrupted[3] = 0x01
     check Manifest.decode(corrupted).isErr
+
+  test "Should reject a block size outside the bounds":
+    for blockSize in [0'u64, MinBlockSize - 1, MaxBlockSize + 1]:
+      checkpoint("blockSize: " & $blockSize)
+      let m = Manifest.new(
+        treeCid = cidA, blockSize = blockSize.NBytes, datasetSize = 1048576.NBytes
+      )
+      check Manifest.decode(m.encode().get).isErr
+
+  test "Should reject a zero dataset size":
+    let m =
+      Manifest.new(treeCid = cidA, blockSize = 65536.NBytes, datasetSize = 0.NBytes)
+    check Manifest.decode(m.encode().get).isErr
 
   test "Should reject a manifest with a corrupted first byte":
     var corrupted = Expected_minimal

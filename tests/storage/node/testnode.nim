@@ -62,7 +62,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Fetch Dataset with fetchLocal fails when block missing":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
 
     # Delete one block so it's missing locally
@@ -121,7 +121,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Stream blocks with fetchLocal succeeds when all local":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
       totalBlocks = md.manifest.blocksCount.uint64
       treeCid = md.manifest.treeCid
@@ -139,7 +139,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Stream blocks with fetchLocal fails when block missing":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
       treeCid = md.manifest.treeCid
 
@@ -160,7 +160,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Stream blocks with fetchLocal=false fails when retries exhausted":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
       treeCid = md.manifest.treeCid
 
@@ -207,7 +207,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Should delete an entire dataset":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
       manifestCid = md.manifestCid
 
@@ -223,7 +223,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Should delete the advertise state with the dataset":
     let
-      blocks = await makeRandomBlocks(datasetSize = 2048, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
 
     (await node.setAdvertise(md.manifestCid, false)).tryGet()
@@ -235,7 +235,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Should stop advertising the manifest and tree cid":
     let
-      blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 16384, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
 
     (await node.setAdvertise(md.manifestCid, false)).tryGet()
@@ -246,7 +246,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Should resume advertising and queue the manifest cid":
     let
-      blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 16384, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
 
     (await node.setAdvertise(md.manifestCid, false)).tryGet()
@@ -265,7 +265,7 @@ asyncchecksuite "Test Node - Basic":
   test "Should fail to set the advertise state of a manifest not stored locally":
     let
       manifest = Manifest.new(
-        treeCid = Cid.example, blockSize = 123.NBytes, datasetSize = 234.NBytes
+        treeCid = Cid.example, blockSize = 4096.NBytes, datasetSize = 8000.NBytes
       )
       manifestBlk =
         bt.Block.new(data = manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
@@ -274,7 +274,7 @@ asyncchecksuite "Test Node - Basic":
 
   test "Should return true when a cid is already in the local store":
     let
-      blocks = await makeRandomBlocks(datasetSize = 1024, blockSize = 256'nb)
+      blocks = await makeRandomBlocks(datasetSize = 16384, blockSize = 4096'nb)
       md = await storeDataGetManifest(localStore, blocks)
 
     check (await node.hasLocalBlock(md.manifestCid)) == true
