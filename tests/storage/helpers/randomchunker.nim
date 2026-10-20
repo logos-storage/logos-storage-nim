@@ -14,7 +14,7 @@ proc new*(
     rng: Rng,
     chunkSize: int | NBytes,
     size: int | NBytes,
-    pad = false,
+    pad = true,
 ): RandomChunker =
   ## Create a chunker that produces random data
   ##
