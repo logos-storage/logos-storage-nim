@@ -75,6 +75,8 @@ storage_ctx_stop(ctx, on_reply, user_data);
 storage_ctx_destroy(ctx);
 ```
 
+It is expected to always call `storage_ctx_stop` and wait for its reply before `storage_ctx_destroy`.
+
 `storage_ctx_destroy` stops the node, closes it and joins the FFI thread pair. It is synchronous and is the only teardown path: a context lives exactly as long as its node.
 
 ## Entry points

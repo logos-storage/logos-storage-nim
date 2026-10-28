@@ -3,7 +3,8 @@
     "nim": {
       "type": "stdio",
       "command": "nimlangserver",
-      "args": ["--mcp"]
+      "args": ["--mcp"],
+      "env": { "NIMBUS_BUILD_SYSTEM": "yes" }
     }
   }
 }

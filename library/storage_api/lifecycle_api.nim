@@ -34,7 +34,7 @@ proc storage_start(self: Storage): Future[Result[string, string]] {.ffi.} =
   return ok("")
 
 proc storage_stop(self: Storage): Future[Result[string, string]] {.ffi.} =
-  ## Stops the node without releasing it. It can be started again.
+  ## Stops the node without releasing it. It cannot be started again: call storage_destroy next.
   try:
     await self.stop()
   except CatchableError as e:

@@ -61,6 +61,36 @@ make libstorage
 
 This produces the shared library under `build/`.
 
+## Test Commands
+
+```bash
+# Run unit tests (tests/storage/)
+make test
+
+# Run integration tests (spawns real node processes)
+make testIntegration
+
+# Run one integration test file (path from tests/)
+STORAGE_INTEGRATION_TEST_INCLUDES="integration/5_minutes/testrestapivalidation.nim" \
+  ./env.sh nim testIntegration build.nims
+
+# Keep the node logs, in tests/integration/logs/
+STORAGE_INTEGRATION_TEST_INCLUDES="integration/5_minutes/testrestapivalidation.nim" \
+  ./env.sh nim testIntegration -d:StorageLogToFile=true build.nims
+
+# Run all tests
+make testAll
+
+# Run a single test file directly
+$(ENV_SCRIPT) nim c -r tests/storage/testblockexchange.nim
+
+# Run C bindings test
+make testLibstorage
+
+# Coverage report (requires lcov)
+make coverage && make show-coverage
+```
+
 ### Run the Go example
 
 See https://github.com/logos-storage/logos-storage-go-bindings-example.
