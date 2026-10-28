@@ -35,6 +35,7 @@ import pkg/questionable/results
 
 import ./manifest
 import ../blocktype
+import ../storagetypes
 import ../utils/protobuf/cid
 import ../utils/protobuf/multicodec
 import ../utils/protobuf/nbytes
@@ -81,6 +82,16 @@ proc decode*(_: type Manifest, data: openArray[byte]): ?!Manifest =
 
   if manifest.manifestVersion != 0:
     return failure("Unsupported manifest version: " & $manifest.manifestVersion)
+
+  let blockSize = manifest.blockSize.uint64
+  if blockSize < MinBlockSize or blockSize > MaxBlockSize:
+    return failure(
+      "Manifest block size " & $blockSize & " is outside " & $MinBlockSize & ".." &
+        $MaxBlockSize
+    )
+
+  if manifest.datasetSize.uint64 == 0:
+    return failure("Manifest dataset size is zero")
 
   manifest.success
 

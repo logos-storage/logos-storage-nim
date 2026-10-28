@@ -60,6 +60,39 @@ asyncchecksuite "BlockExchange - Basic Block Transfer":
       let hasBlock = await blk.cid in leecher.localStore
       check hasBlock
 
+asyncchecksuite "BlockExchange - Short Block":
+  var
+    cluster: NodesCluster
+    seeder: NodesComponents
+    leecher: NodesComponents
+    dataset: TestDataset
+
+  setup:
+    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    seeder = cluster.components[0]
+    leecher = cluster.components[1]
+
+    var blocks = await makeRandomBlocks(4 * 1024, 1024.NBytes)
+    blocks[^1] = bt.Block.new(blocks[^1].data[][0 ..< 512]).tryGet()
+    dataset = makeDataset(blocks).tryGet()
+
+    await seeder.assignBlocks(dataset)
+    await cluster.components.start()
+    await connectNodes(cluster)
+
+  teardown:
+    await cluster.components.stop()
+
+  test "Should not store a block shorter than the manifest's block size":
+    let handle = leecher.engine.startTreeDownload(dataset.manifestDesc).tryGet()
+
+    for i in 0 ..< dataset.blocks.len - 1:
+      discard (await leecher.networkStore.getBlock(dataset.manifest.treeCid, i.Natural)).tryGet()
+
+    let hasShortBlock = await dataset.blocks[^1].cid in leecher.localStore
+    check not hasShortBlock
+    leecher.engine.releaseDownload(handle)
+
 asyncchecksuite "BlockExchange - Presence Discovery":
   var
     cluster: NodesCluster

@@ -9,8 +9,9 @@ import ./helpers
 import ./examples
 
 suite "Manifest":
-  let manifest =
-    Manifest.new(treeCid = Cid.example, blockSize = 1.MiBs, datasetSize = 100.MiBs)
+  let manifest = Manifest.new(
+    treeCid = Cid.example, blockSize = (64 * 1024).NBytes, datasetSize = 100.MiBs
+  )
 
   proc encodeDecode(manifest: Manifest): Manifest =
     let e = manifest.encode().tryGet()

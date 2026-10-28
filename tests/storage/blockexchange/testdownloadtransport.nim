@@ -162,7 +162,7 @@ asyncchecksuite "Download transport selection":
         await engine.start()
 
       let
-        blocks = await makeRandomBlocks(2 * 1024, 1024.NBytes)
+        blocks = await makeRandomBlocks(2 * 4096, 4096.NBytes)
         dataset = makeDataset(blocks).tryGet()
         manifestBlock = bt.Block
           .new(dataset.manifestCid, dataset.manifest.encode().tryGet(), verify = true)

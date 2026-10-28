@@ -569,7 +569,7 @@ int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
     const char *payload = "hello world";
     NimFfiBytes chunk = {.data = (uint8_t *)payload, .len = strlen(payload)};
 
-    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), chunk.len, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, nimffi_str(filepath), 64 * 1024, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1106,13 +1106,13 @@ int check_log_file_after_many_blocks(void)
                       "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
                       "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
                       "\"no-bootstrap-node\":true}";
-    uint64_t chunk_size = 1024;
+    uint64_t chunk_size = 4096;
     char *cid = NULL;
     char *log = NULL;
 
     // 16384 blocks of zeros.
     FILE *input = fopen(input_path, "wb");
-    if (!input || fseek(input, 16 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
+    if (!input || fseek(input, 64 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
     {
         if (input)
         {

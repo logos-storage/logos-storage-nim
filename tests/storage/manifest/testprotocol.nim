@@ -19,7 +19,7 @@ asyncchecksuite "Manifest protocol":
     clientProto: ManifestProtocol
   let
     manifest = Manifest.new(
-      treeCid = Cid.example, blockSize = 123.NBytes, datasetSize = 234.NBytes
+      treeCid = Cid.example, blockSize = 4096.NBytes, datasetSize = 8000.NBytes
     )
     manifestBlk =
       bt.Block.new(data = manifest.encode().tryGet(), codec = ManifestCodec).tryGet()

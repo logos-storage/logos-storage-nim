@@ -111,6 +111,14 @@ method readOnce*(
     # Copy `readBytes` bytes starting at `blockOffset` from the block into the outbuf
     if blk.isEmpty:
       zeroMem(pbytes.offset(read), readBytes)
+    elif blk.data[].len != self.manifest.blockSize.int:
+      raise newLPStreamReadError(
+        newException(
+          CatchableError,
+          "Block " & $blockNum & " is " & $blk.data[].len &
+            " bytes, the manifest's block size is " & $self.manifest.blockSize.int,
+        )
+      )
     else:
       copyMem(pbytes.offset(read), blk.data[][blockOffset].unsafeAddr, readBytes)
 

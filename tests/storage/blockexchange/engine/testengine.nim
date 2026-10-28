@@ -404,6 +404,57 @@ asyncchecksuite "NetworkStore engine handlers":
     await engine.wantListHandler(peerId, wantList)
     await done
 
+  test "Skip a want list entry whose index exceeds Natural":
+    var presenceSent = false
+
+    proc sendPresence(
+        peerId: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      presenceSent = true
+
+    engine.networks.direct =
+      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+
+    let wantList = WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: high(Natural).uint64 + 1),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+        )
+      ],
+      full: false,
+    )
+
+    await engine.wantListHandler(peerId, wantList)
+    check not presenceSent
+
+  test "Skip a want list range that crosses Natural":
+    var presenceSent = false
+
+    proc sendPresence(
+        peerId: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      presenceSent = true
+
+    engine.networks.direct =
+      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+
+    let wantList = WantList(
+      entries: @[
+        WantListEntry(
+          address: BlockAddress(treeCid: Cid.example, index: high(Natural).uint64 - 1),
+          wantType: WantType.WantHave,
+          sendDontHave: true,
+          rangeCount: 4,
+        )
+      ],
+      full: false,
+    )
+
+    await engine.wantListHandler(peerId, wantList)
+    check not presenceSent
+
   test "WantBlocks: rejects range with count = 0":
     let req = WantBlocksRequest(
       requestId: 1,

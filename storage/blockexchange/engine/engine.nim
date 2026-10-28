@@ -349,6 +349,14 @@ proc sendWantBlocksRequest(
       await self.banAndDropPeer(download, peer.id)
       return
 
+    if view.dataLen != download.ctx.md.manifest.blockSize.int:
+      warn "Block length doesn't match the manifest's block size - not storing it",
+        address = view.address,
+        length = view.dataLen,
+        blockSize = download.ctx.md.manifest.blockSize.int,
+        peer = peer.id
+      continue
+
     let
       bd = view.toBlockDelivery()
       putResult = await self.localStore.putBlock(bd.blk)
@@ -1010,8 +1018,15 @@ proc wantListHandler*(
     iterBudget: uint64 = MaxRangeIterationsPerMessage
 
   try:
+    let maxIndex = high(Natural).uint64
     for e in wantList.entries:
       storage_block_exchange_want_have_lists_received.inc()
+
+      let index = e.address.index.uint64
+      if index > maxIndex or (e.rangeCount > 0 and e.rangeCount - 1 > maxIndex - index):
+        warn "Rejecting want list entry: index exceeds Natural",
+          peer = peer, index = index, count = e.rangeCount
+        continue
 
       without advertised =? (await self.localStore.isAdvertised(e.address.treeCid)), err:
         warn "Unable to read advertise state",
