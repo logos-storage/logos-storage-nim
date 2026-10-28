@@ -22,7 +22,7 @@
 ## Network
 
 - Bootstrap nodes are Storage nodes. They are also AutoNAT servers and relay servers.
-- Bootstrap nodes run with `--nat=extip`. All other nodes run with `--nat=auto`. UPnP and PCP should be rare.
+- Bootstrap nodes run with `--nat=extip:<IP>`. All other nodes run with `--nat=auto`. UPnP and PCP should be rare.
 - Storage nodes and Mix proxy nodes are two node types that share the same binary.
 - The testnet and the devnet each have 2 Storage nodes and 4 Mix proxy nodes.
 
