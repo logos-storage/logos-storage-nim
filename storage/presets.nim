@@ -9,6 +9,7 @@ import std/json
 import pkg/chronicles
 import pkg/libp2p/routing_record
 import pkg/results
+import pkg/protobuf_serialization
 
 import ./utils/spr
 
