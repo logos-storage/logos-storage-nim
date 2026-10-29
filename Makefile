@@ -201,15 +201,7 @@ testAll: | build deps
 		$(ENV_SCRIPT) nim testAll $(NIM_PARAMS) build.nims
 	$(MAKE) $(if $(ncpu),-j$(ncpu),) testLibstorage
 
-coverage:
-	$(MAKE) NIMFLAGS="$(NIMFLAGS) --lineDir:on --passC:-fprofile-arcs --passC:-ftest-coverage --passL:-fprofile-arcs --passL:-ftest-coverage" test
-	cd nimcache/release/testStorage && rm -f *.c
-	mkdir -p coverage
-	lcov --capture --keep-going --directory nimcache/release/testStorage --output-file coverage/coverage.info
-	shopt -s globstar && ls $$(pwd)/storage/{*,**/*}.nim
-	shopt -s globstar && lcov --extract coverage/coverage.info --keep-going $$(pwd)/storage/{*,**/*}.nim --output-file coverage/coverage.f.info
-	echo -e $(BUILD_MSG) "coverage/report/index.html"
-	genhtml coverage/coverage.f.info --keep-going --output-directory coverage/report
+coverage: coverage-script
 
 show-coverage:
 	if which open >/dev/null; then (echo -e "\e[92mOpening\e[39m HTML coverage report in browser..." && open coverage/report/index.html) || true; fi

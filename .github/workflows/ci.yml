@@ -54,7 +54,7 @@ jobs:
           suggest: true
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -71,7 +71,6 @@ jobs:
 
       - name: Generate coverage data
         run: |
-          # make -j${ncpu} coverage
           make -j${ncpu} coverage-script
         shell: bash
 
@@ -80,7 +79,7 @@ jobs:
         with:
           directory: ./coverage/
           fail_ci_if_error: true
-          files: ./coverage/coverage.f.info
+          files: ./coverage/coverage.info
           flags: unittests
           name: codecov-umbrella
           token: ${{ secrets.CODECOV_TOKEN }}
