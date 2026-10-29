@@ -101,7 +101,7 @@ task bootstrapHealthCheck, "ping preset bootstrap nodes; non-zero exit if any ar
       # Writes the JSON summary to a file before exiting, so the scheduled workflow
       args = "--network logos.dev --network logos.test --format json --out build/bootstrap-health-report.json"
       break
-  
+
   # can read it. check_spr exits non-zero when a node is unreachable, failing
   # the workflow run.
   exec "build/check_spr " & args
@@ -156,28 +156,28 @@ task coverage, "generates code coverage report":
     echo "  **   uses a much newer version of gcov).                       **"
     echo "  *****************************************************************"
 
-  var nimSrcs = " "
-  for f in walkDirRec("storage", {pcFile}):
-    if f.endswith(".nim"):
-      nimSrcs.add " " & f.absolutePath.quoteShell()
+  # Reset the counters left by a previous run, so the report covers this run only.
+  if dirExists("nimcache/coverage"):
+    exec("lcov --zerocounters --directory nimcache/coverage")
 
   echo "======== Running Tests ======== "
   test "coverage",
     srcDir = "tests/", params = " --nimcache:nimcache/coverage -d:release"
-  exec("rm nimcache/coverage/*.c")
   rmDir("coverage")
   mkDir("coverage")
   echo " ======== Running LCOV ======== "
+  # Nim generates several C functions for one proc (async, generics, GC markers),
+  # which breaks lcov's function data: only line coverage is kept.
+  # Nim also maps some generated code past the end of a file: "range" drops it.
+  # lcov only applies its filters to known file types, so .nim is declared as C for "range" to work.
   exec(
-    "lcov --capture --keep-going --directory nimcache/coverage --output-file coverage/coverage.info"
-  )
-  exec(
-    "lcov --extract coverage/coverage.info --keep-going --output-file coverage/coverage.f.info " &
-      nimSrcs
+    "lcov --capture --directory nimcache/coverage --include \"$PWD/storage/*\"" &
+      " --rc function_coverage=0 --rc c_file_extensions=nim --filter range" &
+      " --output-file coverage/coverage.info"
   )
   echo " ======== Generating HTML coverage report ======== "
   exec(
-    "genhtml coverage/coverage.f.info --keep-going --output-directory coverage/report "
+    "genhtml coverage/coverage.info --rc function_coverage=0 --output-directory coverage/report"
   )
   echo " ======== Coverage report Done ======== "
 
