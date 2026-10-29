@@ -54,7 +54,7 @@ jobs:
           suggest: true
 
   coverage:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
