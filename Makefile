@@ -201,15 +201,13 @@ testAll: | build deps
 		$(ENV_SCRIPT) nim testAll $(NIM_PARAMS) build.nims
 	$(MAKE) $(if $(ncpu),-j$(ncpu),) testLibstorage
 
-coverage: coverage-script
-
-show-coverage:
-	if which open >/dev/null; then (echo -e "\e[92mOpening\e[39m HTML coverage report in browser..." && open coverage/report/index.html) || true; fi
-
-coverage-script: build deps
+coverage: build deps
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(ENV_SCRIPT) nim coverage $(NIM_PARAMS) build.nims
 	echo "Run `make show-coverage` to view coverage results"
+
+show-coverage:
+	if which open >/dev/null; then (echo -e "\e[92mOpening\e[39m HTML coverage report in browser..." && open coverage/report/index.html) || true; fi
 
 # usual cleaning
 clean: | clean-common

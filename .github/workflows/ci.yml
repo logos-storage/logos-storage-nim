@@ -71,7 +71,7 @@ jobs:
 
       - name: Generate coverage data
         run: |
-          make -j${ncpu} coverage-script
+          make -j${ncpu} coverage
         shell: bash
 
       - name: Upload coverage data to Codecov
