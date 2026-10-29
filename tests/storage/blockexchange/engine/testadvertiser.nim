@@ -2,6 +2,8 @@ import std/options
 
 import pkg/chronos
 import pkg/libp2p/multiaddress
+from pkg/libp2p/address_manager import AddrSource, AddrState, add, update
+from pkg/libp2p/switch import Switch
 import pkg/libp2p/peerinfo
 import pkg/libp2p/routing_record
 import pkg/libp2p/protocols/connectivity/autonat/types
@@ -146,10 +148,29 @@ asyncchecksuite "Advertiser reachability":
       .init("/ip4/1.2.3.4/tcp/4001/p2p/" & $PeerId.example & "/p2p-circuit")
       .expect("valid")
 
-  proc autonatWith(reachability: NetworkReachability): AutonatV2Service =
+  proc autonatWith(
+      reachability: NetworkReachability, sw: var Switch
+  ): AutonatV2Service =
     let rng = Rng.instance().libp2pRng
+    sw = newStandardSwitch()
     result = AutonatV2Service.new(rng, AutonatV2Client.new(rng))
-    result.networkReachability = reachability
+    service.setup(result, sw)
+
+    if reachability == NetworkReachability.Unknown:
+      return
+
+    sw.addressManager.add(publicAddr, AddrSource.Autonat)
+    sw.addressManager.update(
+      publicAddr,
+      if reachability == NetworkReachability.Reachable:
+        AddrState.Confirmed
+      else:
+        AddrState.Unreachable,
+    )
+
+  proc autonatWith(reachability: NetworkReachability): AutonatV2Service =
+    var sw: Switch
+    autonatWith(reachability, sw)
 
   proc startAdvertiser(
       addrs: seq[MultiAddress], autonat: Option[AutonatV2Service]
@@ -225,14 +246,15 @@ asyncchecksuite "Advertiser reachability":
     check eventually manifestBlk.cid in advertised
 
   test "Should advertise once AutoNAT flips to Reachable":
-    let autonat = autonatWith(NetworkReachability.NotReachable)
+    var autonatSwitch: Switch
+    let autonat = autonatWith(NetworkReachability.NotReachable, autonatSwitch)
     await startAdvertiser(@[publicAddr], some(autonat))
 
     (await localStore.putBlock(manifestBlk)).tryGet()
     check eventually advertiser.advertiseQueue.len == 0
     check advertised.len == 0
 
-    autonat.networkReachability = NetworkReachability.Reachable
+    autonatSwitch.addressManager.update(publicAddr, AddrState.Confirmed)
     advertiser.onAddrChange()
 
     check eventually manifestBlk.cid in advertised

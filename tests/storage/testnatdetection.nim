@@ -12,9 +12,10 @@ import pkg/libp2p except setup
 import pkg/libp2p/protocols/connectivity/autonatv2/service except setup
 import pkg/libp2p/protocols/connectivity/autonatv2/client except setup
 import pkg/libp2p/protocols/connectivity/autonatv2/types as autonatv2Types
+import pkg/libp2p/protocols/connectivity/autonatv2/server as autonatv2Server
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
 import pkg/libp2p/services/autorelayservice except setup
-import pkg/libp2p/observedaddrmanager
+import pkg/libp2p/address_manager
 
 import ./helpers
 import ./natsimulation
@@ -61,7 +62,7 @@ method sendDialRequest*(
 ): Future[AutonatV2Response] {.
     async: (raises: [AutonatV2Error, CancelledError, DialFailedError, LPStreamError])
 .} =
-  self.reqAddrs = testAddrs
+  self.reqAddrs.add(testAddrs)
   AutonatV2Response(reachability: Reachable)
 
 proc serverSwitch(): Switch =
@@ -73,7 +74,9 @@ proc serverSwitch(): Switch =
     .withTcpTransport(flags)
     .withNoise()
     .withYamux()
-    .withAutonatV2Server()
+    .withAutonatV2Server(
+      autonatv2Server.AutonatV2Config.new(allowPrivateAddresses = true)
+    )
     .build()
 
 asyncchecksuite "NAT detection - simulated NAT":
@@ -107,19 +110,12 @@ asyncchecksuite "NAT detection - simulated NAT":
     client.setup(autonatClient, natNode)
     natNode.mount(autonatClient)
 
-    # Setup AutoNAT v2 service with maxQueueSize=1 and minConfidence=0.5,
-    # so a single dial-back answer (confidence 1.0) is needed.
-    let config = AutonatV2ServiceConfig.new(
-      scheduleInterval = Opt.some(1.seconds),
-      askNewConnectedPeers = true,
-      numPeersToAsk = 1,
-      maxQueueSize = 1,
-      minConfidence = 0.5,
-    )
+    # Setup AutoNAT v2 service with frequent reachability checks.
+    let config = AutonatV2ServiceConfig.new(scheduleInterval = Opt.some(1.seconds))
     autonat = AutonatV2Service.new(natNode.rng, autonatClient, config)
     service.setup(autonat, natNode)
 
-    autonat.setStatusAndConfidenceHandler(
+    discard autonat.reachabilityObservers.add(
       proc(
           reachability: NetworkReachability,
           confidence: Opt[float],
@@ -131,15 +127,14 @@ asyncchecksuite "NAT detection - simulated NAT":
         )
     )
 
-    # Create and start one Autonat server (maxQueueSize=1 and minConfidence=0.5)
+    # Create and start one AutoNAT server.
     server = serverSwitch()
     await server.start()
 
-    # Start the NAT node and connect to the Autonat server (bootstrap node in our network).
-    # Then start the Autonat service on the NAT node.
+    # Start AutoNAT before connecting so the identified peer triggers verification.
     await natNode.start()
-    await natNode.connect(server.peerInfo.peerId, server.peerInfo.addrs)
     await autonat.start(natNode)
+    await natNode.connect(server.peerInfo.peerId, server.peerInfo.addrs)
 
   teardown:
     await autonat.stop(natNode)
@@ -216,7 +211,7 @@ asyncchecksuite "NAT detection - dial request candidates":
       Rng.instance().libp2pRng,
       mockClient,
       AutonatV2ServiceConfig.new(
-        enableDialableCandidates = true, maxQueueSize = 1, minConfidence = 0.5
+        scheduleInterval = Opt.some(50.milliseconds), enableDialableCandidates = true
       ),
     )
     service.setup(autonat, sw)
@@ -227,7 +222,8 @@ asyncchecksuite "NAT detection - dial request candidates":
     let quorum = 3
     let observed = MultiAddress.init("/ip4/8.8.8.8/tcp/4001").expect("valid")
     for _ in 0 ..< quorum:
-      discard sw.peerStore.identify.observedAddrManager.addObservation(observed)
+      let observer = PeerId.random(Rng.instance().libp2pRng).expect("valid")
+      discard sw.addressManager.addObservation(observer, observed)
 
     let sw2 = newStandardSwitch()
     await sw2.start()

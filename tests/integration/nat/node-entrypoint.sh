@@ -88,9 +88,6 @@ private_node() {
   add_bootstrap_options "$bootstrap_api_url"
 
   _config_opts+=(
-    --nat-num-peers-to-ask=1
-    --nat-max-queue-size=1
-    --nat-min-confidence=1.0
     --nat-schedule-interval=5s
   )
 }

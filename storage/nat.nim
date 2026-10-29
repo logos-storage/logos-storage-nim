@@ -160,14 +160,11 @@ method handleNatStatus*(
   of Unknown:
     discard
   of Reachable:
-    if dialBackAddr.isSome:
-      if autoRelayService.isRunning:
-        await autoRelayService.stop(switch)
-        debug "AutoRelayService stopped"
+    if autoRelayService.isRunning:
+      await autoRelayService.stop(switch)
+      debug "AutoRelayService stopped"
 
-      await discovery.setServerMode(isServer = true)
-    else:
-      warn "Empty dialback address in AutoNat when node is Reachable"
+    await discovery.setServerMode(isServer = true)
   of NotReachable:
     await discovery.setServerMode(isServer = false)
 
@@ -288,9 +285,10 @@ proc holePunchIfRelayed*(
     await closeRelayConn(relayedConn)
     return
 
-  var natAddrs = switch.peerStore.getMostObservedProtosAndPorts()
+  var natAddrs = switch.addressManager.mostObservedProtosAndPorts()
   if natAddrs.len == 0:
-    natAddrs = switch.peerInfo.listenAddrs.mapIt(switch.peerStore.guessDialableAddr(it))
+    natAddrs =
+      switch.peerInfo.listenAddrs.mapIt(switch.addressManager.externalAddrFor(it))
   try:
     await DcutrClient.new().startSync(switch, peerId, natAddrs)
     await closeRelayConn(relayedConn)
