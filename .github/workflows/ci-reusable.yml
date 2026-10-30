@@ -68,6 +68,15 @@ jobs:
         if: matrix.tests == 'libstorage' || matrix.tests == 'all'
         run: make -j${ncpu} testLibstorage
 
+      # TEMP: print the macOS crash reports to debug the libstorage crash
+      - name: Print macOS crash reports
+        if: failure() && runner.os == 'macOS'
+        run: |
+          for f in ~/Library/Logs/DiagnosticReports/*.ips; do
+            echo "=== $f"
+            cat "$f"
+          done
+
       ## Part 4 Tests ##
       - name: NAT integration tests
         if: matrix.tests == 'nat-integration'
