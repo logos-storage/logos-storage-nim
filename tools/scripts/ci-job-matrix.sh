@@ -39,7 +39,7 @@ linux () {
 macos () {
   job_os="macos"
   job_cpu="arm64"
-  job_builder="macos-14"
+  job_builder="macos-15"
   job_shell="bash --noprofile --norc -e -o pipefail"
 }
 
