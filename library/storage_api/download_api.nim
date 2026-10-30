@@ -151,10 +151,9 @@ proc streamData(
     if not outputStream.isNil():
       outputStream.write(chunk)
 
-proc storage_download_stream(
+proc streamDownload(
     self: Storage, cid: string, chunkSize: uint64, filepath: string
-): Future[Result[string, string]] {.ffi.} =
-  ## Streams `cid` to `on_download_chunk`, and to `filepath` when it is set.
+): Future[Result[string, string]] {.async: (raises: [CancelledError]).} =
   let parsed = Cid.init(cid).valueOr:
     return err("Failed to stream: cannot parse cid: " & cid)
 
@@ -179,6 +178,15 @@ proc storage_download_stream(
     downloadSessions.del($parsed)
 
   return ok("")
+
+proc storage_download_stream(
+    self: Storage, cid: string, chunkSize: uint64, filepath: string
+): Future[Result[string, string]] {.ffi.} =
+  ## Streams `cid` to `on_download_chunk`, and to `filepath` when it is set.
+  ## Fires `on_download_done` on the event queue after the last chunk.
+  let res = await self.streamDownload(cid, chunkSize, filepath)
+  onDownloadDone(cid, if res.isErr(): res.error else: "")
+  return res
 
 proc storage_download_cancel(
     self: Storage, cid: string

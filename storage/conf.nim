@@ -836,7 +836,7 @@ proc setupLogging*(conf: StorageConf): Option[IoHandle] =
 
     return ioHandle
 
-proc setupMetrics*(config: StorageConf): ?!void =
+proc setupMetrics*(config: StorageConf): Future[?!void] {.async: (raises: []).} =
   if config.metricsEnabled:
     let metricsAddress = config.metricsAddress
     notice "Starting metrics HTTP server",
@@ -844,7 +844,7 @@ proc setupMetrics*(config: StorageConf): ?!void =
     let server = MetricsHttpServerRef.new($metricsAddress, config.metricsPort).valueOr:
       return failure($error)
     try:
-      waitFor server.start()
+      await server.start()
     except MetricsError as exc:
       return failure(exc.msg)
     except CancelledError:

@@ -17,3 +17,5 @@ jobs:
         uses:  ytanikin/pr-conventional-commits@1.4.1
         with:
           task_types: '["feat","fix","docs","test","ci","build","refactor","style","perf","chore","revert"]'
+          # A fork PR token is read-only, so labelling fails the check.
+          add_label: ${{ github.event.pull_request.head.repo.full_name == github.repository }}

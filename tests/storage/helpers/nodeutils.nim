@@ -122,8 +122,8 @@ proc assignBlocks*(
   await assignBlocks(node, dataset, 0 ..< dataset.blocks.len, putMerkleProofs)
 
 proc generateNodes*(
-    num: Natural, blocks: openArray[bt.Block] = [], config: NodeConfig = NodeConfig()
-): NodesCluster =
+    num: Natural, blocks: seq[bt.Block] = @[], config: NodeConfig = NodeConfig()
+): Future[NodesCluster] {.async: (raises: [CatchableError]).} =
   var
     components: seq[NodesComponents] = @[]
     taskpool = Taskpool.new()
@@ -133,13 +133,13 @@ proc generateNodes*(
     let basePortForNode = config.basePort + 2 * i.int
     let listenPort =
       if config.findFreePorts:
-        waitFor nextFreePort(basePortForNode)
+        await nextFreePort(basePortForNode)
       else:
         basePortForNode
 
     let bindPort =
       if config.findFreePorts:
-        waitFor nextFreePort(listenPort + 1)
+        await nextFreePort(listenPort + 1)
       else:
         listenPort + 1
 
@@ -176,7 +176,7 @@ proc generateNodes*(
             else:
               nullDiscovery()
 
-        waitFor store.start()
+        await store.start()
         (store.BlockStore, @[bdStore, repoStore, mdStore], discovery)
       else:
         let
@@ -211,7 +211,7 @@ proc generateNodes*(
         )
 
         if config.enableBootstrap:
-          waitFor switch.peerInfo.update()
+          await switch.peerInfo.update()
           bootstrapNodes.add((switch.peerInfo.peerId, switch.peerInfo.addrs))
 
         fullNode
@@ -237,8 +237,8 @@ proc generateNodes*(
   if config.createFullNode:
     for component in components:
       if component.node != nil:
-        waitFor component.node.switch.start()
-        waitFor component.node.start()
+        await component.node.switch.start()
+        await component.node.start()
 
   return NodesCluster(components: components, taskpool: taskpool)
 

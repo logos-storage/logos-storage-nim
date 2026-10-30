@@ -35,7 +35,7 @@ asyncchecksuite "BlockExchange - Basic Block Transfer":
 
   setup:
     # Create two nodes
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -68,7 +68,7 @@ asyncchecksuite "BlockExchange - Presence Discovery":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -166,7 +166,7 @@ asyncchecksuite "BlockExchange - Multi-Peer Download":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(3, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(3, config = NodeConfig(findFreePorts: true))
     seeder1 = cluster.components[0]
     seeder2 = cluster.components[1]
     leecher = cluster.components[2]
@@ -231,7 +231,7 @@ asyncchecksuite "BlockExchange - Download Lifecycle":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -343,7 +343,7 @@ asyncchecksuite "BlockExchange - Error Handling":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -411,7 +411,7 @@ asyncchecksuite "BlockExchange - Local Block Resolution":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(1, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(1, config = NodeConfig(findFreePorts: true))
     node1 = cluster.components[0]
 
     let blocks = await makeRandomBlocks(4 * 1024, 1024.NBytes)
@@ -454,7 +454,7 @@ asyncchecksuite "BlockExchange - Mixed Local and Network":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -498,7 +498,7 @@ asyncchecksuite "BlockExchange - Re-download from Local":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -534,7 +534,7 @@ asyncchecksuite "BlockExchange - NetworkStore getBlocks":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 

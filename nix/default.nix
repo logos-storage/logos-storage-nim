@@ -112,6 +112,10 @@ in stdenv.mkDerivation rec {
     # Skip the LevelDB setup
     mkdir -p vendor/nim-leveldbstatic/build
     touch vendor/nim-leveldbstatic/build/Makefile
+
+    # The wrapper's system config sets os = windows, and `nim e` runs the script before the cmdline can override it.
+    substituteInPlace vendor/nim-bearssl/bearssl/abi/csources.nim \
+      --replace-fail '" e --hints:off' '" e --skipCfg --hints:off'
   '';
 
   configurePhase = ''
@@ -133,6 +137,9 @@ in stdenv.mkDerivation rec {
     chmod 777 -R dist/nimble csources_v3
     popd
   '' + lib.optionalString isWindows ''
+    # config.nims joins nimcache with the target's `\`, a relative path on the build host.
+    export NIMFLAGS="$NIMFLAGS --nimcache:$PWD/nimcache/release/${lib.concatStringsSep "-" targets}"
+
     # For --app:staticlib nim runs a hardcoded `ar` (extccomp.nim:86), with no
     # config key to override it, and a cross stdenv only has $AR.
     mkdir -p $TMPDIR/arshim
