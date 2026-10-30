@@ -37,16 +37,16 @@
               libc = "ucrt";
             };
             overlays = [
-              # nixpkgs 26.05 ships Nim 2.2.4, the project pins 2.2.10.
+              # nixpkgs 26.05 ships Nim 2.2.4, the project pins 2.2.14.
               # We prefer override the Nim version and keep the release branch
               # for nixpkgs-windows.url rather than pinning to a specific commit on
               # unstable branch and have the Nim version up to date.
               (final: prev: {
                 nim-unwrapped-2_2 = prev.nim-unwrapped-2_2.overrideAttrs (old: rec {
-                  version = "2.2.10";
+                  version = "2.2.14";
                   src = prev.fetchurl {
                     url = "https://nim-lang.org/download/nim-${version}.tar.xz";
-                    hash = "sha256-eVe37QBCBrzxC8xPO0dEFTh45i8kMVUqmo6dP0Do1dU=";
+                    hash = "sha256-iSc/g/I3lGX0lMgnHv46Y82eeJITCLhHP0/+1TjbtTY=";
                   };
                   # Rewrite patch for 2.2.10.
                   patches = builtins.filter
