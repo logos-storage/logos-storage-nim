@@ -17,8 +17,6 @@ env:
 jobs:
   build:
     strategy:
-      # TEMP: let the macOS libstorage job reach the lldb step
-      fail-fast: false
       matrix:
         include: ${{ fromJson(inputs.matrix) }}
 
@@ -69,12 +67,6 @@ jobs:
       - name: Libstorage tests
         if: matrix.tests == 'libstorage' || matrix.tests == 'all'
         run: make -j${ncpu} testLibstorage
-
-      # TEMP: rerun the C test under lldb to debug the macOS libstorage crash
-      - name: Libstorage C test under lldb
-        if: failure() && runner.os == 'macOS' && matrix.tests == 'libstorage'
-        working-directory: tests/cbindings
-        run: lldb --batch -o run -o "bt all" -o "register read" -o "disassemble --pc --count 12" -- ./storage
 
       ## Part 4 Tests ##
       - name: NAT integration tests
