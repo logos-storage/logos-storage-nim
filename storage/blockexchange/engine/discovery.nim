@@ -83,6 +83,7 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
         debug "Discovery lookup failed", cid, error = providers.error.msg
 
       var callbacks: Table[uint64, ProvidersCallback]
+      # Callbacks added while these run still find the lookup in flight and must get this result.
       while b.providersCallbacks.pop(key, callbacks):
         if providers.isOk:
           await allFutures(callbacks.values.toSeq.mapIt(it(providers.get())))
