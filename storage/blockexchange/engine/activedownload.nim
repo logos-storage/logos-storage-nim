@@ -74,7 +74,7 @@ proc waitForComplete*(
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   return await download.completionFuture
 
-proc signalCompletionIfDone(download: ActiveDownload, error: ref StorageError = nil) =
+proc signalCompletionIfDone*(download: ActiveDownload, error: ref StorageError = nil) =
   if download.completionFuture.finished:
     return
   if error != nil:

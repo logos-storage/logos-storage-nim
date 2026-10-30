@@ -182,8 +182,11 @@ proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
 
     let blockExc = self.contextFor(download)
     if blockExc.isNil:
-      trace "Skipping providers because selected transport is unavailable",
-        transport = transport
+      warn "Failing download because its transport is no longer enabled",
+        transport = transport, treeCid = download.treeCid
+      download.signalCompletionIfDone(
+        (ref StorageError)(msg: $transport & " transport is not enabled")
+      )
       return
 
     let swarm = download.ctx.swarm
@@ -500,6 +503,9 @@ proc broadcastWantHave(
 ) {.async: (raises: [CancelledError]).} =
   let blockExc = self.contextFor(download)
   if blockExc.isNil:
+    download.signalCompletionIfDone(
+      (ref StorageError)(msg: $download.ctx.transport & " transport is not enabled")
+    )
     return
   let
     rangeAddress = BlockAddress.init(download.treeCid, start)
@@ -536,6 +542,9 @@ proc downloadWorker(
   ## Supports concurrent batch requests per peer based on BDP pipeline depth.
   let blockExc = self.contextFor(download)
   if blockExc.isNil:
+    download.signalCompletionIfDone(
+      (ref StorageError)(msg: $download.ctx.transport & " transport is not enabled")
+    )
     return
   let
     treeCid = download.treeCid
