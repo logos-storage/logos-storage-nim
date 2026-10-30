@@ -77,8 +77,10 @@ proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
         if await request.withTimeout(DefaultDiscoveryTimeout):
           await request
         else:
-          debug "Discovery lookup timed out", cid
           seq[PeerRecord].failure("Provider lookup timed out")
+
+      if providers.isErr:
+        debug "Discovery lookup failed", cid, error = providers.error.msg
 
       var callbacks: Table[uint64, ProvidersCallback]
       while b.providersCallbacks.pop(key, callbacks):
