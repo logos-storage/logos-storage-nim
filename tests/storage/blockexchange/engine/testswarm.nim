@@ -1,4 +1,4 @@
-import std/[options, sets, tables]
+import std/[options, tables]
 
 import pkg/unittest2
 import pkg/chronos
@@ -344,31 +344,9 @@ suite "Swarm":
     discard swarm.addPeer(newer, BlockAvailability.unknown())
     swarm.getPeer(older).get().lastSeen = Moment.now() - 10.seconds
 
-    check swarm.replaceUnknownPeer(
-      joining, BlockAvailability.complete(), initHashSet[PeerId]()
-    )
+    check swarm.replaceUnknownPeer(joining, BlockAvailability.complete())
     check swarm.getPeer(older).isNone
     check swarm.getPeer(newer).isSome
-    check swarm.getPeer(joining).isSome
-
-  test "Should not replace a peer with a batch in flight":
-    let config =
-      SwarmConfig(deltaMin: 1, deltaMax: 2, deltaTarget: 2, maxPeerFailures: 3)
-    swarm = Swarm.new(config)
-
-    let
-      busyPeer = PeerId.example
-      idlePeer = PeerId.example
-      joining = PeerId.example
-    discard swarm.addPeer(busyPeer, BlockAvailability.unknown())
-    discard swarm.addPeer(idlePeer, BlockAvailability.unknown())
-    swarm.getPeer(busyPeer).get().lastSeen = Moment.now() - 10.seconds
-
-    check swarm.replaceUnknownPeer(
-      joining, BlockAvailability.complete(), [busyPeer].toHashSet
-    )
-    check swarm.getPeer(busyPeer).isSome
-    check swarm.getPeer(idlePeer).isNone
     check swarm.getPeer(joining).isSome
 
   test "Should not let a banned peer replace an unknown one":
@@ -382,9 +360,7 @@ suite "Swarm":
     discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
     swarm.banPeer(banned)
 
-    check not swarm.replaceUnknownPeer(
-      banned, BlockAvailability.complete(), initHashSet[PeerId]()
-    )
+    check not swarm.replaceUnknownPeer(banned, BlockAvailability.complete())
     check swarm.getPeer(unknownPeer).isSome
     check swarm.getPeer(banned).isNone
 
@@ -398,9 +374,7 @@ suite "Swarm":
       joining = PeerId.example
     discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
 
-    check not swarm.replaceUnknownPeer(
-      joining, BlockAvailability.unknown(), initHashSet[PeerId]()
-    )
+    check not swarm.replaceUnknownPeer(joining, BlockAvailability.unknown())
     check swarm.getPeer(unknownPeer).isSome
     check swarm.getPeer(joining).isNone
 

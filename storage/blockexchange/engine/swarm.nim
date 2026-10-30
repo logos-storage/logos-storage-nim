@@ -133,7 +133,7 @@ proc addPeer*(swarm: Swarm, peerId: PeerId, availability: BlockAvailability): bo
   true
 
 proc replaceUnknownPeer*(
-    swarm: Swarm, peerId: PeerId, availability: BlockAvailability, busy: HashSet[PeerId]
+    swarm: Swarm, peerId: PeerId, availability: BlockAvailability
 ): bool =
   if peerId in swarm.bannedPeers:
     return false
@@ -142,7 +142,7 @@ proc replaceUnknownPeer*(
     replaced = none(PeerId)
     oldestSeen: Moment
   for id, peer in swarm.peers:
-    if peer.availability.kind == bakUnknown and id notin busy and
+    if peer.availability.kind == bakUnknown and
         (availability.kind != bakUnknown or peer.isStale) and
         (replaced.isNone or peer.lastSeen < oldestSeen):
       replaced = some(id)

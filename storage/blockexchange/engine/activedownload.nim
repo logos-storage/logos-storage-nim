@@ -365,11 +365,7 @@ proc updatePeerAvailability*(
   if swarm.addPeer(peerId, availability) or availability.kind == bakUnknown:
     return
 
-  var busy: HashSet[PeerId]
-  for batch in download.pendingBatches.values:
-    busy.incl(batch.peerId)
-
-  if not swarm.replaceUnknownPeer(peerId, availability, busy):
+  if not swarm.replaceUnknownPeer(peerId, availability):
     trace "Peer availability dropped, not admitted to swarm", peer = peerId
 
 proc handleBatchRetry*(

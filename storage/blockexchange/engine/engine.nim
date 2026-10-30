@@ -193,9 +193,6 @@ proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
     var
       connected: seq[PeerRecord]
       unconnected: seq[PeerRecord]
-      busy: HashSet[PeerId]
-    for batch in download.pendingBatches.values:
-      busy.incl(batch.peerId)
     for provider in providers:
       if swarm.getPeer(provider.peerId).isSome or
           not blockExc.dialCooldownExpired(provider.peerId):
@@ -211,8 +208,7 @@ proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
     for provider in connected & unconnected:
       let peerId = provider.peerId
       if swarm.addPeer(peerId, BlockAvailability.unknown()) or
-          swarm.replaceUnknownPeer(peerId, BlockAvailability.unknown(), busy):
-        busy.incl(peerId)
+          swarm.replaceUnknownPeer(peerId, BlockAvailability.unknown()):
         dialing.add(provider)
 
     let dialed = await allFinished(dialing.mapIt(blockExc.network.dialPeer(it)))
