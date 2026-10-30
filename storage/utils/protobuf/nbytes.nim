@@ -15,7 +15,7 @@ import pkg/protobuf_serialization/codec
 
 import ../../units
 
-Protobuf.extensionDefaults(NBytes)
+Protobuf.extensionDefaults(NBytes, puint64)
 
 func computeFieldSize*(
     field: int, value: NBytes, ProtoType: type ProtobufExt, skipDefault: static bool

@@ -14,7 +14,7 @@ import pkg/libp2p/cid
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/codec
 
-Protobuf.extensionDefaults(Cid, defaultSeq = false, packed = false)
+Protobuf.extensionDefaults(Cid, pbytes)
 
 func computeFieldSize*(
     field: int, cid: Cid, ProtoType: type ProtobufExt, skipDefault: static bool
