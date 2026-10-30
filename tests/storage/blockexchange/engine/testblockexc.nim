@@ -194,7 +194,7 @@ asyncchecksuite "BlockExchange - Discovered Providers":
 
     leecher.downloadManager.cancelDownload(treeCid)
 
-asyncchecksuite "BlockExchange - Requested Peers":
+asyncchecksuite "BlockExchange - User Connected Peers":
   var
     cluster: NodesCluster
     seeder: NodesComponents
@@ -216,8 +216,8 @@ asyncchecksuite "BlockExchange - Requested Peers":
   teardown:
     await cluster.components.stop()
 
-  test "Download should use a requested peer when discovery finds none":
-    leecher.engine.contextFor(DownloadTransport.Direct).addRequestedPeer(
+  test "Download should use a user-connected peer when discovery finds none":
+    leecher.engine.contextFor(DownloadTransport.Direct).addUserConnectedPeer(
       seeder.switch.peerInfo.peerId
     )
 

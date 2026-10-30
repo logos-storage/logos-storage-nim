@@ -51,7 +51,7 @@ type BlockExcContext* = ref object of RootObj
   downloadManager: DownloadManager
   trackedFutures: TrackedFutures
   dialFailures: Table[PeerId, Moment]
-  requestedPeers: HashSet[PeerId]
+  userConnectedPeers: HashSet[PeerId]
 
 func transport*(self: BlockExcContext): DownloadTransport =
   self.network.transport.kind
@@ -79,13 +79,13 @@ proc evictPeer*(self: BlockExcContext, peer: PeerId) =
 
   self.peers.remove(peer)
   self.peerTracker.clearPeer(peer)
-  self.requestedPeers.excl(peer)
+  self.userConnectedPeers.excl(peer)
 
-proc addRequestedPeer*(self: BlockExcContext, peerId: PeerId) =
-  self.requestedPeers.incl(peerId)
+proc addUserConnectedPeer*(self: BlockExcContext, peerId: PeerId) =
+  self.userConnectedPeers.incl(peerId)
 
-proc admitRequestedPeers*(self: BlockExcContext, swarm: Swarm) =
-  var candidates = self.requestedPeers.toSeq().filterIt(swarm.getPeer(it).isNone)
+proc admitUserConnectedPeers*(self: BlockExcContext, swarm: Swarm) =
+  var candidates = self.userConnectedPeers.toSeq().filterIt(swarm.getPeer(it).isNone)
   shuffle(candidates)
   for peerId in candidates:
     if not swarm.addPeer(peerId, BlockAvailability.unknown()):
@@ -389,7 +389,7 @@ proc new*(
     downloadManager: downloadManager,
     trackedFutures: TrackedFutures(),
     dialFailures: initTable[PeerId, Moment](),
-    requestedPeers: initHashSet[PeerId](),
+    userConnectedPeers: initHashSet[PeerId](),
   )
 
   proc onWantList(

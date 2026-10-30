@@ -158,7 +158,7 @@ proc connect*(
   await self.switch.connect(peerId, addrs)
   let blockExc = self.engine.contextFor(DownloadTransport.Direct)
   if not blockExc.isNil:
-    blockExc.addRequestedPeer(peerId)
+    blockExc.addUserConnectedPeer(peerId)
 
 proc updateExpiry*(
     self: StorageNodeRef, manifestCid: Cid, expiry: SecondsSince1970

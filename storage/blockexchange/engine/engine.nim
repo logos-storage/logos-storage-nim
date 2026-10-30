@@ -553,7 +553,7 @@ proc downloadWorker(
 
   try:
     if not download.fetchLocal:
-      blockExc.admitRequestedPeers(download.ctx.swarm)
+      blockExc.admitUserConnectedPeers(download.ctx.swarm)
       self.searchForNewPeers(download)
 
     while not download.cancelled and not download.isDownloadComplete():
@@ -677,7 +677,7 @@ proc downloadWorker(
       var shouldBroadcast = false
 
       if swarm.peersNeeded() != shHealthy:
-        blockExc.admitRequestedPeers(swarm)
+        blockExc.admitUserConnectedPeers(swarm)
         self.searchForNewPeers(download)
 
       if swarm.peersWithRange(start, count).len == 0:
