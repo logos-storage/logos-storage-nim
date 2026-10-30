@@ -48,9 +48,11 @@
                     url = "https://nim-lang.org/download/nim-${version}.tar.xz";
                     hash = "sha256-iSc/g/I3lGX0lMgnHv46Y82eeJITCLhHP0/+1TjbtTY=";
                   };
-                  # Rewrite patch for 2.2.10.
+                  # Rewrite patch for 2.2.10. The openssl patch no longer
+                  # applies to 2.2.14, and we do not use Nim's openssl wrapper.
                   patches = builtins.filter
-                    (p: baseNameOf (toString p) != "extra-mangling-2.patch") old.patches;
+                    (p: !(builtins.elem (baseNameOf (toString p))
+                      [ "extra-mangling-2.patch" "openssl.patch" ])) old.patches;
                   # This flag turns on code that 2.2.10 no longer compiles.
                   # nixpkgs dropped it in the same commit that moved to 2.2.10.
                   kochArgs = builtins.filter
