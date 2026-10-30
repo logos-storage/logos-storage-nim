@@ -19,7 +19,7 @@ import ../blocktype as bt
 import ../discovery
 import ../errors
 import ../logutils
-import ../mix
+import ../peertransport
 import ../stores/blockstore
 
 import ./coders
@@ -42,13 +42,11 @@ const
 
 type
   ManifestProtocol* = ref object of LPProtocol
-    switch*: Switch
     localStore*: BlockStore
     discovery*: Discovery
     retries*: int
     retryDelay*: Duration
     fetchTimeout*: Duration
-    mixTransport: MixTransport
 
   ManifestFetchStatus* = enum
     Found = 0
@@ -140,26 +138,12 @@ proc handleManifestRequest(
     warn "Error handling manifest request", exc = exc.msg
 
 proc fetchManifestFromPeer(
-    self: ManifestProtocol, peer: PeerRecord, cid: Cid, transport: DownloadTransport
+    self: ManifestProtocol, peer: PeerRecord, cid: Cid, transport: PeerTransport
 ): Future[?!bt.Block] {.async: (raises: [CancelledError]).} =
   var conn: Connection
   try:
-    if transport == DownloadTransport.Mix:
-      if self.mixTransport.isNil:
-        return failure("Mix transport is not enabled")
-      let addresses = mixAddresses(peer.peerId, peer.addresses.mapIt(it.address))
-      if addresses.len == 0:
-        return failure("Provider has no usable Mix address")
-      conn = (
-        await self.mixTransport.dial(peer.peerId, addresses, ManifestProtocolCodec)
-      ).valueOr:
-        return failure(
-          "Error opening MixTransport manifest stream to " & $peer.peerId & ": " & error
-        )
-    else:
-      conn = await self.switch.dial(
-        peer.peerId, peer.addresses.mapIt(it.address), ManifestProtocolCodec
-      )
+    conn = (await transport.dial(peer, ManifestProtocolCodec)).valueOr:
+      return failure(error)
 
     let cidBytes = cid.data.buffer
     var reqBuf = newSeqUninit[byte](2 + cidBytes.len)
@@ -190,13 +174,8 @@ proc fetchManifestFromPeer(
       await conn.close()
 
 proc fetchManifest*(
-    self: ManifestProtocol,
-    cid: Cid,
-    advertise: bool,
-    transport: DownloadTransport = DownloadTransport.Direct,
+    self: ManifestProtocol, cid: Cid, advertise: bool, transport: PeerTransport
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
-  if transport == DownloadTransport.Mix and self.mixTransport.isNil:
-    return failure("Mix transport is not enabled")
   if err =? cid.isManifest.errorOption:
     return failure "CID has invalid content type for manifest {$cid}"
 
@@ -213,7 +192,9 @@ proc fetchManifest*(
       trace "Manifest fetch attempt", cid, attempt, maxRetries = self.retries
 
       let providers = (
-        await self.discovery.find(cid, useMix = (transport == DownloadTransport.Mix))
+        await self.discovery.find(
+          cid, useMix = (transport.kind == DownloadTransport.Mix)
+        )
       ).valueOr:
         warn "Lookup failed, will retry", cid, err = error
         lastErr = error
@@ -262,19 +243,8 @@ proc fetchManifest*(
 
   return success manifest
 
-proc attachMixTransport*(self: ManifestProtocol, mixTransport: MixTransport) =
-  doAssert self.mixTransport.isNil, "MixTransport is already attached"
-  self.mixTransport = mixTransport
-
-proc detachMixTransport*(self: ManifestProtocol) =
-  self.mixTransport = nil
-
-func isMixEnabled*(self: ManifestProtocol): bool =
-  not self.mixTransport.isNil
-
 proc new*(
     T: type ManifestProtocol,
-    switch: Switch,
     localStore: BlockStore,
     discovery: Discovery,
     retries: int = DefaultManifestRetries,
@@ -282,7 +252,6 @@ proc new*(
     fetchTimeout: Duration = DefaultManifestFetchTimeout,
 ): ManifestProtocol =
   let self = ManifestProtocol(
-    switch: switch,
     localStore: localStore,
     discovery: discovery,
     retries: retries,

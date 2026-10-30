@@ -44,31 +44,35 @@ method isAdvertised*(
   success(true)
 
 proc checkPresenceCancellation(
-    engine: BlockExcEngine, peer: PeerId, rangeCount: uint64
+    peerStore: PeerContextStore, peer: PeerId, rangeCount: uint64
 ) {.async.} =
   let store = PausedPresenceStore(entered: newAsyncEvent())
-  engine.localStore = store
   var responses = 0
   proc sendPresence(
       peerId: PeerId, presence: seq[BlockPresence]
   ) {.async: (raises: [CancelledError]).} =
     inc responses
 
-  engine.networks.direct =
-    BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
-  let handling = engine.wantListHandler(
-    peer,
-    WantList(
-      entries: @[
-        WantListEntry(
-          address: BlockAddress(treeCid: Cid.example, index: 0),
-          wantType: WantType.WantHave,
-          sendDontHave: true,
-          rangeCount: rangeCount,
-        )
-      ]
-    ),
-  )
+  let
+    blockExc = BlockExcContext.new(
+      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence)),
+      store,
+      DownloadManager.new(),
+      peerStore,
+    )
+    handling = blockExc.wantListHandler(
+      peer,
+      WantList(
+        entries: @[
+          WantListEntry(
+            address: BlockAddress(treeCid: Cid.example, index: 0),
+            wantType: WantType.WantHave,
+            sendDontHave: true,
+            rangeCount: rangeCount,
+          )
+        ]
+      ),
+    )
   await store.entered.wait().wait(5.seconds)
   await handling.cancelAndWait().wait(5.seconds)
   # Cancellation is consumed by the outer handler, not translated to DontHave.
@@ -76,7 +80,7 @@ proc checkPresenceCancellation(
   check not handling.failed
   check store.lookups == 1
   check responses == 0
-  check not engine.peers.get(peer).wantListBusy
+  check not peerStore.get(peer).wantListBusy
 
 asyncchecksuite "NetworkStore engine handlers":
   var
@@ -86,6 +90,7 @@ asyncchecksuite "NetworkStore engine handlers":
     peerStore: PeerContextStore
     downloadManager: DownloadManager
     network: BlockExcNetwork
+    blockExc: BlockExcContext
     engine: BlockExcEngine
     discovery: DiscoveryEngine
     advertiser: Advertiser
@@ -109,29 +114,25 @@ asyncchecksuite "NetworkStore engine handlers":
     downloadManager = DownloadManager.new()
 
     localStore = CacheStore.new()
-    network = BlockExcNetwork()
+    network = BlockExcNetwork(transport: DirectPeerTransport())
 
-    discovery =
-      DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
+    discovery = DiscoveryEngine.new(blockDiscovery)
 
     advertiser =
       Advertiser.new(localStore, blockDiscovery, peerInfo = examplePeerInfo())
 
-    engine = BlockExcEngine.new(
-      localStore, discovery.networks, discovery, advertiser, peerStore, downloadManager
-    )
+    engine = BlockExcEngine.new(localStore, discovery, advertiser, downloadManager)
+    blockExc = BlockExcContext.new(network, localStore, downloadManager, peerStore)
+    engine.attach(blockExc)
 
     peerCtx = PeerContext(id: peerId)
-    engine.peers.add(peerCtx)
+    peerStore.add(peerCtx)
 
   test "Cancellation during a single presence lookup sends no response":
-    await checkPresenceCancellation(engine, peerId, 0)
+    await checkPresenceCancellation(peerStore, peerId, 0)
 
   test "Cancellation during a range presence lookup stops scanning":
-    await checkPresenceCancellation(engine, peerId, 2)
-
-  test "Default peer selection does not install provider tracking":
-    check discovery.onProviders.isNil
+    await checkPresenceCancellation(peerStore, peerId, 2)
 
   test "Direct and Mix discovery share one cooldown in either order":
     for firstTransport in [DownloadTransport.Direct, DownloadTransport.Mix]:
@@ -141,14 +142,28 @@ asyncchecksuite "NetworkStore engine handlers":
             DownloadTransport.Mix
           else:
             DownloadTransport.Direct
-        firstCid = Cid.example
-        secondCid = Cid.example
+        firstDownload = engine.downloadManager.startDownload(
+          DownloadDesc(
+            md: testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 1),
+            count: 1,
+            transport: firstTransport,
+          )
+        )
+        secondDownload = engine.downloadManager.startDownload(
+          DownloadDesc(
+            md: testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 1),
+            count: 1,
+            transport: secondTransport,
+          )
+        )
+        firstCid = firstDownload.manifestCid
+        secondCid = secondDownload.manifestCid
 
       # Expire the cooldown explicitly; no wall-clock sleep is needed.
       engine.lastDiscRequest = Moment.now() - 4.seconds
-      engine.searchForNewPeers(firstCid, firstTransport)
+      engine.searchForNewPeers(firstDownload)
       let requestedAt = engine.lastDiscRequest
-      engine.searchForNewPeers(secondCid, secondTransport)
+      engine.searchForNewPeers(secondDownload)
       check discovery.discoveryQueue.len == 1
       check engine.lastDiscRequest == requestedAt
       let firstRequest = discovery.discoveryQueue.getNoWait()
@@ -156,23 +171,11 @@ asyncchecksuite "NetworkStore engine handlers":
       check firstRequest.transport == firstTransport
 
       engine.lastDiscRequest = Moment.now() - 4.seconds
-      engine.searchForNewPeers(secondCid, secondTransport)
+      engine.searchForNewPeers(secondDownload)
       check discovery.discoveryQueue.len == 1
       let secondRequest = discovery.discoveryQueue.getNoWait()
       check secondRequest.cid == secondCid
       check secondRequest.transport == secondTransport
-
-  test "Provider tracking is installed only when a policy needs it":
-    discard BlockExcEngine.new(
-      localStore,
-      discovery.networks,
-      discovery,
-      advertiser,
-      peerStore,
-      downloadManager,
-      mixPeerSelectionPolicy = newProviderPriorityPolicy(),
-    )
-    check not discovery.onProviders.isNil
 
   test "Should handle want list":
     let
@@ -195,10 +198,9 @@ asyncchecksuite "NetworkStore engine handlers":
         check p.kind in {BlockPresenceType.HaveRange, BlockPresenceType.Complete}
       done.complete()
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, wantList)
+    await blockExc.wantListHandler(peerId, wantList)
     await done
 
   test "Should not send presence for a tree that is not advertised":
@@ -219,10 +221,9 @@ asyncchecksuite "NetworkStore engine handlers":
     ) {.async: (raises: [CancelledError]).} =
       presenceSent = true
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, makeWantList(rootCid, blocks.len))
+    await blockExc.wantListHandler(peerId, makeWantList(rootCid, blocks.len))
 
     check not presenceSent
 
@@ -242,10 +243,9 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, wantList)
+    await blockExc.wantListHandler(peerId, wantList)
     await done
 
   test "Should handle want list - `dont-have` some blocks":
@@ -277,10 +277,9 @@ asyncchecksuite "NetworkStore engine handlers":
 
       done.complete()
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, wantList)
+    await blockExc.wantListHandler(peerId, wantList)
 
     await done
 
@@ -298,8 +297,7 @@ asyncchecksuite "NetworkStore engine handlers":
     ) {.async: (raises: [CancelledError]).} =
       discard
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendWantList: sendWantList))
+    network.request = BlockExcRequest(sendWantList: sendWantList)
 
     let
       md = testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 1)
@@ -309,7 +307,7 @@ asyncchecksuite "NetworkStore engine handlers":
 
     discard download.getWantHandle(address)
 
-    await engine.blockPresenceHandler(
+    await blockExc.blockPresenceHandler(
       peerId,
       @[
         BlockPresence(
@@ -322,6 +320,114 @@ asyncchecksuite "NetworkStore engine handlers":
       swarm = download.getSwarm()
       peerOpt = swarm.getPeer(peerId)
     check peerOpt.isSome
+
+  test "Swarm should only hold peers that can serve what is still needed":
+    let
+      md = testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 32)
+      treeCid = md.manifest.treeCid
+      download = engine.downloadManager.startDownload(DownloadDesc(md: md, count: 32))
+      swarm = download.getSwarm()
+      batch = engine.downloadManager.getNextBatch(download).get()
+      nextStart = batch.start + batch.count
+
+    proc replyHaveRange(
+        peer: PeerId, start: uint64, count: uint64
+    ) {.async: (raises: [CancelledError]).} =
+      await blockExc.blockPresenceHandler(
+        peer,
+        @[
+          BlockPresence(
+            address: BlockAddress(treeCid: treeCid, index: start),
+            kind: BlockPresenceType.HaveRange,
+            ranges: @[IndexRange(start: start, count: count)],
+            downloadId: download.id,
+          )
+        ],
+      )
+
+    for _ in 0 ..< swarm.config.deltaMax:
+      discard swarm.addPeer(PeerId.example, BlockAvailability.unknown())
+
+    var partialPeers: seq[PeerId]
+    for _ in 0 ..< swarm.config.deltaMax:
+      let partialPeer = PeerContext.new(PeerId.example)
+      peerStore.add(partialPeer)
+      partialPeers.add(partialPeer.id)
+      await replyHaveRange(partialPeer.id, batch.start, batch.count)
+
+    check swarm.peersWithRange(batch.start, batch.count).len == partialPeers.len
+
+    download.completeBatchLocal(batch.start, batch.count)
+    download.ctx.trimPresenceBeforeWatermark()
+
+    check swarm.peersNeeded() != shHealthy
+
+    await replyHaveRange(peerId, nextStart, batch.count)
+
+    check peerId in swarm.peersWithRange(nextStart, batch.count)
+
+  test "Availability pushed to the swarm should reach every download of the tree":
+    let
+      md = testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 32)
+      treeCid = md.manifest.treeCid
+      download = engine.downloadManager.startDownload(DownloadDesc(md: md, count: 32))
+      otherDownload =
+        engine.downloadManager.startDownload(DownloadDesc(md: md, count: 32))
+
+    await blockExc.blockPresenceHandler(
+      peerId,
+      @[
+        BlockPresence(
+          address: BlockAddress(treeCid: treeCid, index: 0),
+          kind: BlockPresenceType.HaveRange,
+          ranges: @[IndexRange(start: 0, count: 4)],
+        )
+      ],
+    )
+
+    check peerId in download.getSwarm().peersWithRange(0, 4)
+    check peerId in otherDownload.getSwarm().peersWithRange(0, 4)
+
+  test "Availability should only be pushed for advertised downloads":
+    proc sendWantList(
+        id: PeerId,
+        addresses: seq[BlockAddress],
+        priority: int32 = 0,
+        cancel: bool = false,
+        wantType: WantType = WantType.WantHave,
+        full: bool = false,
+        sendDontHave: bool = false,
+        rangeCount: uint64 = 0,
+        downloadId: uint64 = 0,
+    ) {.async: (raises: [CancelledError]).} =
+      discard
+
+    var pushes = 0
+    proc sendPresence(
+        peer: PeerId, presence: seq[BlockPresence]
+    ) {.async: (raises: [CancelledError]).} =
+      pushes.inc
+
+    network.request =
+      BlockExcRequest(sendWantList: sendWantList, sendPresence: sendPresence)
+
+    for advertised in [true, false]:
+      let
+        md = testManifestDesc(blocks[0].cid, DefaultBlockSize.uint32, 48)
+        download = engine.downloadManager.startDownload(DownloadDesc(md: md, count: 48))
+        batchCount = download.ctx.scheduler.batchSizeCount
+
+      (await localStore.setAdvertise(md.manifest.treeCid, advertised)).tryGet()
+      discard download.getSwarm().addPeer(peerId, BlockAvailability.unknown())
+      download.completeBatchLocal(batchCount, batchCount)
+      pushes = 0
+
+      let worker = engine.downloadWorker(download)
+      check eventually(not download.ctx.shouldBroadcastAvailability())
+      await worker.cancelAndWait()
+      engine.downloadManager.cancelDownload(download)
+
+      check pushes == (if advertised: 1 else: 0)
 
   test "Should handle range want list":
     let
@@ -357,10 +463,9 @@ asyncchecksuite "NetworkStore engine handlers":
       check presence[0].ranges.len > 0
       done.complete()
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, wantList)
+    await blockExc.wantListHandler(peerId, wantList)
     await done
 
   test "Should not send presence for blocks not in range":
@@ -398,10 +503,9 @@ asyncchecksuite "NetworkStore engine handlers":
         check r.start < 2
       done.complete()
 
-    engine.networks.direct =
-      BlockExcNetwork(request: BlockExcRequest(sendPresence: sendPresence))
+    network.request = BlockExcRequest(sendPresence: sendPresence)
 
-    await engine.wantListHandler(peerId, wantList)
+    await blockExc.wantListHandler(peerId, wantList)
     await done
 
   test "WantBlocks: rejects range with count = 0":

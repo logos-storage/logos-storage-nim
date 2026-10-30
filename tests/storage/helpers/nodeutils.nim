@@ -185,18 +185,15 @@ proc generateNodes*(
         (store.BlockStore, newSeq[TempLevelDb](), discovery)
 
     let
-      discovery =
-        DiscoveryEngine.new(peerStore, newBlockExcNetworks(network), blockDiscovery)
+      discovery = DiscoveryEngine.new(blockDiscovery)
       advertiser =
         Advertiser.new(localStore, blockDiscovery, peerInfo = switch.peerInfo)
-      engine = BlockExcEngine.new(
-        localStore, discovery.networks, discovery, advertiser, peerStore,
-        downloadManager,
-      )
+      engine = BlockExcEngine.new(localStore, discovery, advertiser, downloadManager)
       networkStore = NetworkStore.new(engine, localStore)
-      manifestProto = ManifestProtocol.new(switch, localStore, blockDiscovery)
+      manifestProto = ManifestProtocol.new(localStore, blockDiscovery)
 
-    switch.mount(discovery.networks.dispatchProtocol)
+    engine.attach(BlockExcContext.new(network, localStore, downloadManager, peerStore))
+    switch.mount(network)
     switch.mount(manifestProto)
 
     let node =
@@ -282,6 +279,20 @@ proc connectNodes*(nodes: varargs[NodesComponents]): Future[void] =
 
 proc connectNodes*(cluster: NodesCluster) {.async.} =
   await connectNodes(cluster.components)
+
+proc mockProviders*(node: NodesComponents, providers: seq[NodesComponents]) =
+  let
+    records = providers.mapIt(
+      PeerRecord.init(it.switch.peerInfo.peerId, it.switch.peerInfo.addrs)
+    )
+    blockDiscovery = MockDiscovery.new()
+
+  blockDiscovery.findBlockProvidersHandler = proc(
+      d: MockDiscovery, cid: Cid, useMix: bool = false
+  ): Future[seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
+    return records
+
+  node.discovery.discovery = blockDiscovery
 
 proc cleanup*(cluster: NodesCluster) {.async.} =
   for component in cluster.components:

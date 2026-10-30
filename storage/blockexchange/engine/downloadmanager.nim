@@ -20,7 +20,6 @@ import ../../blocktype
 import ../../logutils
 
 import ./activedownload
-import ./peertracker
 
 export activedownload
 
@@ -36,7 +35,6 @@ type DownloadManager* = ref object of RootObj
   maxBlockRetries*: int
   retryInterval*: Duration
   downloads*: Table[Cid, Table[uint64, ActiveDownload]]
-  peerTracker*: PeerInFlightTracker # peer-wide in-flight tracking
 
 proc getDownload*(self: DownloadManager, treeCid: Cid): Option[ActiveDownload] =
   self.downloads.withValue(treeCid, innerTable):
@@ -177,5 +175,4 @@ proc new*(
     maxBlockRetries: retries,
     retryInterval: interval,
     downloads: initTable[Cid, Table[uint64, ActiveDownload]](),
-    peerTracker: PeerInFlightTracker.new(),
   )

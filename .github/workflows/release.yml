@@ -47,7 +47,7 @@ jobs:
           matrix: |
             os {linux},   cpu {amd64}, builder {ubuntu-24.04},     nim_version {${{ env.nim_version }}}, shell {bash --noprofile --norc -e -o pipefail}
             os {linux},   cpu {arm64}, builder {ubuntu-24.04-arm}, nim_version {${{ env.nim_version }}}, shell {bash --noprofile --norc -e -o pipefail}
-            os {macos},   cpu {arm64}, builder {macos-14},         nim_version {${{ env.nim_version }}}, shell {bash --noprofile --norc -e -o pipefail}
+            os {macos},   cpu {arm64}, builder {macos-15},         nim_version {${{ env.nim_version }}}, shell {bash --noprofile --norc -e -o pipefail}
             os {windows}, cpu {amd64}, builder {windows-latest},   nim_version {${{ env.nim_version }}}, shell {msys2}
 
   # Build

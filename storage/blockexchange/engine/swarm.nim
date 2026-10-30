@@ -39,6 +39,7 @@ type
   SwarmPeer* = ref object
     availability*: BlockAvailability
     lastSeen*: Moment
+    lastQueried*: Moment
     availabilityUpdated*: Moment
     failureCount*: uint32
     timeoutCount*: uint32
@@ -70,13 +71,14 @@ type
   Swarm* = ref object
     config*: SwarmConfig
     peers: Table[PeerId, SwarmPeer]
-    removedPeers: HashSet[PeerId]
+    bannedPeers: HashSet[PeerId]
 
 proc new*(T: type SwarmPeer, availability: BlockAvailability): SwarmPeer =
   let now = Moment.now()
   SwarmPeer(
     availability: availability,
     lastSeen: now,
+    lastQueried: now,
     availabilityUpdated: now,
     failureCount: 0,
     timeoutCount: 0,
@@ -87,6 +89,9 @@ proc isStale*(peer: SwarmPeer): bool =
 
 proc touch*(peer: SwarmPeer) =
   peer.lastSeen = Moment.now()
+
+proc markQueried*(peer: SwarmPeer) =
+  peer.lastQueried = Moment.now()
 
 proc updateAvailability*(peer: SwarmPeer, availability: BlockAvailability) =
   peer.availability = peer.availability.merge(availability)
@@ -116,14 +121,37 @@ proc new*(T: type Swarm, config: SwarmConfig = SwarmConfig.defaultConfig()): Swa
   Swarm(
     config: config,
     peers: initTable[PeerId, SwarmPeer](),
-    removedPeers: initHashSet[PeerId](),
+    bannedPeers: initHashSet[PeerId](),
   )
 
 proc addPeer*(swarm: Swarm, peerId: PeerId, availability: BlockAvailability): bool =
-  if peerId in swarm.removedPeers:
+  if peerId in swarm.bannedPeers:
     return false
   if swarm.peers.len >= swarm.config.deltaMax:
     return false
+  swarm.peers[peerId] = SwarmPeer.new(availability)
+  true
+
+proc replaceUnknownPeer*(
+    swarm: Swarm, peerId: PeerId, availability: BlockAvailability
+): bool =
+  if peerId in swarm.bannedPeers:
+    return false
+
+  var
+    replaced = none(PeerId)
+    oldestSeen: Moment
+  for id, peer in swarm.peers:
+    if peer.availability.kind == bakUnknown and
+        (availability.kind != bakUnknown or peer.isStale) and
+        (replaced.isNone or peer.lastSeen < oldestSeen):
+      replaced = some(id)
+      oldestSeen = peer.lastSeen
+
+  if replaced.isNone:
+    return false
+
+  swarm.peers.del(replaced.get)
   swarm.peers[peerId] = SwarmPeer.new(availability)
   true
 
@@ -136,7 +164,7 @@ proc removePeer*(swarm: Swarm, peerId: PeerId): Option[SwarmPeer] =
 
 proc banPeer*(swarm: Swarm, peerId: PeerId) =
   swarm.peers.del(peerId)
-  swarm.removedPeers.incl(peerId)
+  swarm.bannedPeers.incl(peerId)
 
 proc getPeer*(swarm: Swarm, peerId: PeerId): Option[SwarmPeer] =
   swarm.peers.withValue(peerId, peer):
@@ -173,7 +201,7 @@ proc recordBatchSuccess*(
 
 proc activePeerCount*(swarm: Swarm): int =
   for peer in swarm.peers.values:
-    if not peer.isStale:
+    if not peer.isStale and peer.availability.kind != bakUnknown:
       result += 1
 
 proc peerCount*(swarm: Swarm): int =
@@ -188,7 +216,7 @@ proc peersNeeded*(swarm: Swarm): SwarmHealth =
   else:
     shHealthy
 
-proc connectedPeers*(swarm: Swarm): seq[PeerId] =
+proc members*(swarm: Swarm): seq[PeerId] =
   for peerId in swarm.peers.keys:
     result.add(peerId)
 
@@ -204,7 +232,8 @@ proc peersWithAnyInRange*(swarm: Swarm, start: uint64, count: uint64): seq[PeerI
 
 proc staleUnknownPeers*(swarm: Swarm): seq[PeerId] =
   for peerId, peer in swarm.peers:
-    if peer.isStale and peer.availability.kind == bakUnknown:
+    if peer.isStale and peer.availability.kind == bakUnknown and
+        Moment.now() - peer.lastQueried > PeerStaleTimeout:
       result.add(peerId)
 
 proc selectByBDP*(

@@ -331,6 +331,65 @@ suite "Swarm":
     discard swarm.addPeer(PeerId.example, BlockAvailability.complete())
     check swarm.peersNeeded() == shHealthy
 
+  test "Should replace the unknown peer seen longest ago":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 2, deltaTarget: 2, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      older = PeerId.example
+      newer = PeerId.example
+      joining = PeerId.example
+    discard swarm.addPeer(older, BlockAvailability.unknown())
+    discard swarm.addPeer(newer, BlockAvailability.unknown())
+    swarm.getPeer(older).get().lastSeen = Moment.now() - 10.seconds
+
+    check swarm.replaceUnknownPeer(joining, BlockAvailability.complete())
+    check swarm.getPeer(older).isNone
+    check swarm.getPeer(newer).isSome
+    check swarm.getPeer(joining).isSome
+
+  test "Should not let a banned peer replace an unknown one":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 1, deltaTarget: 1, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      unknownPeer = PeerId.example
+      banned = PeerId.example
+    discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
+    swarm.banPeer(banned)
+
+    check not swarm.replaceUnknownPeer(banned, BlockAvailability.complete())
+    check swarm.getPeer(unknownPeer).isSome
+    check swarm.getPeer(banned).isNone
+
+  test "Should not replace an unknown peer that is not stale":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 1, deltaTarget: 1, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      unknownPeer = PeerId.example
+      joining = PeerId.example
+    discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
+
+    check not swarm.replaceUnknownPeer(joining, BlockAvailability.unknown())
+    check swarm.getPeer(unknownPeer).isSome
+    check swarm.getPeer(joining).isNone
+
+  test "Should not re-query a stale unknown peer queried recently":
+    let peerId = PeerId.example
+    discard swarm.addPeer(peerId, BlockAvailability.unknown())
+    let peer = swarm.getPeer(peerId).get()
+    peer.lastSeen = Moment.now() - PeerStaleTimeout - 10.seconds
+    peer.lastQueried = Moment.now() - PeerStaleTimeout - 10.seconds
+    check swarm.staleUnknownPeers() == @[peerId]
+
+    peer.markQueried()
+    check swarm.staleUnknownPeers().len == 0
+    check peer.isStale
+
 suite "BDP Peer Selection":
   var peerCtxs: seq[PeerContext]
 

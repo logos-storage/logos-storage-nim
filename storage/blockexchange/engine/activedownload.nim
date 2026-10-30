@@ -35,10 +35,6 @@ declareGauge(
 )
 
 type
-  PresenceQueryPolicy* {.pure.} = enum
-    QuerySelectedPeers
-    QueryAdmittedPeers
-
   RetriesExhaustedError* = object of StorageError
   DownloadTerminatedError* = object of StorageError
   BlockHandle* = Future[?!Block].Raising([CancelledError])
@@ -78,7 +74,7 @@ proc waitForComplete*(
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   return await download.completionFuture
 
-proc signalCompletionIfDone(download: ActiveDownload, error: ref StorageError = nil) =
+proc signalCompletionIfDone*(download: ActiveDownload, error: ref StorageError = nil) =
   if download.completionFuture.finished:
     return
   if error != nil:
@@ -361,26 +357,16 @@ proc getSwarm(download: ActiveDownload): Swarm =
 proc updatePeerAvailability*(
     download: ActiveDownload, peerId: PeerId, availability: BlockAvailability
 ) =
-  if download.ctx.swarm.getPeer(peerId).isNone:
-    discard download.ctx.swarm.addPeer(peerId, availability)
-  else:
-    download.ctx.swarm.updatePeerAvailability(peerId, availability)
+  let swarm = download.ctx.swarm
+  if swarm.getPeer(peerId).isSome:
+    swarm.updatePeerAvailability(peerId, availability)
+    return
 
-proc addPeerIfAbsent*(
-    download: ActiveDownload,
-    peerId: PeerId,
-    availability: BlockAvailability,
-    queryPolicy: PresenceQueryPolicy = PresenceQueryPolicy.QuerySelectedPeers,
-): bool =
-  ## Attempts admission and returns whether to send a presence query, not
-  ## whether admission succeeded. Existing complete peers need no query.
-  let existingPeer = download.ctx.swarm.getPeer(peerId)
-  if existingPeer.isSome:
-    # peer already tracked, skip if bakComplete
-    return existingPeer.get().availability.kind != bakComplete
+  if swarm.addPeer(peerId, availability) or availability.kind == bakUnknown:
+    return
 
-  let admitted = download.ctx.swarm.addPeer(peerId, availability)
-  return queryPolicy == PresenceQueryPolicy.QuerySelectedPeers or admitted
+  if not swarm.replaceUnknownPeer(peerId, availability):
+    trace "Peer availability dropped, not admitted to swarm", peer = peerId
 
 proc handleBatchRetry*(
     download: ActiveDownload, start: uint64, count: uint64, waitTime: Duration

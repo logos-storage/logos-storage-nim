@@ -11,7 +11,6 @@ import std/[options, random, sets]
 
 import pkg/chronos
 import pkg/libp2p/cid
-import pkg/libp2p/peerid
 
 import ./scheduler
 import ./swarm
@@ -75,7 +74,6 @@ type
 
   DownloadContext* = ref object
     transport*: DownloadTransport
-    providerPeers*: HashSet[PeerId]
     md*: ManifestDescriptor
     totalBlocks*: uint64
     received*: uint64
@@ -243,16 +241,10 @@ proc markBlockReturned*(ctx: DownloadContext) =
   # mark that a block was returned to the consumer by the iterator
   ctx.blocksReturned += 1
 
-proc markBatchReceived*(
-    ctx: DownloadContext, start: uint64, count: uint64, totalBytes: uint64
-) =
-  ctx.received += count
-  ctx.bytesReceived += totalBytes
-
 proc trimPresenceBeforeWatermark*(ctx: DownloadContext) =
   let watermark = ctx.scheduler.completedWatermark()
 
-  for peerId in ctx.swarm.connectedPeers():
+  for peerId in ctx.swarm.members():
     let peerOpt = ctx.swarm.getPeer(peerId)
     if peerOpt.isSome:
       let peer = peerOpt.get()
@@ -265,6 +257,13 @@ proc trimPresenceBeforeWatermark*(ctx: DownloadContext) =
             # keep ranges not entirely below watermark
             newRanges.add(r)
         peer.availability = BlockAvailability.fromRanges(newRanges)
+
+proc markBatchReceived*(
+    ctx: DownloadContext, start: uint64, count: uint64, totalBytes: uint64
+) =
+  ctx.received += count
+  ctx.bytesReceived += totalBytes
+  ctx.trimPresenceBeforeWatermark()
 
 proc shouldBroadcastAvailability*(ctx: DownloadContext): bool =
   ctx.availabilityTracker.shouldBroadcast(ctx.scheduler)
