@@ -166,7 +166,7 @@ asyncchecksuite "BlockExchange - Discovered Providers":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     provider = cluster.components[0]
     leecher = cluster.components[1]
 
@@ -202,7 +202,7 @@ asyncchecksuite "BlockExchange - User Connected Peers":
     dataset: TestDataset
 
   setup:
-    cluster = generateNodes(2, config = NodeConfig(findFreePorts: true))
+    cluster = await generateNodes(2, config = NodeConfig(findFreePorts: true))
     seeder = cluster.components[0]
     leecher = cluster.components[1]
 
