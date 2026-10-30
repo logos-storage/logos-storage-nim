@@ -709,7 +709,7 @@ proc downloadWorker(
         for peerId in staleUnknown:
           let swarmPeer = swarm.getPeer(peerId)
           if swarmPeer.isSome:
-            swarmPeer.get().touch()
+            swarmPeer.get().markQueried()
 
           try:
             await network.request

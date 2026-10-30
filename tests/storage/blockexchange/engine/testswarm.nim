@@ -388,6 +388,34 @@ suite "Swarm":
     check swarm.getPeer(unknownPeer).isSome
     check swarm.getPeer(banned).isNone
 
+  test "Should not replace an unknown peer that is not stale":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 1, deltaTarget: 1, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      unknownPeer = PeerId.example
+      joining = PeerId.example
+    discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
+
+    check not swarm.replaceUnknownPeer(
+      joining, BlockAvailability.unknown(), initHashSet[PeerId]()
+    )
+    check swarm.getPeer(unknownPeer).isSome
+    check swarm.getPeer(joining).isNone
+
+  test "Should not re-query a stale unknown peer queried recently":
+    let peerId = PeerId.example
+    discard swarm.addPeer(peerId, BlockAvailability.unknown())
+    let peer = swarm.getPeer(peerId).get()
+    peer.lastSeen = Moment.now() - PeerStaleTimeout - 10.seconds
+    peer.lastQueried = Moment.now() - PeerStaleTimeout - 10.seconds
+    check swarm.staleUnknownPeers() == @[peerId]
+
+    peer.markQueried()
+    check swarm.staleUnknownPeers().len == 0
+    check peer.isStale
+
 suite "BDP Peer Selection":
   var peerCtxs: seq[PeerContext]
 
