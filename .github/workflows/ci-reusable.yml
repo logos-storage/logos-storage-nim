@@ -17,6 +17,8 @@ env:
 jobs:
   build:
     strategy:
+      # TEMP: let the macOS libstorage job reach the lldb step
+      fail-fast: false
       matrix:
         include: ${{ fromJson(inputs.matrix) }}
 
