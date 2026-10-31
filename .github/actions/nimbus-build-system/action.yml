@@ -217,6 +217,13 @@ runs:
       run: |
         git config --global core.symlinks false
 
+    # Some packages build their C code inside nimbledeps/, hence the os and cpu.
+    - name: Restore Nimble dependencies from cache
+      uses: actions/cache@v5
+      with:
+        path: nimbledeps
+        key: ${{ inputs.os }}-${{ inputs.cpu }}-nimbledeps-${{ env.cache_nonce }}-${{ hashFiles('nimble.lock') }}
+
     - name: Build Nim and Logos Storage dependencies
       shell: ${{ inputs.shell }} {0}
       run: |

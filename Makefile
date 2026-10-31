@@ -59,7 +59,7 @@ export CXXFLAGS
 # Builds the Logos Storage binary
 all: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		nimble build $(NIM_PARAMS)
+		nim storage $(NIM_PARAMS) build.nims
 
 mix-tools: | build
 	echo -e $(BUILD_MSG) "build/mix_pool build/mix_relay_dht" && \

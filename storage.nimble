@@ -11,7 +11,7 @@ installFiles = @["build.nims"]
 when (NimbleMajor, NimbleMinor) < (0, 26):
   {.error: "storage needs Nimble >= 0.26 (shipped with Nim >= 2.2.14)".}
 
-requires "nim >= 2.2.12 & < 2.3.0"
+requires "nim >= 2.2.14 & < 2.3.0"
 requires "asynctest >= 0.5.4 & < 0.6.0"
 requires "chronicles >= 0.12.3 & < 0.13.0"
 requires "chronos >= 4.2.2 & < 4.2.5"
@@ -51,10 +51,5 @@ requires "taskpools >= 0.2.1 & < 0.3.0"
 requires "toml_serialization >= 0.2.18 & < 0.3.0"
 requires "unittest2 >= 0.2.5 & < 0.3.0"
 requires "https://github.com/status-im/nim-zippy >= 0.5.7 & < 0.6.0"
-
-# Same defines as the storage task of build.nims.
-before build:
-  switch("define", "chronicles_runtime_filtering")
-  switch("define", "chronicles_log_level=TRACE")
 
 include "build.nims"
