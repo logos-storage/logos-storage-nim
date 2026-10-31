@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  nim_version: v2.2.14
+  nim_version: 2.2.14
 
 concurrency:
   group: ${{ github.workflow }}
@@ -28,8 +28,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Setup Nimbus Build System
         uses: ./.github/actions/nimbus-build-system

@@ -4,40 +4,39 @@
 
 A development shell can be started using:
 ```sh
-nix develop '.?submodules=1#'
+nix develop
 ```
 
 ## Building
 
 To build a Logos Storage you can use:
 ```sh
-nix build '.?submodules=1#default'
+nix build '.#default'
 ```
-The `?submodules=1` part should eventually not be necessary.
-For more details see:
-https://github.com/NixOS/nix/issues/4423
+
+Nix fetches the dependencies pinned in `nimble.lock`.
 
 It can be also done without even cloning the repo:
 ```sh
-nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1#'
+nix build 'github:logos-storage/logos-storage-nim'
 ```
 
 To build the C bindings you can use:
 
 ```sh
-nix build ".?submodules=1#libstorage"
+nix build '.#libstorage'
 ```
 
 ## Running
 
 ```sh
-nix run 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1#''
+nix run 'github:logos-storage/logos-storage-nim'
 ```
 
 ## Testing
 
 ```sh
-nix flake check ".?submodules=1#"
+nix flake check
 ```
 
 ## Running Logos Storage as a service on NixOS
@@ -46,7 +45,7 @@ Include logos-storage-nim flake in your flake inputs:
 ```nix
 inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
-    logos-storage-nim-flake.url = "git+https://github.com/logos-storage/logos-storage-nim?submodules=1#";
+    logos-storage-nim-flake.url = "github:logos-storage/logos-storage-nim";
 };
 ```
 

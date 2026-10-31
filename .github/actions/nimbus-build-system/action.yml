@@ -11,7 +11,7 @@ inputs:
     default: "amd64"
   nim_version:
     description: "Nim version"
-    default: "v2.0.14"
+    default: "2.2.14"
   shell:
     description: "Shell to run commands in"
     default: "bash --noprofile --norc -e -o pipefail"
@@ -204,18 +204,12 @@ runs:
         [[ -z "$ncpu" || $ncpu -le 0 ]] && ncpu=1
         echo "ncpu=${ncpu}" >> ${GITHUB_ENV}
 
-    - name: Restore Nim toolchain binaries from cache
-      id: nim-cache
-      uses: actions/cache@v5
-      if: ${{ inputs.coverage != 'true' }}
+    - name: Install Nim
+      uses: jiro4989/setup-nim-action@v2
       with:
-        path: NimBinaries
-        key: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-cache-${{ env.cache_nonce }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-        restore-keys: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-cache-${{ env.cache_nonce }}
-
-    - name: Set NIM_COMMIT
-      shell: ${{ inputs.shell }} {0}
-      run: echo "NIM_COMMIT=${{ inputs.nim_version }}" >> ${GITHUB_ENV}
+        nim-version: ${{ inputs.nim_version }}
+        repo-token: ${{ github.token }}
+        parent-nim-install-directory: ${{ runner.temp }}
 
     - name: MSYS2 (Windows All) - Disable git symbolic links (since miniupnp 2.2.5)
       if: inputs.os == 'windows'
@@ -228,6 +222,6 @@ runs:
       run: |
         which gcc
         gcc --version
-        make -j${ncpu} CI_CACHE=NimBinaries ${ARCH_OVERRIDE} QUICK_AND_DIRTY_COMPILER=1 update
+        nimble setup -l
         echo
-        ./env.sh nim --version
+        nim --version

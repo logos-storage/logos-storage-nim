@@ -26,27 +26,17 @@ RUN git clone --depth=1 --branch miniupnpd_2_3_9 \
 
 RUN curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" \
     | tar -xJ -C /opt
-RUN ln -s "/opt/nim-${NIM_VERSION}/bin/nim" /usr/local/bin/nim
+ENV PATH="/opt/nim-${NIM_VERSION}/bin:${PATH}"
 
 WORKDIR /app
 
-# vendor/ already has the checked-out submodules, so no `make update` here.
-COPY vendor/ vendor/
+# storage.nimble includes build.nims.
+COPY storage.nimble nimble.lock build.nims config.nims ./
+RUN nimble setup -l
+
 COPY storage/ storage/
-COPY build.nims config.nims storage.nim ./
-
-# libplum static lib, linked by nim-libplum.
-RUN --mount=type=cache,target=/root/.ccache \
-    export PATH="/usr/lib/ccache:$PATH" && \
-    rm -rf vendor/nim-libplum/vendor/libplum/build && \
-    cmake -B vendor/nim-libplum/vendor/libplum/build \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-        vendor/nim-libplum/vendor/libplum && \
-    make -j"$(nproc)" -C vendor/nim-libplum/vendor/libplum/build && \
-    cp vendor/nim-libplum/vendor/libplum/build/libplum.a \
-        vendor/nim-libplum/vendor/libplum/libplum.a
+COPY storage.nim ./
 
 RUN --mount=type=cache,target=/root/.ccache \
     export PATH="/usr/lib/ccache:$PATH" && \
-    USE_SYSTEM_NIM=1 vendor/nimbus-build-system/scripts/env.sh \
-        nim storage -d:disable_libbacktrace build.nims
+    nim storage -d:disable_libbacktrace build.nims

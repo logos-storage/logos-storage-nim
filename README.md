@@ -19,9 +19,9 @@
 To build the project, clone it and run:
 
 ```bash
-make update && make
+nimble setup -l && make
 # Tip: use -j{ncpu} to for parallel execution, eg:
-# make -j12 update && make -j12
+# nimble setup -l && make -j12
 ```
 
 The executable will be placed under the `build` directory under the project root.

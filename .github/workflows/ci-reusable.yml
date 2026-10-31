@@ -31,7 +31,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
         with:
-          submodules: recursive
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Nimbus Build System

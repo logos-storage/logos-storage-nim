@@ -15,14 +15,24 @@ ARG MAKE_PARALLEL
 ARG NIMFLAGS
 ARG USE_LIBBACKTRACE
 
-RUN apt-get update && apt-get install -y git cmake curl make bash lcov build-essential
+RUN apt-get update && apt-get install -y git cmake curl make bash lcov build-essential xz-utils
 
 SHELL ["/bin/bash", "-c"]
 ENV BASH_ENV="/etc/bash_env"
 
+# Nim >= 2.2.14 ships the Nimble version that storage.nimble needs.
+ARG NIM_VERSION=2.2.14
+RUN case "$(uname -m)" in \
+      x86_64) nim_arch=x64 ;; \
+      aarch64) nim_arch=arm64 ;; \
+      *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_${nim_arch}.tar.xz" | tar -xJ -C /opt
+ENV PATH="/opt/nim-${NIM_VERSION}/bin:${PATH}"
+
 WORKDIR ${BUILD_HOME}
 COPY . .
-RUN make -j ${MAKE_PARALLEL} update
+RUN nimble setup -l
 RUN make -j ${MAKE_PARALLEL}
 
 # Create
