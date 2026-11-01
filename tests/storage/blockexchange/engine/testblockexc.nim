@@ -226,6 +226,22 @@ asyncchecksuite "BlockExchange - User Connected Peers":
     for blk in dataset.blocks:
       check (await blk.cid in leecher.localStore)
 
+  test "User-connected peer should be asked for the whole presence window":
+    let
+      seederId = seeder.switch.peerInfo.peerId
+      treeCid = dataset.manifest.treeCid
+      totalBlocks = dataset.blocks.len.uint64
+      desc = DownloadDesc(md: dataset.manifestDesc, count: totalBlocks)
+      download = leecher.downloadManager.startDownload(desc)
+
+    leecher.engine.contextFor(DownloadTransport.Direct).addUserConnectedPeer(seederId)
+    await leecher.engine.admitUserConnectedPeers(download)
+
+    # One answer covers every batch, so none needs its own want-have.
+    check eventually seederId in download.getSwarm().peersWithRange(0, totalBlocks)
+
+    leecher.downloadManager.cancelDownload(treeCid)
+
 asyncchecksuite "BlockExchange - Multi-Peer Download":
   var
     cluster: NodesCluster
