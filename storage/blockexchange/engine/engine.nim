@@ -228,6 +228,20 @@ proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
 
   self.discovery.queueFindBlocksReq(download, joinSwarm)
 
+proc admitUserConnectedPeers(
+    self: BlockExcEngine, download: ActiveDownload
+) {.async: (raises: [CancelledError]).} =
+  ## Peers the user connected to join the swarm like discovered
+  ## providers do: with one want-have for the whole presence window. Without
+  ## it they stay unknown and every batch costs its own want-have round trip.
+  let blockExc = self.contextFor(download)
+  if blockExc.isNil:
+    return
+  let admitted = blockExc.admitUserConnectedPeers(download.ctx.swarm)
+  if admitted.len > 0 and not download.cancelled:
+    let (windowStart, windowCount) = download.ctx.currentPresenceWindow()
+    await self.broadcastWantHave(download, windowStart, windowCount, admitted)
+
 proc banAndDropPeer(
     self: BlockExcEngine, download: ActiveDownload, peerId: PeerId
 ) {.async: (raises: [CancelledError]).} =
@@ -553,7 +567,7 @@ proc downloadWorker(
 
   try:
     if not download.fetchLocal:
-      blockExc.admitUserConnectedPeers(download.ctx.swarm)
+      await self.admitUserConnectedPeers(download)
       self.searchForNewPeers(download)
 
     while not download.cancelled and not download.isDownloadComplete():
@@ -677,7 +691,7 @@ proc downloadWorker(
       var shouldBroadcast = false
 
       if swarm.peersNeeded() != shHealthy:
-        blockExc.admitUserConnectedPeers(swarm)
+        await self.admitUserConnectedPeers(download)
         self.searchForNewPeers(download)
 
       if swarm.peersWithRange(start, count).len == 0:
