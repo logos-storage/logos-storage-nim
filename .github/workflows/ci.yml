@@ -53,6 +53,37 @@ jobs:
           fail: true
           suggest: true
 
+  # A project that requires storage never reads nimble.lock: it resolves the
+  # ranges of storage.nimble. This job builds the same way, to ensure that
+  # the build process works without lock file.
+  without-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Remove nimble.lock
+        run: rm nimble.lock
+
+      # No cache: cached packages would hide newer versions.
+      - name: Setup Nimbus Build System
+        uses: ./.github/actions/nimbus-build-system
+        with:
+          os: linux
+          nim_version: ${{ env.nim_version }}
+          nimbledeps_cache: false
+
+      - name: Build storage
+        run: make -j${ncpu}
+
+      - name: Build libstorage
+        run: make -j${ncpu} libstorage
+
+      - name: Unit tests
+        run: make -j${ncpu} test
+
   coverage:
     runs-on: ubuntu-latest
     steps:
