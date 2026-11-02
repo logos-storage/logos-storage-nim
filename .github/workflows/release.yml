@@ -183,7 +183,8 @@ jobs:
           mkdir -p "${{ env.build_dir }}/include/generated"
           cp library/${{ env.c_bindings_lib_base }}.h "${{ env.build_dir }}/include/"
           cp library/generated/*.h "${{ env.build_dir }}/include/generated/"
-          ffi_dir=$(grep -o '[^"]*[/\\]ffi-[^"/\\]*' nimble.paths)
+          # On Windows, nimble.paths doubles the backslashes.
+          ffi_dir=$(grep -o '[^"]*[/\\]ffi-[^"/\\]*' nimble.paths | sed 's/\\\\/\\/g')
           cp -r "${ffi_dir}/ffi/codegen/templates/cpp/vendor/tinycbor" "${{ env.build_dir }}/include/"
 
       - name: Package ${{ env.c_bindings_lib_base }} Linux

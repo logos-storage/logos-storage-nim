@@ -4,9 +4,8 @@ import std/os
 const currentDir = currentSourcePath()[0 .. ^(len("config.nims") + 1)]
 
 # At the top: `switch("import", "libbacktrace")` below needs these paths.
-# Above the Nimble block: `nimble setup` rewrites that block without a lock.
---noNimblePath
 # begin Nimble config (version 2)
+--noNimblePath
 when withDir(thisDir(), system.fileExists("nimble.paths")):
   include "nimble.paths"
 # end Nimble config
