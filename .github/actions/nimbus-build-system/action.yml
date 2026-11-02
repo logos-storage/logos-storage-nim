@@ -207,7 +207,23 @@ runs:
         [[ -z "$ncpu" || $ncpu -le 0 ]] && ncpu=1
         echo "ncpu=${ncpu}" >> ${GITHUB_ENV}
 
+    # setup-nim-action builds Nim from source on macOS and Linux arm64, and
+    # deletes any existing install first: on a cache hit, we skip it.
+    - name: Restore Nim from cache
+      id: nim-cache
+      if: inputs.os != 'windows'
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/.nim_runtime
+        key: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-${{ env.cache_nonce }}
+
+    - name: Add cached Nim to PATH
+      if: steps.nim-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: echo "${{ runner.temp }}/.nim_runtime/bin" >> "$GITHUB_PATH"
+
     - name: Install Nim
+      if: steps.nim-cache.outputs.cache-hit != 'true'
       uses: jiro4989/setup-nim-action@v2
       with:
         nim-version: ${{ inputs.nim_version }}
