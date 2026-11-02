@@ -18,6 +18,9 @@ inputs:
   coverage:
     description: "True if the process is used for coverage"
     default: false
+  nimbledeps_cache:
+    description: "Restore and save the nimbledeps cache"
+    default: "true"
 runs:
   using: "composite"
   steps:
@@ -219,6 +222,7 @@ runs:
 
     # Some packages build their C code inside nimbledeps/, hence the os and cpu.
     - name: Restore Nimble dependencies from cache
+      if: inputs.nimbledeps_cache == 'true'
       uses: actions/cache@v5
       with:
         path: nimbledeps
