@@ -115,6 +115,36 @@ make testLibstorage
 make coverage && make show-coverage
 ```
 
+## Use as a Nimble dependency
+
+Add Logos Storage to the `.nimble` file of your project:
+
+```nim
+requires "https://github.com/logos-storage/logos-storage-nim"
+```
+
+Nimble resolves the version ranges of `storage.nimble`. It does not read `nimble.lock`.
+
+Nim reads only the `config.nims` of the project it compiles, not the one of Logos Storage. Add these settings to your `config.nims`:
+
+```nim
+--threads:on
+--mm:refc
+switch("define", "libp2p_multicodec_exts:storage/multicodec_exts.nim")
+switch("define", "libp2p_multihash_exts:storage/multihash_exts.nim")
+switch("define", "libp2p_contentids_exts:storage/contentids_exts.nim")
+switch("define", "libp2p_multiaddress_exts:storage/multiaddress_exts.nim")
+switch("define", "libp2p_pki_schemes=secp256k1")
+switch("define", "chronosHandleException")
+switch("define", "nimOldCaseObjects")
+switch("define", "withoutPCRE")
+switch("define", "use_asm_syntax_intel=false")
+switch("define", "ctt_asm=true")
+switch("legacy", "procParamTypeBackendAliases")
+```
+
+Then import the modules you need, for example `import pkg/storage/storage`.
+
 ## Contributing and development
 
 Feel free to dive in, contributions are welcomed! Open an issue or submit PRs.
