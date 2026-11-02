@@ -167,6 +167,9 @@ proc addPendingRange(
 proc currentPresenceWindow*(ctx: DownloadContext): tuple[start: uint64, count: uint64] =
   ctx.scheduler.currentPresenceWindow()
 
+proc neededRange*(ctx: DownloadContext): tuple[start: uint64, count: uint64] =
+  ctx.scheduler.neededRange()
+
 proc needsNextPresenceWindow*(ctx: DownloadContext): bool =
   ctx.scheduler.needsNextPresenceWindow()
 

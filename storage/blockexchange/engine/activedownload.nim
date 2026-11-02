@@ -357,15 +357,24 @@ proc getSwarm(download: ActiveDownload): Swarm =
 proc updatePeerAvailability*(
     download: ActiveDownload, peerId: PeerId, availability: BlockAvailability
 ) =
-  let swarm = download.ctx.swarm
-  if swarm.getPeer(peerId).isSome:
-    swarm.updatePeerAvailability(peerId, availability)
+  let
+    swarm = download.ctx.swarm
+    peer = swarm.getPeer(peerId)
+    known =
+      if peer.isSome:
+        peer.get().availability
+      else:
+        BlockAvailability.unknown()
+    kept = known.merge(availability).keepOverlapping(download.ctx.neededRange())
+  if peer.isSome:
+    if kept.kind != bakUnknown:
+      swarm.updatePeerAvailability(peerId, kept)
     return
 
-  if swarm.addPeer(peerId, availability) or availability.kind == bakUnknown:
+  if swarm.addPeer(peerId, kept) or kept.kind == bakUnknown:
     return
 
-  if not swarm.replaceUnknownPeer(peerId, availability):
+  if not swarm.replaceIdlePeer(peerId, kept, download.ctx.neededRange()):
     trace "Peer availability dropped, not admitted to swarm", peer = peerId
 
 proc handleBatchRetry*(
