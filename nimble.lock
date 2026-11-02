@@ -174,20 +174,20 @@
       }
     },
     "chronos": {
-      "version": "4.2.4",
-      "vcsRevision": "90f543e447f6ade46f028bd7bdf882ae7fcb0ba9",
+      "version": "#2d81a7625d74269581ba24c8bc40b69fccf27d47",
+      "vcsRevision": "2d81a7625d74269581ba24c8bc40b69fccf27d47",
       "url": "https://github.com/status-im/nim-chronos",
       "downloadMethod": "git",
       "dependencies": [
         "nim",
-        "results",
-        "stew",
         "bearssl",
         "httputils",
+        "results",
+        "stew",
         "unittest2"
       ],
       "checksums": {
-        "sha1": "2161fffc20d6337784b5cee15a486b50f185e6ce"
+        "sha1": "b3821cbf26929c5dd3054e6e69e2d8632d325bed"
       }
     },
     "libplum": {
@@ -235,18 +235,18 @@
       }
     },
     "serialization": {
-      "version": "0.5.3",
-      "vcsRevision": "4092500cea76154576539371709ae801afbd2a9d",
+      "version": "0.5.4",
+      "vcsRevision": "937a65c19fc49a5f79e2ecd89094d367b6ca0e1b",
       "url": "https://github.com/status-im/nim-serialization",
       "downloadMethod": "git",
       "dependencies": [
         "nim",
         "faststreams",
-        "unittest2",
-        "stew"
+        "stew",
+        "unittest2"
       ],
       "checksums": {
-        "sha1": "c087d26c50da40436599163888532660d6f9e631"
+        "sha1": "a5eadb19d36b85e3e712c98990476d7d1445f88b"
       }
     },
     "protobuf_serialization": {
@@ -282,8 +282,8 @@
       }
     },
     "confutils": {
-      "version": "0.1.0",
-      "vcsRevision": "671145b7e68fb9dcac08b62b890d44eb15c72859",
+      "version": "0.1.1",
+      "vcsRevision": "cdbac612f0f3d2883e959807d790658854e73cf2",
       "url": "https://github.com/status-im/nim-confutils",
       "downloadMethod": "git",
       "dependencies": [
@@ -293,7 +293,7 @@
         "results"
       ],
       "checksums": {
-        "sha1": "bee7a165d619f460182e2f1be05abd07fb8ecfad"
+        "sha1": "ed737378087132f9bd1e861e35d8b0dfaa02fd1d"
       }
     },
     "cbor_serialization": {
@@ -362,8 +362,8 @@
       }
     },
     "ffi": {
-      "version": "#94e35fd52dda32df277e541292e6dc55f9415878",
-      "vcsRevision": "94e35fd52dda32df277e541292e6dc55f9415878",
+      "version": "#16aab491d3aa6d604df0600fbdfe7190ba169577",
+      "vcsRevision": "16aab491d3aa6d604df0600fbdfe7190ba169577",
       "url": "https://github.com/logos-messaging/nim-ffi",
       "downloadMethod": "git",
       "dependencies": [
@@ -373,7 +373,7 @@
         "cbor_serialization"
       ],
       "checksums": {
-        "sha1": "669043325c99e6ec7c19c61702abfbcd9e0cc51a"
+        "sha1": "a54a314063df40ea667be2e637c69004a1031fe6"
       }
     },
     "presto": {
@@ -477,19 +477,19 @@
       }
     },
     "blscurve": {
-      "version": "#f4d0de2eece20380541fbf73d4b8bf57dc214b3b",
-      "vcsRevision": "f4d0de2eece20380541fbf73d4b8bf57dc214b3b",
+      "version": "#3bf34027a2eff87e5fe8418bc97f09219452823a",
+      "vcsRevision": "3bf34027a2eff87e5fe8418bc97f09219452823a",
       "url": "https://github.com/status-im/nim-blscurve",
       "downloadMethod": "git",
       "dependencies": [
         "nim",
         "nimcrypto",
-        "stew",
         "results",
+        "stew",
         "taskpools"
       ],
       "checksums": {
-        "sha1": "dce2286f0d818049aed1cc0d240644d66faf9a85"
+        "sha1": "60eacd046b44efb5cd4bea1c019e1e9ab3dee3ba"
       }
     },
     "secp256k1": {
