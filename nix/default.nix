@@ -158,14 +158,9 @@ in stdenv.mkDerivation rec {
       --replace-fail '" e --hints:off' '" e --skipCfg --hints:off'
   '';
 
-  # `make all` runs `nimble build`, which needs the network: nim builds the
-  # binary directly, with the -d:release that make adds.
   buildPhase = ''
     runHook preBuild
-  '' + lib.concatMapStrings (target:
-    if target == "all" then ''
-      nim storage $NIMFLAGS -d:release build.nims
-    '' else ''
+  '' + lib.concatMapStrings (target: ''
       make ${target} V=${toString verbosity}
     '') targets + ''
     runHook postBuild
