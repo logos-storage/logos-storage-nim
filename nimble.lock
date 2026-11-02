@@ -235,7 +235,7 @@
       }
     },
     "serialization": {
-      "version": "0.5.4",
+      "version": "0.5.5",
       "vcsRevision": "937a65c19fc49a5f79e2ecd89094d367b6ca0e1b",
       "url": "https://github.com/status-im/nim-serialization",
       "downloadMethod": "git",
