@@ -235,8 +235,8 @@
       }
     },
     "serialization": {
-      "version": "0.5.5",
-      "vcsRevision": "937a65c19fc49a5f79e2ecd89094d367b6ca0e1b",
+      "version": "0.5.4",
+      "vcsRevision": "b5473564e80a4908cf6c5a038e4c4a6ca7de2223",
       "url": "https://github.com/status-im/nim-serialization",
       "downloadMethod": "git",
       "dependencies": [
@@ -246,7 +246,7 @@
         "unittest2"
       ],
       "checksums": {
-        "sha1": "a5eadb19d36b85e3e712c98990476d7d1445f88b"
+        "sha1": "6a75be38ab6c8a5d49108a54b494ff70d68ea011"
       }
     },
     "protobuf_serialization": {
