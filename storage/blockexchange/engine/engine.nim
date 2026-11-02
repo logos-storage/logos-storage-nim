@@ -236,6 +236,9 @@ proc admitUserConnectedPeers(
   ## it they stay unknown and every batch costs its own want-have round trip.
   let blockExc = self.contextFor(download)
   if blockExc.isNil:
+    download.signalCompletionIfDone(
+      (ref StorageError)(msg: $download.ctx.transport & " transport is not enabled")
+    )
     return
   let admitted = blockExc.admitUserConnectedPeers(download.ctx.swarm)
   if admitted.len > 0 and not download.cancelled:

@@ -89,9 +89,8 @@ proc admitUserConnectedPeers*(self: BlockExcContext, swarm: Swarm): seq[PeerId] 
   var candidates = self.userConnectedPeers.toSeq().filterIt(swarm.getPeer(it).isNone)
   shuffle(candidates)
   for peerId in candidates:
-    if not swarm.addPeer(peerId, BlockAvailability.unknown()):
-      break
-    result.add(peerId)
+    if swarm.addPeer(peerId, BlockAvailability.unknown()):
+      result.add(peerId)
 
 proc recordDialFailure*(self: BlockExcContext, peerId: PeerId) =
   self.dialFailures[peerId] = Moment.now()
