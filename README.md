@@ -47,8 +47,6 @@ Please check `build/storage --help` for more information.
 
 The node exposes an HTTP API for testing and debugging only. It is not a public API: applications use the C library, see [Bindings](#bindings).
 
-One exception: the HTTP API uploads Logos packages into the Package Downloader Module for [package releases](https://github.com/logos-co/logos-modules-release#releasing-a-module).
-
 The OpenAPI spec is in [openapi.yaml](openapi.yaml).
 
 ## Bindings
