@@ -118,7 +118,7 @@ when (NimMajor, NimMinor) >= (2, 0):
   --mm:
     refc
 
-# Nim 2.2.12 rejects the merkletree compress closure.
+# Nim >= 2.2.12 rejects the merkletree compress closure.
 when (NimMajor, NimMinor, NimPatch) >= (2, 2, 12):
   switch("legacy", "procParamTypeBackendAliases")
 

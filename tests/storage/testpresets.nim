@@ -44,14 +44,14 @@ suite "Network presets":
     check preset2.name == "preset2"
 
   test "should return error when preset is not found":
-    let result = Presets.find("nonexistent")
-    check result.isNone
+    let found = Presets.find("nonexistent")
+    check found.isNone
 
   test "should return presets matching prefix":
-    let result = Presets.findByPrefix("preset")
-    check result.len == 2
-    check result[0] == "preset1"
-    check result[1] == "preset2"
+    let matches = Presets.findByPrefix("preset")
+    check matches.len == 2
+    check matches[0] == "preset1"
+    check matches[1] == "preset2"
 
     let result2 = Presets.findByPrefix("preset1")
     check result2.len == 1

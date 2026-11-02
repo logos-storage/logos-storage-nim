@@ -14,7 +14,7 @@ import pkg/libp2p/multicodec
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/codec
 
-Protobuf.extensionDefaults(MultiCodec)
+Protobuf.extensionDefaults(MultiCodec, puint32)
 
 func computeFieldSize*(
     field: int, value: MultiCodec, ProtoType: type ProtobufExt, skipDefault: static bool
