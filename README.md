@@ -16,6 +16,8 @@
 
 ## Build and Run
 
+The build needs Nim 2.2.14 or later, which ships Nimble 0.26.
+
 To build the project, clone it and run:
 
 ```bash
@@ -135,6 +137,7 @@ switch("define", "libp2p_multihash_exts:storage/multihash_exts.nim")
 switch("define", "libp2p_contentids_exts:storage/contentids_exts.nim")
 switch("define", "libp2p_multiaddress_exts:storage/multiaddress_exts.nim")
 switch("define", "libp2p_pki_schemes=secp256k1")
+switch("define", "chronicles_sinks=textlines[dynamic],json[dynamic],textlines[dynamic]")
 switch("define", "chronosHandleException")
 switch("define", "nimOldCaseObjects")
 switch("define", "withoutPCRE")

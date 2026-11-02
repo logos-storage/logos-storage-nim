@@ -136,7 +136,8 @@ bootstrapHealthCheck: | build
 		nim bootstrapHealthCheck $(NIM_PARAMS) $(BOOTSTRAP_HEALTH_CHECK_PARAMS) build.nims
 
 # The generated header decodes the CBOR wire with TinyCBOR, which nim-ffi vendors.
-FFI_DIR = $(firstword $(wildcard $(CURDIR)/nimbledeps/pkgs2/ffi-*))
+# nimble.paths gives the ffi folder in use: nimbledeps/ can hold older ones.
+FFI_DIR = $(shell grep -o '[^"]*[/\\]ffi-[^"/\\]*' nimble.paths)
 TINYCBOR_DIR = $(FFI_DIR)/ffi/codegen/templates/cpp/vendor
 TINYCBOR_SRCS := $(TINYCBOR_DIR)/tinycbor/cborencoder.c \
 	$(TINYCBOR_DIR)/tinycbor/cborencoder_close_container_checked.c \

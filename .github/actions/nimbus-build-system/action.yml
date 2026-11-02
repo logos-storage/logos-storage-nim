@@ -140,8 +140,6 @@ runs:
           printf "'%s'" "$quoted"
         }
 
-        [[ '${{ inputs.cpu }}' == 'i386' ]] && echo "ARCH_OVERRIDE=ARCH_OVERRIDE=x86" >> ${GITHUB_ENV}
-
         # Stack usage on Linux amd64/arm64
         if [[ '${{ inputs.os }}' == 'linux' && ('${{ inputs.cpu }}' == 'amd64' || '${{ inputs.cpu }}' == 'arm64')]]; then
           NIMFLAGS="${NIMFLAGS} -d:limitStackUsage"

@@ -22,10 +22,8 @@ coverage/
 # C bindings emitted by nim-ffi's genBindings() on every libstorage build
 /library/generated/
 
-# Nimble packages
-/vendor/.nimble
-/vendor/packages/
-# /vendor/*/
+# Old submodule checkouts, left on disk after switching from a branch with vendor/
+/vendor/
 
 # Nimble user files
 nimble.develop
@@ -41,9 +39,7 @@ nimble.paths
 # local settings overrides (e.g. WEB3_URL)
 .env
 
-.update.timestamp
 storage.nims
-nimbus-build-system.paths
 docker/hostdatadir
 docker/prometheus-data
 .DS_Store
