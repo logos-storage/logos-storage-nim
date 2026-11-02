@@ -68,8 +68,8 @@ jobs:
         run: rm nimble.lock
 
       # No cache: cached packages would hide newer versions.
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: linux
           nim_version: ${{ env.nim_version }}
@@ -92,8 +92,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: linux
           nim_version: ${{ env.nim_version }}

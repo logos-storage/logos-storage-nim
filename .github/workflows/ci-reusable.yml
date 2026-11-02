@@ -33,8 +33,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}

@@ -1,7 +1,7 @@
 # Adapted from:
 # https://github.com/status-im/nimbus-eth2/blob/stable/.github/workflows/ci.yml
 
-name: Setup Nimbus Build System
+name: Setup Nimble build system
 inputs:
   os:
     description: "Operating system to build for"

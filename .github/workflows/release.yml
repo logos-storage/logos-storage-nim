@@ -79,8 +79,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}
