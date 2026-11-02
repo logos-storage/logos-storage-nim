@@ -3,9 +3,12 @@ author = "Logos Storage Team"
 description = "privacy-preserving p2p file sharing"
 license = "MIT"
 binDir = "build"
-bin = @["storage"]
 srcDir = "."
-installFiles = @["build.nims"]
+installDirs = @["storage", "library"]
+installFiles = @[
+  "storage.nim", "build.nims", "config.nims", "network_presets.json",
+  "LICENSE-APACHEv2", "LICENSE-MIT",
+]
 
 # Older Nimble versions cannot resolve these dependencies.
 when (NimbleMajor, NimbleMinor) < (0, 26):
