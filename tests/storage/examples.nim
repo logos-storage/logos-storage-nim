@@ -47,8 +47,8 @@ proc example*(_: type BlockAddress): BlockAddress =
 proc example*(_: type Manifest): Manifest =
   Manifest.new(
     treeCid = Cid.example,
-    blockSize = 256.NBytes,
-    datasetSize = 4096.NBytes,
+    blockSize = 4096.NBytes,
+    datasetSize = 65536.NBytes,
     filename = "example.txt".some,
     mimetype = "text/plain".some,
   )
