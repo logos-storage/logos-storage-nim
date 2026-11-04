@@ -29,11 +29,8 @@ template withUploadedFile(body: untyped) =
   resetUploadSessions()
   resetDownloadSessions()
 
-  let conf = %*{
-    "data-dir": dataDir / "repo",
-    "nat": "extip:127.0.0.1",
-    "mix-enabled": true,
-  }
+  let conf =
+    %*{"data-dir": dataDir / "repo", "nat": "extip:127.0.0.1", "mix-enabled": true}
   let node {.inject.} = (await createStorage($conf)).tryGet()
   defer:
     await node.close()
