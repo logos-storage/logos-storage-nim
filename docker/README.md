@@ -8,10 +8,10 @@
  We can run Logos Storage Docker image using CLI
  ```shell
  # Default run
- docker run --rm logosstorage/logos-storage-nim
+ docker run --rm -e STORAGE_NETWORK=logos.test logosstorage/logos-storage-nim
 
  # Mount local datadir
- docker run -v ./datadir:/datadir --rm logosstorage/logos-storage-nim storage --data-dir=/datadir
+ docker run -v ./datadir:/datadir --rm -e STORAGE_NETWORK=logos.test logosstorage/logos-storage-nim storage --data-dir=/datadir
  ```
 
  And Docker Compose
@@ -31,7 +31,7 @@
 
  It means that at the image run it will just run `storage` application without any arguments and we can pass them as a regular arguments, by overriding command
  ```shell
- docker run logosstorage/logos-storage-nim storage --api-bindaddr=0.0.0.0 --api-port=8080
+ docker run -e STORAGE_NETWORK=logos.test logosstorage/logos-storage-nim storage --api-bindaddr=0.0.0.0 --api-port=8080
  ```
 
 
@@ -42,7 +42,13 @@
  We also added a temporary environment variable `NAT_IP_AUTO` to the entrypoint which is set as `false` for releases and ` true` for regular builds. That approach is useful for Dist-Tests.
  ```shell
  # Disable NAT_IP_AUTO for regular builds
- docker run -e NAT_IP_AUTO=false logosstorage/logos-storage-nim
+ docker run -e NAT_IP_AUTO=false -e STORAGE_NETWORK=logos.test logosstorage/logos-storage-nim
+ ```
+
+ With `STORAGE_NETWORK`, the entrypoint downloads the bootstrap nodes of that Logos network from `fleets.logos.co`.
+ ```shell
+ # Join the Logos testnet
+ docker run -e STORAGE_NETWORK=logos.test logosstorage/logos-storage-nim
  ```
 
 

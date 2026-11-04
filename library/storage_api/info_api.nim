@@ -37,10 +37,6 @@ proc storage_peer_id(self: Storage): Future[Result[string, string]] {.ffi.} =
   ## Returns the node's libp2p peer identity.
   return ok($self.node.switch.peerInfo.peerId)
 
-proc storage_network(self: Storage): Future[Result[string, string]] {.ffi.} =
-  ## Returns the name of the configured network preset, such as "logos.test".
-  return ok(self.config.network.name)
-
 proc storage_get_metrics(self: Storage): Future[Result[string, string]] {.ffi.} =
   ## Returns the process metrics registry as JSON.
   # nim_runtime_info is excluded: dumpHeapInstances returns an endless object count here.

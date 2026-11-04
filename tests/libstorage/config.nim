@@ -22,6 +22,7 @@ template withStorage(conf: JsonNode, body: untyped) =
 
   let json = conf
   json["data-dir"] = %dataDir
+  json["nat"] = %"extip:127.0.0.1"
   let res = await createStorage($json)
 
   check res.isOk
@@ -48,6 +49,19 @@ asyncchecksuite "Libstorage - config":
     if res.isErr:
       check "unable to load configuration" in res.error
 
+  test "rejects a config without bootstrap node and with nat auto":
+    let dataDir = getTempDir() / "libstorage-config" / $getMonoTime()
+
+    defer:
+      removeDir(dataDir)
+
+    let res = await createStorage($ %*{"data-dir": dataDir, "nat": "auto"})
+
+    check res.isErr
+
+    if res.isErr:
+      check "--nat=auto requires --bootstrap-node" in res.error
+
   test "accepts a valid config":
     withStorage(%*{}):
       discard
@@ -59,7 +73,3 @@ asyncchecksuite "Libstorage - config":
   test "enables the REST API when the config asks for it":
     withStorage(%*{"api-bindaddr": DefaultApiBindAddress}):
       check node.config.apiBindAddress == DefaultApiBindAddress.some
-
-  test "keeps the network the node was configured with":
-    withStorage(%*{"network": "logos.dev"}):
-      check node.config.network.name == "logos.dev"
