@@ -242,7 +242,7 @@ runs:
         path: nimbledeps
         key: ${{ inputs.os }}-${{ inputs.cpu }}-nimbledeps-${{ env.cache_nonce }}-${{ hashFiles('nimble.lock') }}
 
-    - name: Build Nim and Logos Storage dependencies
+    - name: Install Logos Storage dependencies
       shell: ${{ inputs.shell }} {0}
       run: |
         which gcc

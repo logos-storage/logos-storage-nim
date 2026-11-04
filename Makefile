@@ -10,7 +10,7 @@ SHELL := bash # the shell used internally by Make
 # Run `nimble setup -l` first: it installs the dependencies in nimbledeps/.
 NIM_PARAMS := $(NIMFLAGS)
 
-# Same output as nimbus-build-system: quiet by default, `make V=1` for more.
+# Quiet by default, `make V=1` for more.
 V := 0
 NIM_PARAMS := $(NIM_PARAMS) --verbosity:$(V)
 ifeq ($(V), 0)
