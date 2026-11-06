@@ -49,6 +49,7 @@ import ./logutils
 import ./nat
 import ./utils/natutils
 import ./mix
+import ./serviceproviders
 
 logScope:
   topics = "storage node"
@@ -69,6 +70,7 @@ type
     autonatService*: Option[AutonatV2Service]
     autoRelayService*: Option[AutoRelayService]
     natMapper*: Option[NatPortMapper]
+    serviceProviders: Option[ServiceProviders]
     holePunchHandler: Option[connmanager.PeerEventHandler]
     bootstrapNodes: seq[SignedPeerRecord]
     mixTransport: MixTransport
@@ -196,6 +198,7 @@ proc start*(self: StorageServer) {.async.} =
     peerInfo.announcedAddrs = @[extIpAddr]
     # We force the update to take in consideration the announcedAddrs
     await peerInfo.update()
+    self.storageNode.discovery.startAdvertising()
 
   if self.config.mixEnabled:
     let
@@ -265,6 +268,7 @@ proc start*(self: StorageServer) {.async.} =
   # AutoNAT is not in switch.services because we want to start it
   # after the bootstrap connections to have connected peers for the first probe.
   if self.autonatService.isSome:
+    self.serviceProviders.get.start()
     await self.autonatService.get.start(self.storageNode.switch)
 
   if self.restServer != nil:
@@ -317,6 +321,9 @@ proc stop*(s: StorageServer) {.async.} =
 
   if s.autonatService.isSome:
     futures.add(s.autonatService.get.stop(s.storageNode.switch))
+
+  if s.serviceProviders.isSome:
+    futures.add(s.serviceProviders.get.stop())
 
   if s.restServer != nil:
     futures.add(s.restServer.stop())
@@ -498,6 +505,7 @@ proc new*(
       dhtMixProxies = config.dhtMixProxies,
       isServer = config.nat.hasExtIp or config.autonatServer,
       addressPolicy = kadAddressPolicy,
+      providedServices = providedServices(config.autonatServer, config.isRelayServer),
     )
 
     repoData =
@@ -568,10 +576,12 @@ proc new*(
   switch.mount(engine.newBlockExcProtocol())
   switch.mount(manifestProto)
   switch.mount(discovery.kad)
+  switch.mount(discovery.serviceDiscovery)
 
   # NAT services
   var natMapper: Option[NatPortMapper]
   var autoRelayService: Option[AutoRelayService]
+  var serviceProviders: Option[ServiceProviders]
   var holePunchHandler: Option[connmanager.PeerEventHandler]
 
   if autonatService.isSome:
@@ -584,6 +594,27 @@ proc new*(
 
     relayService.setup(switch)
     autoRelayService = some(relayService)
+
+    let providers = ServiceProviders.new(
+      discovery,
+      switch,
+      config.natScheduleInterval,
+      @[
+        MaintainedService.init(
+          AutonatServiceId,
+          config.natNumPeersToAsk,
+          proc(): bool =
+            true,
+        ),
+        MaintainedService.init(
+          RelayServiceId,
+          config.natMaxRelays,
+          proc(): bool =
+            relayService.isRunning,
+        ),
+      ],
+    )
+    serviceProviders = some(providers)
 
     natMapper = some(
       NatPortMapper(
@@ -606,6 +637,7 @@ proc new*(
           networkReachability, addrs, discovery, switch, relayService
         )
         engine.advertiser.onAddrChange()
+        providers.check()
     )
 
     holePunchHandler = some(setupHolePunching(switch))
@@ -637,6 +669,7 @@ proc new*(
     autonatService: autonatService,
     autoRelayService: autoRelayService,
     natMapper: natMapper,
+    serviceProviders: serviceProviders,
     holePunchHandler: holePunchHandler,
     bootstrapNodes: bootstrapNodes,
     mixTransport: nil,
