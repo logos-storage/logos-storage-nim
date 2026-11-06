@@ -21,9 +21,9 @@ The build needs Nim 2.2.14 or later, which ships Nimble 0.26.
 To build the project, clone it and run:
 
 ```bash
-nimble setup -l && make
+make update && make
 # Tip: use -j{ncpu} to for parallel execution, eg:
-# nimble setup -l && make -j12
+# make update && make -j12
 ```
 
 The executable will be placed under the `build` directory under the project root.

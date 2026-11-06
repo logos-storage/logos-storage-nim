@@ -247,6 +247,6 @@ runs:
       run: |
         which gcc
         gcc --version
-        nimble setup -l
+        make update
         echo
         nim --version

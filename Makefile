@@ -7,7 +7,7 @@
 
 SHELL := bash # the shell used internally by Make
 
-# Run `nimble setup -l` first: it installs the dependencies in nimbledeps/.
+# Run `make update` first: it installs the dependencies in nimbledeps/.
 NIM_PARAMS := $(NIMFLAGS)
 
 # Quiet by default, `make V=1` for more.
@@ -65,7 +65,8 @@ export CXXFLAGS
 	testLibstorageC \
 	testLibstorage \
 	buildNatImage \
-	testNatIntegration
+	testNatIntegration \
+	update
 
 # default target, because it's the first one that doesn't start with '.'
 
@@ -80,6 +81,10 @@ mix-tools: | build
 
 build:
 	mkdir -p build
+
+# Installs the dependencies in nimbledeps/.
+update:
+	nimble setup -l
 
 # "-d:release" implies "--stacktrace:off" and it cannot be added to config.nims
 ifeq ($(USE_LIBBACKTRACE), 0)
