@@ -126,9 +126,6 @@ task testNatIntegration,
 task testLibstorage, "Run libstorage Nim tests":
   test "testLibstorage", outName = "testLibstorage"
 
-task build, "build Logos Storage binary":
-  storageTask()
-
 task test, "Run tests":
   testStorageTask()
 

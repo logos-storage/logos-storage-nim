@@ -5,34 +5,25 @@
 # at your option. This file may not be copied, modified, or distributed except
 # according to those terms.
 
-# This is the Nim version used locally and in regular CI builds.
-# Can be a specific version tag, a branch name, or a commit hash.
-# Can be overridden by setting the NIM_COMMIT environment variable
-# before calling make.
-#
-# For readability in CI, if NIM_COMMIT is set to "pinned",
-# this will also default to the version pinned here.
-#
-# If NIM_COMMIT is set to "nimbusbuild", this will use the
-# version pinned by nimbus-build-system.
-PINNED_NIM_VERSION := v2.2.14
-
-ifeq ($(NIM_COMMIT),)
-NIM_COMMIT := $(PINNED_NIM_VERSION)
-else ifeq ($(NIM_COMMIT),pinned)
-NIM_COMMIT := $(PINNED_NIM_VERSION)
-endif
-
-ifeq ($(NIM_COMMIT),nimbusbuild)
-undefine NIM_COMMIT
-else
-export NIM_COMMIT
-endif
-
 SHELL := bash # the shell used internally by Make
 
-# used inside the included makefiles
-BUILD_SYSTEM_DIR := vendor/nimbus-build-system
+# Run `make update` first: it installs the dependencies in nimbledeps/.
+NIM_PARAMS := $(NIMFLAGS)
+
+# Quiet by default, `make V=1` for more.
+V := 0
+NIM_PARAMS := $(NIM_PARAMS) --verbosity:$(V)
+ifeq ($(V), 0)
+NIM_PARAMS := $(NIM_PARAMS) --hints:off
+.SILENT:
+endif
+
+ifdef LOG_LEVEL
+NIM_PARAMS := $(NIM_PARAMS) -d:chronicles_log_level="$(LOG_LEVEL)"
+endif
+
+BUILD_MSG := "Building:"
+FORMAT_MSG := "Formatting:"
 
 # -d:insecure - Necessary to enable Prometheus HTTP endpoint for metrics
 # -d:chronicles_colors:none - Necessary to disable colors in logs for Docker
@@ -64,14 +55,10 @@ else
 endif
 export CXXFLAGS
 
-# we don't want an error here, so we can handle things later, in the ".DEFAULT" target
--include $(BUILD_SYSTEM_DIR)/makefiles/variables.mk
-
 .PHONY: \
 	all \
 	clean \
 	coverage \
-	deps \
 	test \
 	testAll \
 	testIntegration \
@@ -81,34 +68,23 @@ export CXXFLAGS
 	testNatIntegration \
 	update
 
-ifeq ($(NIM_PARAMS),)
-# "variables.mk" was not included, so we update the submodules.
-GIT_SUBMODULE_UPDATE := git submodule update --init --recursive
-.DEFAULT:
-	+@ echo -e "Git submodules not found. Running '$(GIT_SUBMODULE_UPDATE)'.\n"; \
-		$(GIT_SUBMODULE_UPDATE); \
-		echo
-# Now that the included *.mk files appeared, and are newer than this file, Make will restart itself:
-# https://www.gnu.org/software/make/manual/make.html#Remaking-Makefiles
-#
-# After restarting, it will execute its original goal, so we don't have to start a child Make here
-# with "$(MAKE) $(MAKECMDGOALS)". Isn't hidden control flow great?
-
-else # "variables.mk" was included. Business as usual until the end of this file.
-
 # default target, because it's the first one that doesn't start with '.'
 
 # Builds the Logos Storage binary
-all: | build deps
+all: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim storage $(NIM_PARAMS) build.nims
+		nim storage $(NIM_PARAMS) build.nims
 
-mix-tools: | build deps
+mix-tools: | build
 	echo -e $(BUILD_MSG) "build/mix_pool build/mix_relay_dht" && \
-		$(ENV_SCRIPT) nim mixTools $(NIM_PARAMS) build.nims
+		nim mixTools $(NIM_PARAMS) build.nims
 
-# must be included after the default target
--include $(BUILD_SYSTEM_DIR)/makefiles/targets.mk
+build:
+	mkdir -p build
+
+# Installs the dependencies in nimbledeps/.
+update:
+	nimble setup -l
 
 # "-d:release" implies "--stacktrace:off" and it cannot be added to config.nims
 ifeq ($(USE_LIBBACKTRACE), 0)
@@ -116,10 +92,6 @@ NIM_PARAMS := $(NIM_PARAMS) -d:debug -d:disable_libbacktrace
 else
 NIM_PARAMS := $(NIM_PARAMS) -d:release
 endif
-
-deps: | deps-common nat-libs
-
-update: | update-common
 
 # detecting the os
 ifeq ($(OS),Windows_NT) # is Windows_NT on XP, 2000, 7, Vista, 10...
@@ -132,14 +104,14 @@ else
 endif
 
 # Builds and run a part of the test suite
-test: | build deps
+test: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim test $(NIM_PARAMS) build.nims
+		nim test $(NIM_PARAMS) build.nims
 
 # Builds and runs the integration tests
-testIntegration: | build deps
+testIntegration: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim testIntegration $(TEST_PARAMS) $(NIM_PARAMS) build.nims
+		nim testIntegration $(TEST_PARAMS) $(NIM_PARAMS) build.nims
 
 DOCKER := $(or $(shell which podman 2>/dev/null), $(shell which docker 2>/dev/null))
 
@@ -149,27 +121,29 @@ DOCKER := $(or $(shell which podman 2>/dev/null), $(shell which docker 2>/dev/nu
 buildNatImage:
 	$(DOCKER) build -t localhost/storage-nat -f tests/integration/nat/Dockerfile .
 
-testNatIntegration: | deps buildNatImage
-	$(ENV_SCRIPT) nim testNatIntegration $(NIM_PARAMS) build.nims
+testNatIntegration: | buildNatImage
+	nim testNatIntegration $(NIM_PARAMS) build.nims
 
 BOOTSTRAP_HEALTH_CHECK_PARAMS :=
 ifdef CI
 	BOOTSTRAP_HEALTH_CHECK_PARAMS := $(BOOTSTRAP_HEALTH_CHECK_PARAMS) -d:ci=$(CI)
 endif
 
-checkSpr: | build deps
+checkSpr: | build
 	echo -e $(BUILD_MSG) "build/check_spr" && \
-		$(ENV_SCRIPT) nim checkSpr $(NIM_PARAMS) build.nims
+		nim checkSpr $(NIM_PARAMS) build.nims
 
 # Pings the fleet bootstrap nodes and fails if any are unreachable.
 # Run from OUTSIDE the fleet VPCs (e.g. a GitHub-hosted runner) so nodes that
 # advertise private/cloud-internal IPs are correctly seen as unreachable.
-bootstrapHealthCheck: | build deps
+bootstrapHealthCheck: | build
 	echo -e $(BUILD_MSG) "build/check_spr" && \
-		$(ENV_SCRIPT) nim bootstrapHealthCheck $(NIM_PARAMS) $(BOOTSTRAP_HEALTH_CHECK_PARAMS) build.nims
+		nim bootstrapHealthCheck $(NIM_PARAMS) $(BOOTSTRAP_HEALTH_CHECK_PARAMS) build.nims
 
 # The generated header decodes the CBOR wire with TinyCBOR, which nim-ffi vendors.
-TINYCBOR_DIR := ../../vendor/nim-ffi/ffi/codegen/templates/cpp/vendor
+# nimble.paths gives the ffi folder in use: nimbledeps/ can hold older ones.
+FFI_DIR = $(shell grep -o '[^"]*[/\\]ffi-[^"/\\]*' nimble.paths 2>/dev/null)
+TINYCBOR_DIR = $(FFI_DIR)/ffi/codegen/templates/cpp/vendor
 TINYCBOR_SRCS := $(TINYCBOR_DIR)/tinycbor/cborencoder.c \
 	$(TINYCBOR_DIR)/tinycbor/cborencoder_close_container_checked.c \
 	$(TINYCBOR_DIR)/tinycbor/cborparser.c \
@@ -178,8 +152,8 @@ TINYCBOR_SRCS := $(TINYCBOR_DIR)/tinycbor/cborencoder.c \
 CBINDINGS_CFLAGS := -I$(TINYCBOR_DIR) -I$(TINYCBOR_DIR)/tinycbor
 
 # Builds a C example that uses the libstorage C library and runs it
-testLibstorageC: | build deps
-	$(MAKE) $(if $(ncpu),-j$(ncpu),) libstorage
+testLibstorageC: | build
+	$(MAKE) libstorage
 	cd tests/cbindings && \
 	if [ "$(detected_OS)" = "Windows" ]; then \
 		gcc -o storage.exe storage.c $(TINYCBOR_SRCS) $(CBINDINGS_CFLAGS) -L../../build -lstorage -pthread && \
@@ -191,24 +165,24 @@ testLibstorageC: | build deps
 
 testLibstorage: | testLibstorageC
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim testLibstorage $(TEST_PARAMS) $(NIM_PARAMS) build.nims
+		nim testLibstorage $(TEST_PARAMS) $(NIM_PARAMS) build.nims
 
 # Builds and runs all tests
-testAll: | build deps
+testAll: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim testAll $(NIM_PARAMS) build.nims
-	$(MAKE) $(if $(ncpu),-j$(ncpu),) testLibstorage
+		nim testAll $(NIM_PARAMS) build.nims
+	$(MAKE) testLibstorage
 
-coverage: build deps
+coverage: build
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim coverage $(NIM_PARAMS) build.nims
+		nim coverage $(NIM_PARAMS) build.nims
 	echo "Run `make show-coverage` to view coverage results"
 
 show-coverage:
 	if which open >/dev/null; then (echo -e "\e[92mOpening\e[39m HTML coverage report in browser..." && open coverage/report/index.html) || true; fi
 
 # usual cleaning
-clean: | clean-common
+clean:
 	rm -rf build
 
 ############
@@ -216,15 +190,14 @@ clean: | clean-common
 ############
 .PHONY: build-nph install-nph-hook clean-nph print-nph-path
 
-# Default location for nph binary shall be next to nim binary to make it available on the path.
-NPH:=$(shell dirname $(NIM_BINARY))/nph
+NPH_VERSION := 0.7.0
+NPH := build/nph/bin/nph
 
-build-nph:
+# Runs from build/: in the project folder, Nimble would resolve storage.nimble.
+build-nph: | build
 ifeq ("$(wildcard $(NPH))","")
-	cd vendor/nph && \
-	nimble setup -l && \
-	nimble build -d:disable_libbacktrace && \
-	mv ./nph ../../$(shell dirname $(NPH)) && \
+	cd build && \
+	nimble install -y --nimbleDir:nph nph@$(NPH_VERSION) && \
 	echo "nph utility is available at " $(NPH)
 endif
 
@@ -269,20 +242,18 @@ NIM_PARAMS := $(NIM_PARAMS) $(STORAGE_LIB_PARAMS)
 endif
 
 libstorage:
-	$(MAKE) deps
 	rm -f build/libstorage*
 
 ifeq ($(STATIC), 1)
 		echo -e $(BUILD_MSG) "build/$@.a" && \
-		$(ENV_SCRIPT) nim libstorageStatic $(NIM_PARAMS) storage.nims
+		nim libstorageStatic $(NIM_PARAMS) build.nims
 else ifeq ($(detected_OS),Windows)
 		echo -e $(BUILD_MSG) "build/$@.dll" && \
-		$(ENV_SCRIPT) nim libstorageDynamic $(NIM_PARAMS) storage.nims
+		nim libstorageDynamic $(NIM_PARAMS) build.nims
 else ifeq ($(detected_OS),macOS)
 		echo -e $(BUILD_MSG) "build/$@.dylib" && \
-		$(ENV_SCRIPT) nim libstorageDynamic $(NIM_PARAMS) storage.nims
+		nim libstorageDynamic $(NIM_PARAMS) build.nims
 else
 		echo -e $(BUILD_MSG) "build/$@.so" && \
-		$(ENV_SCRIPT) nim libstorageDynamic $(NIM_PARAMS) storage.nims
+		nim libstorageDynamic $(NIM_PARAMS) build.nims
 endif
-endif # "variables.mk" was not includedMa

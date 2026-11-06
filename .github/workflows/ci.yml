@@ -9,7 +9,7 @@ on:
 
 env:
   cache_nonce: 0 # Allows for easily busting actions/cache caches
-  nim_version: v2.2.14
+  nim_version: 2.2.14
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
@@ -53,17 +53,47 @@ jobs:
           fail: true
           suggest: true
 
+  # A project that requires storage never reads nimble.lock: it resolves the
+  # ranges of storage.nimble. This job builds the same way, to ensure that
+  # the build process works without lock file.
+  without-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Remove nimble.lock
+        run: rm nimble.lock
+
+      # No cache: cached packages would hide newer versions.
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
+        with:
+          os: linux
+          nim_version: ${{ env.nim_version }}
+          nimbledeps_cache: false
+
+      - name: Build storage
+        run: make
+
+      - name: Build libstorage
+        run: make libstorage
+
+      - name: Unit tests
+        run: make test
+
   coverage:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
         with:
-          submodules: recursive
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: linux
           nim_version: ${{ env.nim_version }}
@@ -71,7 +101,7 @@ jobs:
 
       - name: Generate coverage data
         run: |
-          make -j${ncpu} coverage
+          make coverage
         shell: bash
 
       - name: Upload coverage data to Codecov

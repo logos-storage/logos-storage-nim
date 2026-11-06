@@ -26,7 +26,7 @@ concurrency:
 
 env:
   cache_nonce: 0 # Allows for easily busting actions/cache caches
-  nim_version: pinned
+  nim_version: 2.2.14
   storage_binary_base: logos-storage
   c_bindings_lib_base: libstorage
   build_dir: build
@@ -78,11 +78,9 @@ jobs:
           fi
       - name: Checkout sources
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}
@@ -165,21 +163,18 @@ jobs:
       - name: Build ${{ env.c_bindings_lib_base }} (Linux)
         if: matrix.os == 'linux'
         run: |
-          make -j${ncpu} update
-          make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Build ${{ env.c_bindings_lib_base }} (MacOS)
         if: matrix.os == 'macos'
         run: |
-          make -j${ncpu} update
-          STORAGE_LIB_PARAMS="--passL:\"-Wl,-install_name,@rpath/${{ env.c_bindings_lib_base }}.dylib\"" make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          STORAGE_LIB_PARAMS="--passL:\"-Wl,-install_name,@rpath/${{ env.c_bindings_lib_base }}.dylib\"" make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Build ${{ env.c_bindings_lib_base }} (Windows)
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
-          make -j${ncpu} update
-          make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       # libstorage.h includes generated/storage.h, which includes <tinycbor/cbor.h>.
       - name: Stage ${{ env.c_bindings_lib_base }} headers
@@ -188,7 +183,9 @@ jobs:
           mkdir -p "${{ env.build_dir }}/include/generated"
           cp library/${{ env.c_bindings_lib_base }}.h "${{ env.build_dir }}/include/"
           cp library/generated/*.h "${{ env.build_dir }}/include/generated/"
-          cp -r vendor/nim-ffi/ffi/codegen/templates/cpp/vendor/tinycbor "${{ env.build_dir }}/include/"
+          # On Windows, nimble.paths doubles the backslashes.
+          ffi_dir=$(grep -o '[^"]*[/\\]ffi-[^"/\\]*' nimble.paths | sed 's/\\\\/\\/g')
+          cp -r "${ffi_dir}/ffi/codegen/templates/cpp/vendor/tinycbor" "${{ env.build_dir }}/include/"
 
       - name: Package ${{ env.c_bindings_lib_base }} Linux
         if: matrix.os == 'linux'
@@ -220,7 +217,7 @@ jobs:
       - name: Build ${{ env.c_bindings_lib_base }} static (Linux/MacOS)
         if: matrix.os == 'linux' || matrix.os == 'macos'
         run: |
-          STATIC=1 make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          STATIC=1 make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Package ${{ env.c_bindings_lib_base }} static (Linux/MacOS)
         if: matrix.os == 'linux' || matrix.os == 'macos'
@@ -228,12 +225,9 @@ jobs:
           if [[ "${{ matrix.os }}" == "linux" ]]; then
             sudo apt-get update && sudo apt-get install -y zip
           fi
+          # libstorage.a already contains libbacktrace and libplum.
           zip -j "${{ env.build_dir }}/${{ env.c_bindings_lib }}-static.zip" \
-            "${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.a" \
-            "vendor/nim-nat-traversal/vendor/libnatpmp-upstream/libnatpmp.a" \
-            "vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc/build/libminiupnpc.a" \
-            "vendor/nim-libbacktrace/install/usr/lib/libbacktrace.a" \
-            "vendor/nim-libplum/vendor/libplum/libplum.a"
+            "${{ env.build_dir }}/${{ env.c_bindings_lib_base }}.a"
           cd "${{ env.build_dir }}/include" && zip -r "../${{ env.c_bindings_lib }}-static.zip" .
 
       - name: Upload ${{ env.c_bindings_lib_base }} static to workflow artifacts

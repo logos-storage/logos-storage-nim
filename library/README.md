@@ -24,7 +24,7 @@ make STATIC=1 libstorage  # static (.a)
 
 The build writes `library/generated/storage.h` and its TinyCBOR helpers. Git ignores that directory, so build the library before you compile against `library/libstorage.h`.
 
-The generated header includes `<tinycbor/cbor.h>`. Compile and link the TinyCBOR sources that nim-ffi vendors in `vendor/nim-ffi/ffi/codegen/templates/cpp/vendor/tinycbor`, as the `testLibstorageC` target in the `Makefile` does. The release archive and the nix package ship those sources in `include/tinycbor/`.
+The generated header includes `<tinycbor/cbor.h>`. Compile and link the TinyCBOR sources that nim-ffi vendors in `nimbledeps/pkgs2/ffi-*/ffi/codegen/templates/cpp/vendor/tinycbor`, as the `testLibstorageC` target in the `Makefile` does. The release archive and the nix package ship those sources in `include/tinycbor/`.
 
 ## Call model
 

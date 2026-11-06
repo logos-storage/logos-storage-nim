@@ -1,13 +1,7 @@
-local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h")
 local nimble_bin = vim.fn.expand("~/.nimble/bin")
-local nimbus_nimsuggest =
-  root .. "/vendor/nimbus-build-system/vendor/Nim/bin/nimsuggest"
 
 vim.lsp.config("nim_langserver", {
   cmd = { nimble_bin .. "/nimlangserver" },
-  cmd_env = {
-    NIMBUS_BUILD_SYSTEM = "yes",
-  },
   capabilities = {
     workspace = {
       configuration = false,
@@ -15,7 +9,6 @@ vim.lsp.config("nim_langserver", {
   },
   settings = {
     nim = {
-      nimsuggestPath = nimbus_nimsuggest,
       inlayHints = {
         exceptionHints = {
           enable = false,

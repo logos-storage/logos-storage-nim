@@ -3,3 +3,5 @@ build
 docs
 metrics
 nimcache
+nimbledeps
+vendor
