@@ -153,7 +153,7 @@ CBINDINGS_CFLAGS := -I$(TINYCBOR_DIR) -I$(TINYCBOR_DIR)/tinycbor
 
 # Builds a C example that uses the libstorage C library and runs it
 testLibstorageC: | build
-	$(MAKE) $(if $(ncpu),-j$(ncpu),) libstorage
+	$(MAKE) libstorage
 	cd tests/cbindings && \
 	if [ "$(detected_OS)" = "Windows" ]; then \
 		gcc -o storage.exe storage.c $(TINYCBOR_SRCS) $(CBINDINGS_CFLAGS) -L../../build -lstorage -pthread && \
@@ -171,7 +171,7 @@ testLibstorage: | testLibstorageC
 testAll: | build
 	echo -e $(BUILD_MSG) "build/$@" && \
 		nim testAll $(NIM_PARAMS) build.nims
-	$(MAKE) $(if $(ncpu),-j$(ncpu),) testLibstorage
+	$(MAKE) testLibstorage
 
 coverage: build
 	echo -e $(BUILD_MSG) "build/$@" && \

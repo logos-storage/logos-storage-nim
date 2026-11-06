@@ -45,14 +45,14 @@ jobs:
       ## Part 1 Tests ##
       - name: Unit tests
         if: matrix.tests == 'unittest' || matrix.tests == 'all'
-        run: make -j${ncpu} test
+        run: maketest
 
       ## Part 2 Tests ##
       - name: Integration tests
         if: matrix.tests == 'integration' || matrix.tests == 'all'
         env:
           STORAGE_INTEGRATION_TEST_INCLUDES: ${{ matrix.includes }}
-        run: make -j${ncpu} DEBUG=${{ runner.debug }} testIntegration
+        run: makeDEBUG=${{ runner.debug }} testIntegration
 
       - name: Upload integration tests log files
         uses: actions/upload-artifact@v7
@@ -65,7 +65,7 @@ jobs:
       ## Part 3 Tests ##
       - name: Libstorage tests
         if: matrix.tests == 'libstorage' || matrix.tests == 'all'
-        run: make -j${ncpu} testLibstorage
+        run: maketestLibstorage
 
       ## Part 4 Tests ##
       - name: NAT integration tests

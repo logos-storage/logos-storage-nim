@@ -22,8 +22,9 @@ To build the project, clone it and run:
 
 ```bash
 make update && make
-# Tip: use -j{ncpu} to for parallel execution, eg:
-# make update && make -j12
+
+# To update the dependencies: edit storage.nimble, then
+# nimble lock && make update
 ```
 
 The executable will be placed under the `build` directory under the project root.

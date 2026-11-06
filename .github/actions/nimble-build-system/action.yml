@@ -195,16 +195,6 @@ runs:
           echo "NIMFLAGS=${NIMFLAGS}" >> $GITHUB_ENV
         fi
 
-        # Use all available CPUs for build process
-        ncpu=""
-        case '${{ inputs.os }}' in
-        'linux')   ncpu=$(nproc)                ;;
-        'macos')   ncpu=$(sysctl -n hw.ncpu)    ;;
-        'windows') ncpu=${NUMBER_OF_PROCESSORS} ;;
-        esac
-        [[ -z "$ncpu" || $ncpu -le 0 ]] && ncpu=1
-        echo "ncpu=${ncpu}" >> ${GITHUB_ENV}
-
     # setup-nim-action builds Nim from source on macOS and Linux arm64, and
     # deletes any existing install first: on a cache hit, we skip it.
     - name: Restore Nim from cache

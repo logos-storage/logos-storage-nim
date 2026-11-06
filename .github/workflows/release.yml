@@ -163,18 +163,18 @@ jobs:
       - name: Build ${{ env.c_bindings_lib_base }} (Linux)
         if: matrix.os == 'linux'
         run: |
-          make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Build ${{ env.c_bindings_lib_base }} (MacOS)
         if: matrix.os == 'macos'
         run: |
-          STORAGE_LIB_PARAMS="--passL:\"-Wl,-install_name,@rpath/${{ env.c_bindings_lib_base }}.dylib\"" make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          STORAGE_LIB_PARAMS="--passL:\"-Wl,-install_name,@rpath/${{ env.c_bindings_lib_base }}.dylib\"" make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Build ${{ env.c_bindings_lib_base }} (Windows)
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
-          make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       # libstorage.h includes generated/storage.h, which includes <tinycbor/cbor.h>.
       - name: Stage ${{ env.c_bindings_lib_base }} headers
@@ -217,7 +217,7 @@ jobs:
       - name: Build ${{ env.c_bindings_lib_base }} static (Linux/MacOS)
         if: matrix.os == 'linux' || matrix.os == 'macos'
         run: |
-          STATIC=1 make -j${ncpu} NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
+          STATIC=1 make NIMFLAGS="${NIMFLAGS} ${{ steps.platform-nim-flags.outputs.nim_flags }}" libstorage
 
       - name: Package ${{ env.c_bindings_lib_base }} static (Linux/MacOS)
         if: matrix.os == 'linux' || matrix.os == 'macos'

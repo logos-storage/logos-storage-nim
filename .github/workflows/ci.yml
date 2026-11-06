@@ -76,13 +76,13 @@ jobs:
           nimbledeps_cache: false
 
       - name: Build storage
-        run: make -j${ncpu}
+        run: make
 
       - name: Build libstorage
-        run: make -j${ncpu} libstorage
+        run: make libstorage
 
       - name: Unit tests
-        run: make -j${ncpu} test
+        run: make test
 
   coverage:
     runs-on: ubuntu-latest
@@ -101,7 +101,7 @@ jobs:
 
       - name: Generate coverage data
         run: |
-          make -j${ncpu} coverage
+          make coverage
         shell: bash
 
       - name: Upload coverage data to Codecov
