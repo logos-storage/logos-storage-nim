@@ -13,10 +13,10 @@ proc mountAndStart(switch: Switch, discovery: Discovery) {.async.} =
   switch.mount(discovery.serviceDiscovery)
   await switch.start()
 
-proc connected(providers: ServiceProviders): seq[PeerId] =
+proc connected(providers: ServiceProviders): int =
   privateAccess(ServiceProviders)
-  privateAccess(MaintainedService)
-  providers.services[0].connected
+  privateAccess(RequiredService)
+  providers.requiredServices[0].connected()
 
 proc waitForAd(discovery: Discovery, provider: PeerId) {.async.} =
   for _ in 0 ..< 50:
@@ -38,7 +38,7 @@ asyncchecksuite "Service providers":
     advertiserSwitch = newStandardSwitch()
     advertiser = Discovery.new(advertiserSwitch, providedServices = [AutonatServiceId])
     await advertiserSwitch.mountAndStart(advertiser)
-    advertiser.startAdvertising()
+    advertiser.startAdvertisingServices()
 
     clientSwitch = newStandardSwitch()
     client = Discovery.new(
@@ -51,18 +51,16 @@ asyncchecksuite "Service providers":
     await client.waitForAd(advertiserSwitch.peerInfo.peerId)
 
     needed = true
-    providers = ServiceProviders.new(
-      client,
-      clientSwitch,
-      1.hours,
-      @[
-        MaintainedService.init(
-          AutonatServiceId,
-          1,
-          proc(): bool =
-            needed,
-        )
-      ],
+    providers = ServiceProviders.new(1.hours)
+    providers.add(
+      RequiredService.forNat(
+        client,
+        clientSwitch,
+        AutonatServiceId,
+        1,
+        proc(): bool =
+          needed,
+      )
     )
 
   teardown:
@@ -73,20 +71,20 @@ asyncchecksuite "Service providers":
   test "a needed service connects to its providers":
     await providers.maintain()
 
-    check providers.connected == @[advertiserSwitch.peerInfo.peerId]
+    check providers.connected == 1
     check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
 
   test "a service that is not needed is not looked up":
     needed = false
     await providers.maintain()
 
-    check providers.connected.len == 0
+    check providers.connected == 0
 
   test "a service at its target is not looked up again":
     await providers.maintain()
     await providers.maintain()
 
-    check providers.connected == @[advertiserSwitch.peerInfo.peerId]
+    check providers.connected == 1
 
   test "a disconnected provider is dropped and looked up again":
     await providers.maintain()
@@ -95,27 +93,27 @@ asyncchecksuite "Service providers":
 
     await providers.maintain()
 
-    check providers.connected == @[advertiserSwitch.peerInfo.peerId]
+    check providers.connected == 1
     check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
 
   test "start looks up the needed services":
     providers.start()
 
-    check eventually(providers.connected == @[advertiserSwitch.peerInfo.peerId])
+    check eventually(providers.connected == 1)
 
   test "a check looks up a service that became needed":
     needed = false
     providers.start()
-    check providers.connected.len == 0
+    check providers.connected == 0
 
     needed = true
     providers.check()
     for _ in 0 ..< 50:
-      if providers.connected.len > 0:
+      if providers.connected > 0:
         break
       await sleepAsync(100.milliseconds)
 
-    check providers.connected == @[advertiserSwitch.peerInfo.peerId]
+    check providers.connected == 1
 
   test "stop ends the maintenance loop":
     privateAccess(ServiceProviders)
@@ -124,3 +122,38 @@ asyncchecksuite "Service providers":
 
     await providers.stop()
     check providers.loop.isNil
+
+  test "a Mix service is refreshed on every maintenance":
+    var refreshes = 0
+    let service = ServiceProviders.new(1.hours)
+    service.add(
+      RequiredService.forMix(
+        MixServiceId,
+        proc(): bool =
+          true,
+        proc() {.async: (raises: [CancelledError]).} =
+          refreshes.inc,
+      )
+    )
+
+    await service.maintain()
+    await service.maintain()
+
+    check refreshes == 2
+
+  test "a Mix service that is not needed is not refreshed":
+    var refreshes = 0
+    let service = ServiceProviders.new(1.hours)
+    service.add(
+      RequiredService.forMix(
+        MixServiceId,
+        proc(): bool =
+          false,
+        proc() {.async: (raises: [CancelledError]).} =
+          refreshes.inc,
+      )
+    )
+
+    await service.maintain()
+
+    check refreshes == 0

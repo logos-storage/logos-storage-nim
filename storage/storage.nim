@@ -26,6 +26,7 @@ import pkg/libp2p/protocols/connectivity/relay/relay as relayModule
 import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
+import pkg/libp2p_mix/pool
 import pkg/libp2p_mix_transport/address/parse
 import pkg/presto
 import pkg/taskpools
@@ -198,7 +199,6 @@ proc start*(self: StorageServer) {.async.} =
     peerInfo.announcedAddrs = @[extIpAddr]
     # We force the update to take in consideration the announcedAddrs
     await peerInfo.update()
-    self.storageNode.discovery.startAdvertising()
 
   if self.config.mixEnabled:
     let
@@ -245,6 +245,9 @@ proc start*(self: StorageServer) {.async.} =
       # Refresh peerInfo to reflect the newly announced mix address.
       await peerInfo.update()
 
+  if self.config.nat.hasExtIp:
+    self.storageNode.discovery.startAdvertisingServices()
+
   # Connect to the Autonat servers (currently bootsrap nodes) in order to
   # have connected peers for Autonat. The dials are run concurrently in case of
   # a dead autonat server that could timeout.
@@ -265,10 +268,12 @@ proc start*(self: StorageServer) {.async.} =
     findAutonatServers(self.bootstrapNodes).mapIt(connectAutonatServer(it))
   )
 
+  if self.serviceProviders.isSome:
+    self.serviceProviders.get.start()
+
   # AutoNAT is not in switch.services because we want to start it
   # after the bootstrap connections to have connected peers for the first probe.
   if self.autonatService.isSome:
-    self.serviceProviders.get.start()
     await self.autonatService.get.start(self.storageNode.switch)
 
   if self.restServer != nil:
@@ -505,7 +510,11 @@ proc new*(
       dhtMixProxies = config.dhtMixProxies,
       isServer = config.nat.hasExtIp or config.autonatServer,
       addressPolicy = kadAddressPolicy,
-      providedServices = providedServices(config.autonatServer, config.isRelayServer),
+      providedServices = providedServices(
+        config.autonatServer,
+        config.isRelayServer,
+        mixDhtProxy = config.mixEnabled and config.nat.hasExtIp,
+      ),
     )
 
     repoData =
@@ -581,8 +590,8 @@ proc new*(
   # NAT services
   var natMapper: Option[NatPortMapper]
   var autoRelayService: Option[AutoRelayService]
-  var serviceProviders: Option[ServiceProviders]
   var holePunchHandler: Option[connmanager.PeerEventHandler]
+  let serviceProviders = ServiceProviders.new(config.natScheduleInterval)
 
   if autonatService.isSome:
     let relayService = AutoRelayService.new(
@@ -595,26 +604,26 @@ proc new*(
     relayService.setup(switch)
     autoRelayService = some(relayService)
 
-    let providers = ServiceProviders.new(
-      discovery,
-      switch,
-      config.natScheduleInterval,
-      @[
-        MaintainedService.init(
-          AutonatServiceId,
-          config.natNumPeersToAsk,
-          proc(): bool =
-            true,
-        ),
-        MaintainedService.init(
-          RelayServiceId,
-          config.natMaxRelays,
-          proc(): bool =
-            relayService.isRunning,
-        ),
-      ],
+    serviceProviders.add(
+      RequiredService.forNat(
+        discovery,
+        switch,
+        AutonatServiceId,
+        config.natNumPeersToAsk,
+        proc(): bool =
+          true,
+      )
     )
-    serviceProviders = some(providers)
+    serviceProviders.add(
+      RequiredService.forNat(
+        discovery,
+        switch,
+        CircuitRelayServiceId,
+        config.natMaxRelays,
+        proc(): bool =
+          relayService.isRunning,
+      )
+    )
 
     natMapper = some(
       NatPortMapper(
@@ -637,10 +646,93 @@ proc new*(
           networkReachability, addrs, discovery, switch, relayService
         )
         engine.advertiser.onAddrChange()
-        providers.check()
+        serviceProviders.check()
     )
 
     holePunchHandler = some(setupHolePunching(switch))
+
+  if config.mixEnabled:
+    let directNetwork = engine.contextFor(DownloadTransport.Direct).network
+    var
+      discoveredMixRelays: seq[PeerId]
+      discoveredDhtMixProxies: seq[PeerId]
+
+    proc refreshMixRelays() {.async: (raises: [CancelledError]).} =
+      let relays = (await discovery.findMixRelays()).valueOr:
+        warn "Unable to find Mix relays", err = error
+        return
+
+      if relays.len == 0:
+        if discoveredMixRelays.len > 0:
+          warn "No Mix relays advertised, keeping the discovered ones",
+            discovered = discoveredMixRelays.len
+        return
+
+      let
+        nodePool = discovery.mixProto.nodePool
+        advertised = relays.mapIt(it.peerId)
+      for peer in discoveredMixRelays:
+        if peer notin advertised:
+          discard nodePool.remove(peer)
+          switch.peerStore.del(peer)
+      discoveredMixRelays.keepItIf(it in advertised)
+
+      for relay in relays:
+        let existing = nodePool.get(relay.peerId)
+        if existing.isNone:
+          nodePool.add(relay)
+          discoveredMixRelays.add(relay.peerId)
+          directNetwork.excludeRelays([relay.peerId])
+        elif relay.peerId in discoveredMixRelays and (
+          existing.get.multiAddr != relay.multiAddr or
+          existing.get.mixPubKey != relay.mixPubKey
+        ):
+          # The Mix pool has no proc to remove the address nodePool.add wrote
+          # to the peer store, so we delete it here.
+          switch.peerStore.del(relay.peerId)
+          nodePool.add(relay)
+
+    proc refreshDhtMixProxies() {.async: (raises: [CancelledError]).} =
+      let proxies = (await discovery.findServiceProviders(DhtProxyServiceId)).valueOr:
+        warn "Unable to find DHT Mix proxies", err = error
+        return
+
+      if proxies.len == 0:
+        if discoveredDhtMixProxies.len > 0:
+          warn "No DHT Mix proxies advertised, keeping the discovered ones",
+            discovered = discoveredDhtMixProxies.len
+        return
+
+      let advertised = proxies.mapIt(it.peerId)
+      discovery.dhtMixProxies.keepItIf(
+        it.peerId notin discoveredDhtMixProxies or it.peerId in advertised
+      )
+      discoveredDhtMixProxies.keepItIf(it in advertised)
+
+      for proxy in proxies:
+        let i = discovery.dhtMixProxies.findIt(it.peerId == proxy.peerId)
+        if i < 0:
+          discovery.dhtMixProxies.add(proxy)
+          discoveredDhtMixProxies.add(proxy.peerId)
+        elif proxy.peerId in discoveredDhtMixProxies:
+          discovery.dhtMixProxies[i] = proxy
+
+    serviceProviders.add(
+      RequiredService.forMix(
+        MixServiceId,
+        proc(): bool =
+          true,
+        refreshMixRelays,
+      )
+    )
+    serviceProviders.add(
+      RequiredService.forMix(
+        DhtProxyServiceId,
+        proc(): bool =
+          true,
+        refreshDhtMixProxies,
+      )
+    )
 
   # REST server
   var restServer: RestServerRef = nil
@@ -669,7 +761,11 @@ proc new*(
     autonatService: autonatService,
     autoRelayService: autoRelayService,
     natMapper: natMapper,
-    serviceProviders: serviceProviders,
+    serviceProviders:
+      if serviceProviders.hasRequiredServices:
+        some(serviceProviders)
+      else:
+        ServiceProviders.none,
     holePunchHandler: holePunchHandler,
     bootstrapNodes: bootstrapNodes,
     mixTransport: nil,

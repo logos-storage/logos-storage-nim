@@ -149,7 +149,7 @@ asyncchecksuite "Block Advertising and Discovery":
     discovery.refCid = manifestBlock.cid
     # The lookup is mocked, but find still requires Mix to be configured.
     discovery.mixProto = MixProtocol()
-    discovery.dhtMixProxies = @[SignedPeerRecord.example]
+    discovery.dhtMixProxies = @[SignedPeerRecord.example.data]
 
     # Better safe than sorry.
     check public.peerId != private.peerId

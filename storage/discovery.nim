@@ -23,6 +23,8 @@ import pkg/libp2p/protocols/service_discovery except PeerRecord
 from pkg/libp2p/protocols/connectivity/autonatv2/types import AutonatV2Codec
 from pkg/libp2p/protocols/connectivity/relay/utils import RelayV2HopCodec
 import pkg/libp2p_mix
+import pkg/libp2p_mix/mix_node
+import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
 
@@ -32,6 +34,7 @@ import ./errors
 import ./logutils
 import ./utils/spr
 import ./dht_proxy/client as dht_proxy_client
+import ./dht_proxy/protocol
 
 export routing_record
 
@@ -48,17 +51,19 @@ const
   ServiceLookupTimeout = 1.minutes
 
   AutonatServiceId* = $AutonatV2Codec.DialRequest
-  RelayServiceId* = RelayV2HopCodec
+  CircuitRelayServiceId* = RelayV2HopCodec
+  MixServiceId* = MixProtocolID
+  DhtProxyServiceId* = DhtProxyCodec
 
 type
   Discovery* = ref object of RootObj
     kad*: KadDHT # libp2p Kademlia DHT
     serviceDiscovery*: ServiceDiscovery # libp2p Service discovery
-    services: seq[string] # services this node provides
+    providedServices: seq[string] # services this node provides
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
-    dhtMixProxies*: seq[SignedPeerRecord]
+    dhtMixProxies*: seq[PeerRecord]
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -114,8 +119,7 @@ method findViaMix*(
   var candidates = d.dhtMixProxies
   shuffle(candidates)
 
-  for record in candidates:
-    let proxy = record.data
+  for proxy in candidates:
     let res = await dht_proxy_client.lookupProviders(d.mixProto, proxy, cid)
     if res.isErr:
       warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
@@ -202,13 +206,13 @@ proc updateLocalMultiAddr*(d: Discovery) =
   else:
     info "Mix local address updated", address = mixAddr
 
-proc startAdvertising*(d: Discovery) =
-  for serviceId in d.services:
+proc startAdvertisingServices*(d: Discovery) =
+  for serviceId in d.providedServices:
     d.serviceDiscovery.startAdvertising(ServiceInfo(id: serviceId)).isOkOr:
       warn "Cannot advertise service", serviceId, err = error
 
-proc stopAdvertising*(d: Discovery) {.async: (raises: []).} =
-  for serviceId in d.services:
+proc stopAdvertisingServices*(d: Discovery) {.async: (raises: []).} =
+  for serviceId in d.providedServices:
     await noCancel d.serviceDiscovery.stopAdvertising(serviceId)
 
 proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
@@ -217,15 +221,20 @@ proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
     return
 
   if isServer:
-    d.startAdvertising()
+    d.startAdvertisingServices()
   else:
-    await d.stopAdvertising()
+    await d.stopAdvertisingServices()
 
-func providedServices*(autonatServer: bool, relayServer: bool): seq[string] =
+func providedServices*(
+    autonatServer: bool, relayServer: bool, mixDhtProxy = false
+): seq[string] =
   if autonatServer:
     result.add(AutonatServiceId)
   if relayServer:
-    result.add(RelayServiceId)
+    result.add(CircuitRelayServiceId)
+  if mixDhtProxy:
+    result.add(MixServiceId)
+    result.add(DhtProxyServiceId)
 
 proc lookupServiceProviders(
     d: Discovery, serviceId: string
@@ -296,6 +305,21 @@ proc connectServiceProviders*(
     info "Connected to service providers", serviceId, connected = connected.len
   connected
 
+proc findMixRelays*(
+    d: Discovery
+): Future[Result[seq[MixPubInfo], string]] {.async: (raises: [CancelledError]).} =
+  let providers = (await d.findServiceProviders(MixServiceId)).valueOr:
+    return err(error)
+
+  var relays: seq[MixPubInfo]
+  for provider in providers:
+    for address in provider.addresses:
+      let relay = MixPubInfo.fromMixAddress(address.address, Opt.some(provider.peerId)).valueOr:
+        continue
+      relays.add(relay)
+      break
+  ok(relays)
+
 proc isServerMode*(d: Discovery): bool =
   d.kad.isServer
 
@@ -336,8 +360,8 @@ proc new*(
   var self = Discovery(
     switch: switch,
     peerId: switch.peerInfo.peerId,
-    dhtMixProxies: @dhtMixProxies,
-    services: @providedServices,
+    dhtMixProxies: dhtMixProxies.mapIt(it.data),
+    providedServices: @providedServices,
   )
 
   self.kad = KadDHT.new(

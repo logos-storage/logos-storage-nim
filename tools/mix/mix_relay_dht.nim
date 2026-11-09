@@ -16,9 +16,12 @@ import pkg/libp2p/crypto/crypto
 import pkg/libp2p/crypto/secp
 import pkg/libp2p/protocols/protocol
 import pkg/libp2p/protocols/kademlia except PeerRecord
+import pkg/libp2p/protocols/service_discovery except PeerRecord
+import pkg/libp2p/extended_peer_record
 import pkg/libp2p/stream/connection
 import pkg/libp2p_mix
 import pkg/libp2p_mix/[curve25519, mix_node]
+import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/results
 
@@ -228,13 +231,13 @@ Options:
   --data-dir=<dir>           Directory holding identity files (key + mix-identity).
   --listen-ip=<addr>         Public IPv4 to bind/announce for libp2p TCP.
   --listen-port=<n>          libp2p TCP port (Mix relay + DHT proxy + Kad share this).
-  --bootstrap-node=<spr>     Repeatable. Signed peer record (spr:...) of a Kad bootstrap peer.
+  --bootstrap-node=<spr>     Repeatable. Signed peer record (spr:...) of a Kad and
+                             service discovery bootstrap peer.
   --log-level=<lvl>          TRACE | DEBUG | INFO | NOTICE | WARN | ERROR | FATAL | NONE
                              (default: INFO)
   --log-file=<path>          Write logs to <path> instead of stdout.
   --generate                 Generate fresh identity files if data-dir is empty.
   --no-dht-proxy             Run as a pure Mix relay.
-                             Conflicts with --bootstrap-node.
   --max-inflight=<n>         Max concurrent DHT proxy lookups (default: 100).
   --max-connections=<n>      Max libp2p connections (in + out) (default: 160).
   -h, --help                 Show this help.
@@ -325,9 +328,6 @@ proc parseConf(): Conf =
   if result.listenPort < 1 or result.listenPort > 65535:
     fail "--listen-port out of range: " & $result.listenPort & " (must be 1..65535)"
 
-  if result.noDhtProxy and result.bootstrapNodes.len > 0:
-    fail "--no-dht-proxy conflicts with --bootstrap-node"
-
 var shutdownRequested = false
 
 proc requestShutdown() =
@@ -339,6 +339,19 @@ proc controlCHandler() {.noconv.} =
 when defined(posix):
   proc sigtermHandler(signal: cint) {.noconv.} =
     requestShutdown()
+
+proc newServiceDiscovery(switch: Switch, conf: Conf): ServiceDiscovery =
+  var services = @[ServiceInfo(id: MixProtocolID)]
+  if not conf.noDhtProxy:
+    services.add(ServiceInfo(id: DhtProxyCodec))
+
+  ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
+    config = KadDHTConfig.new(ExtEntryValidator(), ExtEntrySelector()),
+    rng = newRng(),
+    services = services,
+  )
 
 proc runRelayOnly(
     conf: Conf,
@@ -521,6 +534,12 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
     raise
       newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
   mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
+
+  let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
+    raise newException(ValueError, "Failed to derive Mix address: " & error)
+  switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
+
+  switch.mount(newServiceDiscovery(switch, conf))
 
   if conf.noDhtProxy:
     await runRelayOnly(conf, switch, mixProto, peerId, tcpAddr)

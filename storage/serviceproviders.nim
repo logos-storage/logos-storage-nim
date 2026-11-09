@@ -22,62 +22,89 @@ logScope:
 
 type
   ServiceNeeded* = proc(): bool {.gcsafe, raises: [].}
+  ServiceCount* = proc(): int {.gcsafe, raises: [].}
+  ServiceConnect* =
+    proc(missing: int): Future[void] {.gcsafe, async: (raises: [CancelledError]).}
+  ServiceRefresh* = proc(): Future[void] {.gcsafe, async: (raises: [CancelledError]).}
 
-  MaintainedService* = object
+  ServiceKind* = enum
+    Nat
+    Mix
+
+  RequiredService* = object
     id: string
-    target: int
     needed: ServiceNeeded
-    connected: seq[PeerId]
+    case kind: ServiceKind
+    of Nat:
+      target: int
+      connected: ServiceCount
+      connect: ServiceConnect
+    of Mix:
+      refresh: ServiceRefresh
 
   ServiceProviders* = ref object
-    discovery: Discovery
-    switch: Switch
     interval: Duration
-    services: seq[MaintainedService]
+    requiredServices: seq[RequiredService]
     checkNow: AsyncEvent
     loop: Future[void].Raising([CancelledError])
 
-func init*(
-    T: type MaintainedService, id: string, target: int, needed: ServiceNeeded
+func forMix*(
+    T: type RequiredService, id: string, needed: ServiceNeeded, refresh: ServiceRefresh
 ): T =
-  T(id: id, target: target, needed: needed)
+  T(kind: Mix, id: id, needed: needed, refresh: refresh)
 
-proc new*(
-    T: type ServiceProviders,
+proc forNat*(
+    T: type RequiredService,
     discovery: Discovery,
     switch: Switch,
-    interval: Duration,
-    services: seq[MaintainedService],
+    id: string,
+    target: int,
+    needed: ServiceNeeded,
 ): T =
+  var peers: seq[PeerId]
+
+  proc connected(): int =
+    peers.keepItIf(switch.isConnected(it))
+    peers.len
+
+  proc connect(missing: int) {.async: (raises: [CancelledError]).} =
+    peers.add(await discovery.connectServiceProviders(id, missing, peers))
+
   T(
-    discovery: discovery,
-    switch: switch,
-    interval: interval,
-    services: services,
-    checkNow: newAsyncEvent(),
+    kind: Nat,
+    id: id,
+    needed: needed,
+    target: target,
+    connected: connected,
+    connect: connect,
   )
 
+proc new*(T: type ServiceProviders, interval: Duration): T =
+  T(interval: interval, checkNow: newAsyncEvent())
+
+proc add*(self: ServiceProviders, service: RequiredService) =
+  self.requiredServices.add(service)
+
+func hasRequiredServices*(self: ServiceProviders): bool =
+  self.requiredServices.len > 0
+
 proc maintain(self: ServiceProviders) {.async: (raises: [CancelledError]).} =
-  for i in 0 ..< self.services.len:
-    if not self.services[i].needed():
+  for service in self.requiredServices:
+    if not service.needed():
       continue
 
-    let serviceId = self.services[i].id
-    self.services[i].connected.keepItIf(self.switch.isConnected(it))
+    case service.kind
+    of Nat:
+      let missing = service.target - service.connected()
+      if missing <= 0:
+        continue
 
-    let missing = self.services[i].target - self.services[i].connected.len
-    if missing <= 0:
-      continue
-
-    let added = await self.discovery.connectServiceProviders(
-      serviceId, missing, self.services[i].connected
-    )
-    self.services[i].connected.add(added)
-
-    debug "Service providers maintained",
-      serviceId,
-      connected = self.services[i].connected.len,
-      target = self.services[i].target
+      debug "Looking up service providers",
+        serviceId = service.id, missing, target = service.target
+      await service.connect(missing)
+    of Mix:
+      debug "Refreshing service providers", serviceId = service.id
+      await service.refresh()
 
 proc run(self: ServiceProviders) {.async: (raises: [CancelledError]).} =
   while true:

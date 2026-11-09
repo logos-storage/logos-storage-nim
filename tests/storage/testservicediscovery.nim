@@ -28,11 +28,16 @@ suite "Discovery - provided services":
 
   test "a relay server provides the relay service":
     check providedServices(autonatServer = false, relayServer = true) ==
-      @[RelayServiceId]
+      @[CircuitRelayServiceId]
 
   test "an AutoNAT and relay server provides both services":
     check providedServices(autonatServer = true, relayServer = true) ==
-      @[AutonatServiceId, RelayServiceId]
+      @[AutonatServiceId, CircuitRelayServiceId]
+
+  test "a Mix relay provides the Mix and DHT proxy services":
+    check providedServices(
+      autonatServer = false, relayServer = false, mixDhtProxy = true
+    ) == @[MixServiceId, DhtProxyServiceId]
 
   test "a node that is no server provides no service":
     check providedServices(autonatServer = false, relayServer = false).len == 0
@@ -48,7 +53,7 @@ asyncchecksuite "Discovery - service discovery":
     advertiserSwitch = newStandardSwitch()
     advertiser = Discovery.new(advertiserSwitch, providedServices = [AutonatServiceId])
     await advertiserSwitch.mountAndStart(advertiser)
-    advertiser.startAdvertising()
+    advertiser.startAdvertisingServices()
 
     clientSwitch = newStandardSwitch()
     client = Discovery.new(
@@ -72,8 +77,9 @@ asyncchecksuite "Discovery - service discovery":
   test "a client node does not advertise its services":
     let
       switch = newStandardSwitch()
-      discovery =
-        Discovery.new(switch, isServer = false, providedServices = [RelayServiceId])
+      discovery = Discovery.new(
+        switch, isServer = false, providedServices = [CircuitRelayServiceId]
+      )
     await switch.mountAndStart(discovery)
 
     check:
@@ -94,7 +100,7 @@ asyncchecksuite "Discovery - service discovery":
     discard
       await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
 
-    check (await client.findServiceProviders(RelayServiceId)).tryGet().len == 0
+    check (await client.findServiceProviders(CircuitRelayServiceId)).tryGet().len == 0
 
   test "a node does not find itself as a provider":
     discard
@@ -151,16 +157,34 @@ asyncchecksuite "Discovery - service discovery":
     check AutonatServiceId.hashServiceId() in
       advertiser.serviceDiscovery.advertiser.providedAdverts
 
+  test "a Mix relay lookup skips providers without a Mix address":
+    let
+      switch = newStandardSwitch()
+      relay = Discovery.new(
+        switch,
+        bootstrapNodes =
+          [(advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs)],
+        providedServices = [MixServiceId],
+      )
+    await switch.mountAndStart(relay)
+    relay.startAdvertisingServices()
+    discard await client.waitForProvider(MixServiceId, switch.peerInfo.peerId)
+
+    check (await client.findMixRelays()).tryGet().len == 0
+
+    await switch.stop()
+
   test "a node that starts in client mode advertises once in server mode":
     let
       switch = newStandardSwitch()
-      discovery =
-        Discovery.new(switch, isServer = false, providedServices = [RelayServiceId])
+      discovery = Discovery.new(
+        switch, isServer = false, providedServices = [CircuitRelayServiceId]
+      )
     await switch.mountAndStart(discovery)
 
     await discovery.setServerMode(isServer = true)
 
-    check RelayServiceId.hashServiceId() in
+    check CircuitRelayServiceId.hashServiceId() in
       discovery.serviceDiscovery.advertiser.providedAdverts
 
     await switch.stop()
