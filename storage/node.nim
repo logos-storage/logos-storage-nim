@@ -11,6 +11,7 @@
 
 import std/options
 import std/sequtils
+import std/tables
 import std/strformat
 import times
 
@@ -48,7 +49,26 @@ export logutils
 logScope:
   topics = "storage node"
 
+const MaxFinishedDownloads* = 256
+  ## How many ended background downloads `backgroundDownloadStatus` remembers.
+
 type
+  BackgroundDownloadState* {.pure.} = enum
+    Active = "active"
+    Completed = "completed"
+    Failed = "failed"
+    Cancelled = "cancelled"
+
+  BackgroundDownloadStatus* = object
+    state*: BackgroundDownloadState
+    progress*: DownloadProgress
+    error*: string ## Why the download failed. Empty unless `state` is `Failed`.
+
+  FinishedDownload = object
+    manifestCid: Cid
+    treeCid: Cid
+    status: BackgroundDownloadStatus
+
   StorageNode* = object
     switch: Switch
     networkId: PeerId
@@ -60,6 +80,8 @@ type
     taskPool: Taskpool
     trackedFutures: TrackedFutures
     addrObserver: PeerInfoObserver
+    finishedDownloads: OrderedTable[uint64, FinishedDownload]
+      ## The last `MaxFinishedDownloads` background downloads that ended, oldest first.
 
   StorageNodeRef* = ref StorageNode
 
@@ -210,15 +232,79 @@ proc fetchDatasetAsync*(
   finally:
     self.engine.releaseDownload(download)
 
+proc findDownload(
+    self: StorageNodeRef, downloadId: uint64, cid: Cid
+): Option[ActiveDownload] =
+  ## The running download `downloadId`. `cid` is the manifest cid that started it
+  ## or its tree cid.
+  let manager = self.engine.downloadManager
+  if download =? manager.getDownload(downloadId, cid):
+    return some(download)
+  for treeCid in manager.downloads.keys:
+    if download =? manager.getDownload(downloadId, treeCid):
+      if download.manifestCid == cid:
+        return some(download)
+  none(ActiveDownload)
+
+proc rememberFinished(
+    self: StorageNodeRef, downloadId: uint64, finished: FinishedDownload
+) =
+  self.finishedDownloads[downloadId] = finished
+  while self.finishedDownloads.len > MaxFinishedDownloads:
+    var oldest: uint64
+    for id in self.finishedDownloads.keys:
+      oldest = id
+      break
+    self.finishedDownloads.del(oldest)
+
 proc cancelBackgroundDownload*(
     self: StorageNodeRef, downloadId: uint64, cid: Cid
 ): bool =
-  self.engine.cancelBackgroundDownload(downloadId, cid)
+  ## `cid` is the manifest cid that started the download or its tree cid.
+  without download =? self.findDownload(downloadId, cid):
+    return false
+  let progress = download.ctx.progress()
+  if not self.engine.cancelBackgroundDownload(downloadId, download.treeCid):
+    return false
+  # Recorded now: the download has already left the manager, and its task records
+  # the same outcome only when it next runs.
+  self.rememberFinished(
+    downloadId,
+    FinishedDownload(
+      manifestCid: download.manifestCid,
+      treeCid: download.treeCid,
+      status: BackgroundDownloadStatus(
+        state: BackgroundDownloadState.Cancelled, progress: progress
+      ),
+    ),
+  )
+  true
 
 proc getDownloadProgress*(
     self: StorageNodeRef, downloadId: uint64, cid: Cid
 ): Option[DownloadProgress] =
-  self.engine.getDownloadProgress(downloadId, cid)
+  ## `cid` is the manifest cid that started the download or its tree cid.
+  without download =? self.findDownload(downloadId, cid):
+    return none(DownloadProgress)
+  some(download.ctx.progress())
+
+proc backgroundDownloadStatus*(
+    self: StorageNodeRef, downloadId: uint64, cid: Cid
+): Option[BackgroundDownloadStatus] =
+  ## The state of a download that `startBackgroundDownload` started, running or
+  ## among the last `MaxFinishedDownloads` that ended. `cid` is the manifest cid
+  ## that started it or its tree cid.
+  if download =? self.findDownload(downloadId, cid):
+    return some(
+      BackgroundDownloadStatus(
+        state: BackgroundDownloadState.Active, progress: download.ctx.progress()
+      )
+    )
+  if downloadId in self.finishedDownloads:
+    let finished = self.finishedDownloads.getOrDefault(downloadId)
+    if cid == finished.manifestCid or cid == finished.treeCid:
+      return some(finished.status)
+  none(BackgroundDownloadStatus)
 
 proc startBackgroundDownload*(
     self: StorageNodeRef,
@@ -238,13 +324,27 @@ proc startBackgroundDownload*(
       md, selectionPolicy = selectionPolicy, isBackground = true, transport = transport
     )
     downloadId = download.downloadId
+    # Read the progress from it at the end: a cancelled download has left the manager.
+    active = self.engine.downloadManager.getDownload(downloadId, treeCid)
 
   proc waitForCompleteTask(): Future[void] {.async: (raises: []).} =
+    var status = BackgroundDownloadStatus(state: BackgroundDownloadState.Failed)
     try:
-      discard await download.waitForComplete()
+      if err =? (await download.waitForComplete()).errorOption:
+        status.error = err.msg
+        warn "Background download failed", treeCid = treeCid, downloadId, err = err.msg
+      else:
+        status.state = BackgroundDownloadState.Completed
     except CancelledError:
+      status.state = BackgroundDownloadState.Cancelled
       trace "Background download cancelled", treeCid = treeCid, downloadId
     finally:
+      if a =? active:
+        status.progress = a.ctx.progress()
+      self.rememberFinished(
+        downloadId,
+        FinishedDownload(manifestCid: md.manifestCid, treeCid: treeCid, status: status),
+      )
       self.engine.releaseDownload(download)
 
   self.trackedFutures.track(waitForCompleteTask())

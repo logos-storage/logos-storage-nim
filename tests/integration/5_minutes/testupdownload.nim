@@ -89,15 +89,18 @@ twonodessuite "Uploads and downloads":
       cid = (await client1.upload(data)).get
       downloadId = (await client2.startDownload(cid)).get
 
-    var completed = false
+    # Polled by the cid the download was started with: the manifest cid.
+    var progress: JsonNode
     for _ in 0 ..< 60:
-      let progress = (await client2.getDownloadProgress(cid, downloadId)).get
+      progress = (await client2.getDownloadProgress(cid, downloadId)).get
       if not progress["active"].getBool():
-        completed = true
         break
       await sleepAsync(500.milliseconds)
 
-    check completed
+    check:
+      progress["state"].getStr() == "completed"
+      progress["received"].getInt() == progress["total"].getInt()
+      not progress.hasKey("error")
 
     let response = (await client2.download(cid, local = true)).get
     check:
