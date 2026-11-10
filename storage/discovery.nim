@@ -29,6 +29,7 @@ import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
 
+import ./peertransport
 import ./rng as storage_rng
 import ./utils/mixidentity
 import ./errors
@@ -81,6 +82,7 @@ type
     staticDhtMixProxies*: seq[PeerRecord]
     staticAutonatServers: seq[PeerRecord]
     staticCircuitRelayServers: seq[PeerRecord]
+    mixPeerTransport*: PeerTransport
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -171,7 +173,8 @@ method findViaMix*(
   shuffle(candidates)
 
   for proxy in candidates:
-    let res = await dht_proxy_client.lookupProviders(d.mixProto, proxy, cid)
+    let res =
+      await dht_proxy_client.lookupProviders(d.mixProto, d.mixPeerTransport, proxy, cid)
     if res.isErr:
       warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
       continue
@@ -197,9 +200,9 @@ method find*(
 ): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
   let providers =
     if useMix:
-      if d.mixProto.isNil or d.dhtMixProxies.len == 0:
+      if d.mixProto.isNil or d.mixPeerTransport.isNil or d.dhtMixProxies.len == 0:
         return failure(
-          "Mix lookup requested but MixProtocol not enabled no Mix proxies configured"
+          "Mix lookup requested but MixTransport not enabled or no Mix proxies configured"
         )
       else:
         (await d.findViaMix(cid)).valueOr:
