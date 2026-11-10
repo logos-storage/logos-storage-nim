@@ -183,7 +183,8 @@ type
     .}: seq[SignedPeerRecord]
 
     dhtMixProxies* {.
-      desc: "Peers used as dht-proxy destinations when Mix is enabled",
+      desc:
+        "DHT proxy signed peer records with matching /mix public addresses and MixTransport support",
       name: "dht-mix-proxy",
       envVarValueSep: ";"
     .}: seq[SignedPeerRecord]
