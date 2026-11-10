@@ -10,7 +10,6 @@
 {.push raises: [].}
 
 import std/sequtils
-import std/strutils
 
 import pkg/chronos
 import pkg/libp2p
@@ -21,6 +20,7 @@ import pkg/libp2p_mix
 import ../errors
 import ../logutils
 import ../utils/mixidentity
+import ../peertransport
 import ./protocol
 
 const DefaultLookupTimeout* = 90.seconds
@@ -72,57 +72,45 @@ proc isReady(mixProto: MixProtocol): bool =
   ## address or a Relay address.
   return $mixProto.localMixPubInfo.multiAddr != $mixUnsetMultiAddr()
 
-proc lookupProviders*(
-    mixProto: MixProtocol, proxy: PeerRecord, cid: Cid
-): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
-  if proxy.addresses.len == 0:
-    return failure("Proxy has no addresses")
-
-  let mixAddr = pickMixCompatibleMultiAddr(proxy.addresses.mapIt(it.address)).valueOr:
-    let dump = proxy.addresses.mapIt($it.address).join(",")
-    return failure(
-      "No Mix-compatible address on proxy " & $proxy.peerId & " (advertised: [" & dump &
-        "])"
-    )
-
-  if not mixProto.isReady:
-    return failure(
-      "MixProtocol is not ready, multiAddr=" & $mixProto.localMixPubInfo.multiAddr
-    )
-
-  let
-    destination = MixDestination.init(proxy.peerId, mixAddr)
-    request =
-      LookupRequest(queryType: QueryType.FindProviders, queryBytes: cid.data.buffer)
-
+proc exchange(
+    transport: PeerTransport, proxy: PeerRecord, request: LookupRequest
+): Future[?!LookupResult] {.async: (raises: [CancelledError]).} =
   var conn: Connection
   try:
-    conn = mixProto.toConnection(
-      destination,
-      DhtProxyCodec,
-      MixParameters(
-        expectReply: Opt.some(true),
-        numSurbs: Opt.some(1'u8),
-        # Mix provides its timeout, but we are already using
-        # `withTimeout` below, so I set this to a "large" value.
-        # I could use `infinite` but being defensive:
-        # if the implementation uses `noCancel` somewhere,
-        # `withTimeout` will never trigger.
-        replyTimeout: Opt.some(2 * DefaultLookupTimeout),
-      ),
-    ).valueOr:
-      return failure("Failed to obtain Mix connection: " & error)
+    conn = (await transport.dial(proxy, DhtProxyCodec)).valueOr:
+      return failure("Failed to open MixTransport stream: " & error.msg)
+    return await requestLookup(conn, request)
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Mix lookup failed: " & exc.msg)
+  finally:
+    if not conn.isNil:
+      await noCancel conn.close()
 
-    let lookupFut = requestLookup(conn, request)
-    if not (await lookupFut.withTimeout(DefaultLookupTimeout)):
-      lookupFut.cancelSoon()
-      return failure("Mix lookup timed out after " & $DefaultLookupTimeout)
+proc lookupProviders*(
+    mixProto: MixProtocol,
+    transport: PeerTransport,
+    proxy: PeerRecord,
+    cid: Cid,
+    timeout: Duration = DefaultLookupTimeout,
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
+  if transport.isNil or transport.kind != DownloadTransport.Mix:
+    return failure("MixTransport is not enabled")
+  if proxy.addresses.len == 0:
+    return failure("Proxy has no addresses")
+  if mixAddresses(proxy.peerId, proxy.addresses.mapIt(it.address)).len == 0:
+    return failure("Proxy has no valid Mix address matching its peer identity")
+  if mixProto.isNil or not mixProto.isReady:
+    return failure("MixProtocol is not ready")
 
-    let lookupRes = lookupFut.read()
-    if lookupRes.isErr:
-      return failure(lookupRes.error)
-    let lookup = lookupRes.get()
-
+  let request =
+    LookupRequest(queryType: QueryType.FindProviders, queryBytes: cid.data.buffer)
+  try:
+    # Include session establishment and stream opening in the lookup deadline.
+    # wait cancels and awaits the exchange, including its stream cleanup.
+    let lookup = (await exchange(transport, proxy, request).wait(timeout)).valueOr:
+      return failure(error)
     case lookup.code
     of LookupCode.Ok:
       return success lookup.providers
@@ -131,10 +119,5 @@ proc lookupProviders*(
     of LookupCode.ErrDecodeFailed, LookupCode.ErrInvalidCid, LookupCode.ErrInternal,
         LookupCode.ErrResponseTooLarge, LookupCode.ErrTooBusy:
       return failure("Remote returned error: " & $lookup.code)
-  except CancelledError as exc:
-    raise exc
-  except CatchableError as exc:
-    return failure("Mix lookup failed: " & exc.msg)
-  finally:
-    if not conn.isNil:
-      await noCancel conn.close()
+  except AsyncTimeoutError:
+    return failure("Mix lookup timed out after " & $timeout)

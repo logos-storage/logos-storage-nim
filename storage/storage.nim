@@ -122,7 +122,6 @@ proc enableMix(
   for info in relayPool.values:
     mixProto.nodePool.add(info)
 
-  mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(MaxLookupResponseBytes))
   await mixProto.start()
   switch.mount(mixProto)
 
@@ -139,9 +138,10 @@ proc startMixTransport*(
     engine = s.storageNode.engine
     directNetwork = engine.contextFor(DownloadTransport.Direct).network
     mixTransport = newMixTransport(mixProto)
+    mixPeerTransport = MixPeerTransport.new(mixTransport)
     mixNetwork = BlockExcNetwork.new(
       directNetwork.switch,
-      MixPeerTransport.new(mixTransport),
+      mixPeerTransport,
       maxInflight = directNetwork.sendConcurrencyLimit,
     )
   engine.attach(
@@ -151,6 +151,7 @@ proc startMixTransport*(
     await engine.detach(DownloadTransport.Mix)
     raise newException(StorageError, "Failed to start MixTransport: " & error)
   s.mixTransport = mixTransport
+  s.storageNode.discovery.mixPeerTransport = mixPeerTransport
 
 proc start*(self: StorageServer) {.async.} =
   if self.isStarted:
@@ -296,6 +297,7 @@ proc stop*(s: StorageServer) {.async.} =
       s.holePunchHandler.get, PeerEventKind.Joined
     )
 
+  s.storageNode.discovery.mixPeerTransport = nil
   if not s.mixTransport.isNil:
     try:
       await s.mixTransport.stop()

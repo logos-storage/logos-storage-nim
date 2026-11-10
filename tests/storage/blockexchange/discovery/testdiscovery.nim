@@ -3,6 +3,7 @@ import std/[options, sequtils, sugar, tables]
 import pkg/chronos
 import pkg/libp2p_mix
 
+import pkg/storage/peertransport
 import pkg/storage/discovery
 import pkg/storage/rng
 import pkg/storage/stores
@@ -150,6 +151,7 @@ asyncchecksuite "Block Advertising and Discovery":
     # The lookup is mocked, but find still requires Mix to be configured.
     discovery.mixProto = MixProtocol()
     discovery.staticDhtMixProxies = @[SignedPeerRecord.example.data]
+    discovery.mixPeerTransport = MixPeerTransport()
 
     # Better safe than sorry.
     check public.peerId != private.peerId

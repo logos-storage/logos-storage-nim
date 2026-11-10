@@ -20,6 +20,7 @@ import pkg/libp2p/protocols/service_discovery except PeerRecord
 import pkg/libp2p/extended_peer_record
 import pkg/libp2p/stream/connection
 import pkg/libp2p_mix
+import pkg/libp2p_mix_transport
 import pkg/libp2p_mix/[curve25519, mix_node]
 import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
@@ -172,7 +173,8 @@ proc handleLookupRequest(
       dec self.inFlight
 
     let
-      reqBytes = await conn.readLp(MaxLookupRequestBytes)
+      reqBytes =
+        await conn.readLp(MaxLookupRequestBytes).wait(DhtProxyRequestReadTimeout)
       req = LookupRequest.decode(reqBytes).valueOr:
         warn "Failed to decode lookup request"
         await conn.writeLp(LookupResponse(code: LookupCode.ErrDecodeFailed).encode())
@@ -200,7 +202,9 @@ proc new(
       conn: Connection, proto: string
   ): Future[void] {.async: (raises: [CancelledError]).} =
     try:
-      await self.handleLookupRequest(conn)
+      await self.handleLookupRequest(conn).wait(DhtProxyExchangeTimeout)
+    except AsyncTimeoutError:
+      debug "DHT proxy exchange timed out"
     finally:
       await noCancel conn.close()
 
@@ -416,6 +420,7 @@ proc runWithDhtProxy(
     kadBootstrap = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs())
     kad = KadDHT.new(switch, bootstrapNodes = kadBootstrap, rng = newRng())
   let proxyProto = DhtProxyProtocol.new(kad, maxInFlight = conf.maxInFlight)
+  let transport = newMixTransport(mixProto)
 
   try:
     await mixProto.start()
@@ -428,6 +433,10 @@ proc runWithDhtProxy(
   except CatchableError as exc:
     raise newException(CatchableError, "DhtProxyProtocol start failed: " & exc.msg)
   switch.mount(proxyProto)
+  (await transport.start()).isOkOr:
+    raise newException(CatchableError, "MixTransport start failed: " & error)
+  defer:
+    await noCancel transport.stop()
 
   switch.mount(kad)
 
@@ -482,6 +491,7 @@ proc runWithDhtProxy(
       await sleepAsync(200.milliseconds)
   finally:
     notice "Stopping"
+    await noCancel transport.stop()
     try:
       await noCancel kad.stop()
     except CatchableError as exc:
@@ -557,11 +567,6 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
     .build()
 
   let mixProto = MixProtocol.new(nodeInfo, switch)
-
-  let maxReplyBytes = getMaxMessageSizeForCodec(DhtProxyCodec, 0).valueOr:
-    raise
-      newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
-  mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
 
   let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)
