@@ -34,10 +34,14 @@ suite "Discovery - provided services":
     check providedServices(autonatServer = true, relayServer = true) ==
       @[AutonatServiceId, CircuitRelayServiceId]
 
-  test "a Mix relay provides the Mix and DHT proxy services":
+  test "a Mix relay provides the Mix service":
+    check providedServices(autonatServer = false, relayServer = false, mixRelay = true) ==
+      @[MixServiceId]
+
+  test "a DHT proxy server provides the DHT proxy service":
     check providedServices(
-      autonatServer = false, relayServer = false, mixDhtProxy = true
-    ) == @[MixServiceId, DhtProxyServiceId]
+      autonatServer = false, relayServer = false, dhtProxyServer = true
+    ) == @[DhtProxyServiceId]
 
   test "a node that is no server provides no service":
     check providedServices(autonatServer = false, relayServer = false).len == 0

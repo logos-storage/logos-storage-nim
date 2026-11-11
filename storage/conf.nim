@@ -411,6 +411,13 @@ type
       hidden
     .}: bool
 
+    dhtProxyServer* {.
+      desc: "Enable DHT proxy server to answer DHT lookups sent over Mix",
+      defaultValue: false,
+      name: "dht-proxy-server",
+      hidden
+    .}: bool
+
 func defaultAddress*(conf: StorageConf): IpAddress =
   result = static parseIpAddress("127.0.0.1")
 
@@ -426,6 +433,9 @@ func validateAutonatConfig*(config: StorageConf): ?!void =
 
   if config.isRelayServer and not config.nat.hasExtIp:
     return failure "--relay-server requires --nat=extip:<IP>"
+
+  if config.dhtProxyServer and not config.nat.hasExtIp:
+    return failure "--dht-proxy-server requires --nat=extip:<IP>"
 
   if config.bootstrapNodes.len == 0 and not config.nat.hasExtIp:
     return failure "--nat=auto requires --bootstrap-node"

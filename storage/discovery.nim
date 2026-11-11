@@ -226,14 +226,15 @@ proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
     await d.stopAdvertisingServices()
 
 func providedServices*(
-    autonatServer: bool, relayServer: bool, mixDhtProxy = false
+    autonatServer: bool, relayServer: bool, mixRelay = false, dhtProxyServer = false
 ): seq[string] =
   if autonatServer:
     result.add(AutonatServiceId)
   if relayServer:
     result.add(CircuitRelayServiceId)
-  if mixDhtProxy:
+  if mixRelay:
     result.add(MixServiceId)
+  if dhtProxyServer:
     result.add(DhtProxyServiceId)
 
 proc lookupServiceProviders(

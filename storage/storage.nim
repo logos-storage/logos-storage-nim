@@ -200,11 +200,9 @@ proc start*(self: StorageServer) {.async.} =
     # We force the update to take in consideration the announcedAddrs
     await peerInfo.update()
 
-  if self.config.mixEnabled:
+  if self.config.dhtProxyServer:
     let
       switch = self.storageNode.switch
-      (mixProto, relayPool) = await self.enableMix()
-
       dhtProxyProto =
         if cap =? self.config.dhtProxyMaxInFlight:
           DhtProxyProtocol.new(self.storageNode.discovery, maxInFlight = cap)
@@ -213,6 +211,9 @@ proc start*(self: StorageServer) {.async.} =
 
     await dhtProxyProto.start()
     switch.mount(dhtProxyProto)
+
+  if self.config.mixEnabled:
+    let (mixProto, relayPool) = await self.enableMix()
 
     self.storageNode.discovery.mixProto = mixProto
     self.storageNode.engine.contextFor(DownloadTransport.Direct).network.excludeRelays(
@@ -513,7 +514,8 @@ proc new*(
       providedServices = providedServices(
         config.autonatServer,
         config.isRelayServer,
-        mixDhtProxy = config.mixEnabled and config.nat.hasExtIp,
+        mixRelay = config.mixEnabled and config.nat.hasExtIp,
+        dhtProxyServer = config.dhtProxyServer,
       ),
     )
 
