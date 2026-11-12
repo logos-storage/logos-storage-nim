@@ -65,6 +65,14 @@ proc storage_upload_init(
       "Failed to create an upload session, the filepath does not exist: " & filepath
     )
 
+  if chunkSize > 0 and (
+    chunkSize < MinBlockSize or chunkSize > MaxBlockSize or not isPowerOfTwo(chunkSize)
+  ):
+    return err(
+      "chunkSize must be a power of two between " & $MinBlockSize & " and " &
+        $MaxBlockSize & " bytes"
+    )
+
   let meta = describeUpload(filepath)
   let sessionId = $nextUploadSessionCount
   nextUploadSessionCount.inc()

@@ -119,7 +119,7 @@ asyncchecksuite "NAT detection - simulated NAT":
     autonat = AutonatV2Service.new(natNode.rng, autonatClient, config)
     service.setup(autonat, natNode)
 
-    autonat.setStatusAndConfidenceHandler(
+    discard autonat.reachabilityObservers.add(
       proc(
           reachability: NetworkReachability,
           confidence: Opt[float],

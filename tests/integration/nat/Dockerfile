@@ -4,7 +4,9 @@
 # Build context = project root.
 FROM ubuntu:24.04
 
-ARG NIM_VERSION=2.2.12
+# Changing NIM_VERSION means changing NIM_SHA256 too.
+ARG NIM_VERSION=2.2.14
+ARG NIM_SHA256=c1cbd106f9ff0c856e38abebd0ac9503c23aa3393174fcfc3307ee3b2bfe909a
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make cmake git curl ca-certificates xz-utils \
@@ -24,29 +26,22 @@ RUN git clone --depth=1 --branch miniupnpd_2_3_9 \
     && install -m 755 miniupnpd /usr/local/sbin/miniupnpd-nft \
     && rm -rf /tmp/miniupnp-nft
 
-RUN curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" \
-    | tar -xJ -C /opt
-RUN ln -s "/opt/nim-${NIM_VERSION}/bin/nim" /usr/local/bin/nim
+RUN curl -fsSL -o /tmp/nim.tar.xz \
+        "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" \
+    && echo "${NIM_SHA256}  /tmp/nim.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/nim.tar.xz -C /opt \
+    && rm /tmp/nim.tar.xz
+ENV PATH="/opt/nim-${NIM_VERSION}/bin:${PATH}"
 
 WORKDIR /app
 
-# vendor/ already has the checked-out submodules, so no `make update` here.
-COPY vendor/ vendor/
+# storage.nimble includes build.nims.
+COPY storage.nimble nimble.lock build.nims config.nims ./
+RUN nimble setup -l
+
 COPY storage/ storage/
-COPY build.nims config.nims storage.nim network_presets.json ./
-
-# libplum static lib, linked by nim-libplum.
-RUN --mount=type=cache,target=/root/.ccache \
-    export PATH="/usr/lib/ccache:$PATH" && \
-    rm -rf vendor/nim-libplum/vendor/libplum/build && \
-    cmake -B vendor/nim-libplum/vendor/libplum/build \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-        vendor/nim-libplum/vendor/libplum && \
-    make -j"$(nproc)" -C vendor/nim-libplum/vendor/libplum/build && \
-    cp vendor/nim-libplum/vendor/libplum/build/libplum.a \
-        vendor/nim-libplum/vendor/libplum/libplum.a
+COPY storage.nim ./
 
 RUN --mount=type=cache,target=/root/.ccache \
     export PATH="/usr/lib/ccache:$PATH" && \
-    USE_SYSTEM_NIM=1 vendor/nimbus-build-system/scripts/env.sh \
-        nim storage -d:disable_libbacktrace build.nims
+    nim storage -d:disable_libbacktrace build.nims

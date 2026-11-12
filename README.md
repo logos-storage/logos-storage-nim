@@ -16,12 +16,15 @@
 
 ## Build and Run
 
+The build needs Nim 2.2.14 or later, which ships Nimble 0.26.
+
 To build the project, clone it and run:
 
 ```bash
 make update && make
-# Tip: use -j{ncpu} to for parallel execution, eg:
-# make -j12 update && make -j12
+
+# To update the dependencies: edit storage.nimble, then
+# nimble lock && make update
 ```
 
 The executable will be placed under the `build` directory under the project root.
@@ -45,7 +48,9 @@ Please check `build/storage --help` for more information.
 
 ## API
 
-The client exposes a REST API that can be used to interact with the clients. Overview of the API can be found on [api.codex.storage](https://api.codex.storage).
+The node exposes an HTTP API for testing and debugging only. It is not a public API: applications use the C library, see [Bindings](#bindings).
+
+The OpenAPI spec is in [openapi.yaml](openapi.yaml).
 
 ## Bindings
 
@@ -67,7 +72,7 @@ See https://github.com/logos-storage/logos-storage-go-bindings-example.
 
 ### Static vs Dynamic build
 
-By default, Logos Storage builds a dynamic library (`libstorage.so`/`libstorage.dylib`/`libstroage.dll`), which you can load at runtime.
+By default, Logos Storage builds a dynamic library (`libstorage.so`/`libstorage.dylib`/`libstorage.dll`), which you can load at runtime.
 
 If you prefer a static library (`libstorage.a`), set the `STATIC` flag:
 
@@ -83,6 +88,67 @@ make STATIC=1 libstorage
 
 Callbacks must be fast and non-blocking; otherwise, the working thread will hang and prevent other requests from being processed.
 
+## Test Commands
+
+```bash
+# Run unit tests (tests/storage/)
+make test
+
+# Run integration tests (spawns real node processes)
+make testIntegration
+
+# Run one integration test file (path from tests/)
+STORAGE_INTEGRATION_TEST_INCLUDES="integration/5_minutes/testrestapivalidation.nim" \
+  nim testIntegration build.nims
+
+# Keep the node logs, in tests/integration/logs/
+STORAGE_INTEGRATION_TEST_INCLUDES="integration/5_minutes/testrestapivalidation.nim" \
+  nim testIntegration -d:StorageLogToFile=true build.nims
+
+# Run all tests
+make testAll
+
+# Run a single test file directly
+nim c -r tests/storage/testblockexchange.nim
+
+# Run C bindings test
+make testLibstorage
+
+# Coverage report (requires lcov)
+make coverage && make show-coverage
+```
+
+## Use as a Nimble dependency
+
+Add Logos Storage to the `.nimble` file of your project:
+
+```nim
+requires "https://github.com/logos-storage/logos-storage-nim"
+```
+
+Nimble resolves the version ranges of `storage.nimble`. It does not read `nimble.lock`.
+
+Nim reads only the `config.nims` of the project it compiles, not the one of Logos Storage. Add these settings to your `config.nims`:
+
+```nim
+--threads:on
+--mm:refc
+switch("define", "libp2p_multicodec_exts:storage/multicodec_exts.nim")
+switch("define", "libp2p_multihash_exts:storage/multihash_exts.nim")
+switch("define", "libp2p_contentids_exts:storage/contentids_exts.nim")
+switch("define", "libp2p_multiaddress_exts:storage/multiaddress_exts.nim")
+switch("define", "libp2p_pki_schemes=secp256k1")
+switch("define", "chronicles_sinks=textlines[dynamic],json[dynamic],textlines[dynamic]")
+switch("define", "chronosHandleException")
+switch("define", "nimOldCaseObjects")
+switch("define", "withoutPCRE")
+switch("define", "use_asm_syntax_intel=false")
+switch("define", "ctt_asm=true")
+switch("legacy", "procParamTypeBackendAliases")
+```
+
+Then import the modules you need, for example `import pkg/storage/storage`.
+
 ## Contributing and development
 
 Feel free to dive in, contributions are welcomed! Open an issue or submit PRs.
@@ -92,5 +158,5 @@ Feel free to dive in, contributions are welcomed! Open an issue or submit PRs.
 `logos-storage-nim` uses [nph](https://github.com/arnetheduck/nph) for formatting our code and it is required to adhere to its styling.
 If you are setting up fresh setup, in order to get `nph` run `make build-nph`.
 In order to format files run `make nph/<file/folder you want to format>`.
-If you want you can install Git pre-commit hook using `make install-nph-commit`, which will format modified files prior committing them.
+If you want you can install Git pre-commit hook using `make install-nph-hook`, which will format modified files prior committing them.
 If you are using VSCode and the [NimLang](https://marketplace.visualstudio.com/items?itemName=NimLang.nimlang) extension you can enable "Format On Save" (eq. the `nim.formatOnSave` property) that will format the files using `nph`.

@@ -23,9 +23,32 @@
       forAllSystems = f: nixpkgs.lib.genAttrs allSystems f;
       forNativeSystems = f: nixpkgs.lib.genAttrs stableSystems f;
 
+      # nixpkgs 25.11 and 26.05 ship Nim 2.2.4, the project needs 2.2.14.
+      # We prefer override the Nim version and keep the release branches
+      # rather than pinning to a specific commit on unstable branch and have
+      # the Nim version up to date.
+      nimOverlay = final: prev: {
+        nim-unwrapped-2_2 = prev.nim-unwrapped-2_2.overrideAttrs (old: rec {
+          version = "2.2.14";
+          src = prev.fetchurl {
+            url = "https://nim-lang.org/download/nim-${version}.tar.xz";
+            hash = "sha256-iSc/g/I3lGX0lMgnHv46Y82eeJITCLhHP0/+1TjbtTY=";
+          };
+          # These patches no longer apply to 2.2.14. openssl.patch only changes
+          # how std/openssl loads libssl, which nothing in this project imports.
+          patches = builtins.filter
+            (p: !(builtins.elem (baseNameOf (toString p))
+              [ "extra-mangling-2.patch" "openssl.patch" ])) old.patches;
+          # This flag turns on code that 2.2.10 and later no longer compile.
+          # nixpkgs dropped it in the same commit that moved to 2.2.10.
+          kochArgs = builtins.filter
+            (f: f != "-d:nativeStacktrace") old.kochArgs;
+        });
+      };
+
       pkgsFor = system:
         if system != windowsSystem then
-          import nixpkgs { inherit system; }
+          import nixpkgs { inherit system; overlays = [ nimOverlay ]; }
         else
           import nixpkgs-windows {
             localSystem = windowsBuildSystem;
@@ -36,28 +59,7 @@
               # to be compatible with logos-storage-module.
               libc = "ucrt";
             };
-            overlays = [
-              # nixpkgs 26.05 ships Nim 2.2.4, the project pins 2.2.10.
-              # We prefer override the Nim version and keep the release branch
-              # for nixpkgs-windows.url rather than pinning to a specific commit on
-              # unstable branch and have the Nim version up to date.
-              (final: prev: {
-                nim-unwrapped-2_2 = prev.nim-unwrapped-2_2.overrideAttrs (old: rec {
-                  version = "2.2.10";
-                  src = prev.fetchurl {
-                    url = "https://nim-lang.org/download/nim-${version}.tar.xz";
-                    hash = "sha256-eVe37QBCBrzxC8xPO0dEFTh45i8kMVUqmo6dP0Do1dU=";
-                  };
-                  # Rewrite patch for 2.2.10.
-                  patches = builtins.filter
-                    (p: baseNameOf (toString p) != "extra-mangling-2.patch") old.patches;
-                  # This flag turns on code that 2.2.10 no longer compiles.
-                  # nixpkgs dropped it in the same commit that moved to 2.2.10.
-                  kochArgs = builtins.filter
-                    (f: f != "-d:nativeStacktrace") old.kochArgs;
-                });
-              })
-            ];
+            overlays = [ nimOverlay ];
           };
     in rec {
       packages = forAllSystems (system: let

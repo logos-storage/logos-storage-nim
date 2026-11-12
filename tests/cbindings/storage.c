@@ -394,7 +394,7 @@ static StorageCtx *create_ctx(const char *cfg)
 
 int setup(StorageCtx **storage_ctx)
 {
-    const char *cfg = "{\"log-level\":\"WARN\",\"data-dir\":\"./data-dir\",\"no-bootstrap-node\":true,\"nat\":\"extip:127.0.0.1\"}";
+    const char *cfg = "{\"log-level\":\"WARN\",\"data-dir\":\"./data-dir\",\"nat\":\"extip:127.0.0.1\"}";
     StorageCtx *ctx = create_ctx(cfg);
 
     if (!ctx)
@@ -555,30 +555,6 @@ int check_peer_id(StorageCtx *storage_ctx)
     return is_resp_ok(r, NULL);
 }
 
-int check_network(StorageCtx *storage_ctx)
-{
-    Resp *r = alloc_resp();
-    char *res = NULL;
-
-    if (storage_ctx_network(storage_ctx, on_str_reply, r) != RET_OK)
-    {
-        free_resp(r);
-        return RET_ERR;
-    }
-
-    int ret = is_resp_ok(r, &res);
-
-    if (res == NULL || strlen(res) == 0)
-    {
-        fprintf(stderr, "network is missing\n");
-        ret = RET_ERR;
-    }
-
-    free(res);
-
-    return ret;
-}
-
 int update_log_level(StorageCtx *storage_ctx, const char *log_level)
 {
     Resp *r = alloc_resp();
@@ -600,7 +576,7 @@ int check_upload_chunk(StorageCtx *storage_ctx, const char *filepath)
     const char *payload = "hello world";
     NimFfiBytes chunk = {.data = (uint8_t *)payload, .len = strlen(payload)};
 
-    if (storage_ctx_upload_init(storage_ctx, filepath, chunk.len, true, on_str_reply, r) != RET_OK)
+    if (storage_ctx_upload_init(storage_ctx, filepath, 64 * 1024, true, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1187,15 +1163,14 @@ int check_log_file_after_many_blocks(void)
     const char *input_path = "log-file.bin";
     const char *cfg = "{\"log-level\":\"INFO\",\"log-format\":\"none\","
                       "\"log-file\":\"log-file.log\",\"data-dir\":\"./log-file-data-dir\","
-                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\","
-                      "\"no-bootstrap-node\":true}";
-    uint64_t chunk_size = 1024;
+                      "\"listen-ip\":\"127.0.0.1\",\"nat\":\"extip:127.0.0.1\"}";
+    uint64_t chunk_size = 4096;
     char *cid = NULL;
     char *log = NULL;
 
     // 16384 blocks of zeros.
     FILE *input = fopen(input_path, "wb");
-    if (!input || fseek(input, 16 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
+    if (!input || fseek(input, 64 * 1024 * 1024 - 1, SEEK_SET) != 0 || fputc(0, input) == EOF)
     {
         if (input)
         {
@@ -1278,7 +1253,6 @@ int main(void)
     RUN_TEST(check_debug(storage_ctx));
     RUN_TEST(check_spr(storage_ctx));
     RUN_TEST(check_peer_id(storage_ctx));
-    RUN_TEST(check_network(storage_ctx));
     RUN_TEST(check_upload_chunk(storage_ctx, "hello_world.txt"));
     RUN_TEST(upload_cancel(storage_ctx));
 

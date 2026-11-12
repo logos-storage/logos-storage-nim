@@ -15,7 +15,7 @@ import pkg/faststreams
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/codec
 
-Protobuf.extensionDefaults(Option[string])
+Protobuf.extensionDefaults(Option[string], pstring)
 
 template isExtension*(T: type Protobuf, FieldType: type Option[string]): bool =
   true

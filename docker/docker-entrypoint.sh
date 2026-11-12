@@ -60,6 +60,22 @@ if [[ -n "${BOOTSTRAP_NODE_URL}" && -z "${STORAGE_BOOTSTRAP_NODE}" ]]; then
   exit 1
 fi
 
+# Bootstrap nodes of the network
+if [[ -n "${STORAGE_NETWORK}" ]]; then
+  NETWORK_URL="https://fleets.logos.co/${STORAGE_NETWORK/./-}/storage-network.json"
+  SPR=($(curl -s -f -m 5 "${NETWORK_URL}" | jq -r '.[].spr'))
+
+  # Stop Logos Storage run if unable to get SPR
+  if [[ -z "${SPR}" ]]; then
+    echo "Unable to get SPR from ${NETWORK_URL} - Stop Logos Storage run"
+    exit 1
+  fi
+
+  for node in "${SPR[@]}"; do
+    set -- "$@" "--bootstrap-node=$node"
+  done
+fi
+
 # Parameters
 if [[ -z "${STORAGE_NAT}" ]]; then
   if [[ "${NAT_IP_AUTO}" == "true" && -z "${NAT_PUBLIC_IP_AUTO}" ]]; then

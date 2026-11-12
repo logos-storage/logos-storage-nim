@@ -1,6 +1,6 @@
 name: Bootstrap nodes health check
 
-# Scheduled liveness check for the preset bootstrap nodes. Runs on a
+# Scheduled liveness check for the fleet bootstrap nodes. Runs on a
 # GitHub-hosted runner (public internet) so nodes advertising private/cloud
 # internal IPs are correctly seen as unreachable. On any unreachable node it
 # fails the job and opens/updates a tracking issue labelled `bootstrap-health`.
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  nim_version: v2.2.12
+  nim_version: 2.2.14
 
 concurrency:
   group: ${{ github.workflow }}
@@ -23,16 +23,14 @@ permissions:
 
 jobs:
   ping:
-    name: Ping preset bootstrap nodes
+    name: Ping fleet bootstrap nodes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: linux
           nim_version: ${{ env.nim_version }}

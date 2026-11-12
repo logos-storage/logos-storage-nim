@@ -24,7 +24,7 @@ make STATIC=1 libstorage  # static (.a)
 
 The build writes `library/generated/storage.h` and its TinyCBOR helpers. Git ignores that directory, so build the library before you compile against `library/libstorage.h`.
 
-The generated header includes `<tinycbor/cbor.h>`. Compile and link the TinyCBOR sources that nim-ffi vendors in `vendor/nim-ffi/ffi/codegen/templates/cpp/vendor/tinycbor`, as the `testLibstorageC` target in the `Makefile` does. The release archive and the nix package ship those sources in `include/tinycbor/`.
+The generated header includes `<tinycbor/cbor.h>`. Compile and link the TinyCBOR sources that nim-ffi vendors in `nimbledeps/pkgs2/ffi-*/ffi/codegen/templates/cpp/vendor/tinycbor`, as the `testLibstorageC` target in the `Makefile` does. The release archive and the nix package ship those sources in `include/tinycbor/`.
 
 ## Call model
 
@@ -75,7 +75,12 @@ storage_ctx_stop(ctx, on_reply, user_data);
 storage_ctx_destroy(ctx);
 ```
 
-`storage_ctx_destroy` stops the node, closes it and joins the FFI thread pair. It is synchronous and is the only teardown path: a context lives exactly as long as its node.
+- A node starts and stops once. After `storage_ctx_stop`, it cannot start again.
+- To run a node again, destroy the context and create a new one.
+- Wait for the reply of `storage_ctx_stop` before you call `storage_ctx_destroy`.
+- `storage_ctx_destroy` closes the node and frees the context. There is no other teardown call.
+- `storage_ctx_destroy` is synchronous. When it returns `RET_OK`, the context is gone and no callback fires again.
+
 
 ## Entry points
 
@@ -88,7 +93,6 @@ storage_ctx_destroy(ctx);
 | `storage_ctx_repo` | | the data directory |
 | `storage_ctx_spr` | | the Signed Peer Record URI |
 | `storage_ctx_peer_id` | | the libp2p peer identity |
-| `storage_ctx_network` | | the network preset name |
 | `storage_ctx_debug` | | node information as JSON |
 | `storage_ctx_peer_debug` | `peerId` | a peer record as JSON, with `storage_enable_api_debug_peers` |
 | `storage_ctx_get_metrics` | | the metrics registry as JSON |

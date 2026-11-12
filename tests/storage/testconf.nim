@@ -1,11 +1,13 @@
 import std/net
 import ../asynctest
 import ./helpers
+import ./examples
 import ../../storage/conf
 import ../../storage/nat
 
 proc validConfig(): StorageConf =
   StorageConf(
+    bootstrapNodes: @[SignedPeerRecord.example],
     nat: defaultNatConfig(),
     natMaxQueueSize: 3,
     natNumPeersToAsk: 5,
@@ -48,15 +50,15 @@ suite "Conf - validateAutonatConfig":
 
     check config.validateAutonatConfig().isOk
 
-  test "rejects no-bootstrap-node without extip":
+  test "rejects a node without bootstrap node and without extip":
     var config = validConfig()
-    config.noBootstrapNode = true
+    config.bootstrapNodes = @[]
 
     check config.validateAutonatConfig().isErr
 
-  test "accepts no-bootstrap-node with extip":
+  test "accepts a node without bootstrap node with extip":
     var config = validConfig()
-    config.noBootstrapNode = true
+    config.bootstrapNodes = @[]
     config.nat = nat.NatConfig(hasExtIp: true, extIp: parseIpAddress("1.2.3.4"))
 
     check config.validateAutonatConfig().isOk
@@ -168,10 +170,6 @@ suite "Conf - parseCmdArg":
   test "rejects an invalid number of bytes":
     expect ConfigurationError:
       discard parseCmdArg(NBytes, "many")
-
-  test "rejects an invalid network preset":
-    expect ConfigurationError:
-      discard parseCmdArg(NetworkPreset, "unknown")
 
   test "rejects an invalid multiaddress":
     expect ConfigurationError:

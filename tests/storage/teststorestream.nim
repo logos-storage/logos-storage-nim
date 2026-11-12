@@ -1,3 +1,5 @@
+import std/sequtils
+
 import pkg/chronos
 
 import pkg/storage/[streams, stores, manifest, blocktype as bt]
@@ -95,6 +97,44 @@ asyncchecksuite "StoreStream":
 
     await stream.readExactly(addr buf[0], 15)
     check sequentialBytes(buf, 15, 0)
+
+asyncchecksuite "StoreStream - Short Blocks":
+  const blockSize = 10
+
+  proc shortBlocksStream(
+      lens: seq[int], datasetSize: int
+  ): Future[StoreStream] {.async.} =
+    let store = CacheStore.new()
+    var blocks: seq[bt.Block]
+    for i, len in lens:
+      blocks.add(bt.Block.new(newSeqWith(len, byte(i + 1))).tryGet())
+    let
+      treeCid = (await storeDataGetManifest(store, blocks)).manifest.treeCid
+      manifest = Manifest.new(
+        treeCid = treeCid,
+        blockSize = blockSize.NBytes,
+        datasetSize = datasetSize.NBytes,
+      )
+    return StoreStream.new(store, manifest)
+
+  test "Read of a short middle block fails":
+    let stream = await shortBlocksStream(@[10, 3, 10], datasetSize = 30)
+    var buf = newSeq[byte](blockSize)
+
+    check (await stream.readOnce(addr buf[0], buf.len)) == blockSize
+    expect LPStreamReadError:
+      discard await stream.readOnce(addr buf[0], buf.len)
+    await stream.close()
+
+  test "Read of a short last block fails":
+    let stream = await shortBlocksStream(@[10, 10, 3], datasetSize = 25)
+    var buf = newSeq[byte](blockSize)
+
+    check (await stream.readOnce(addr buf[0], buf.len)) == blockSize
+    check (await stream.readOnce(addr buf[0], buf.len)) == blockSize
+    expect LPStreamReadError:
+      discard await stream.readOnce(addr buf[0], buf.len)
+    await stream.close()
 
 suite "StoreStream - Size Tests":
   var stream: StoreStream

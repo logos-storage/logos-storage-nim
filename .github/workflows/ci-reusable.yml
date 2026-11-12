@@ -31,11 +31,10 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
         with:
-          submodules: recursive
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Setup Nimbus Build System
-        uses: ./.github/actions/nimbus-build-system
+      - name: Setup Nimble build system
+        uses: ./.github/actions/nimble-build-system
         with:
           os: ${{ matrix.os }}
           cpu: ${{ matrix.cpu }}
@@ -46,14 +45,14 @@ jobs:
       ## Part 1 Tests ##
       - name: Unit tests
         if: matrix.tests == 'unittest' || matrix.tests == 'all'
-        run: make -j${ncpu} test
+        run: make test
 
       ## Part 2 Tests ##
       - name: Integration tests
         if: matrix.tests == 'integration' || matrix.tests == 'all'
         env:
           STORAGE_INTEGRATION_TEST_INCLUDES: ${{ matrix.includes }}
-        run: make -j${ncpu} DEBUG=${{ runner.debug }} testIntegration
+        run: make DEBUG=${{ runner.debug }} testIntegration
 
       - name: Upload integration tests log files
         uses: actions/upload-artifact@v7
@@ -66,7 +65,7 @@ jobs:
       ## Part 3 Tests ##
       - name: Libstorage tests
         if: matrix.tests == 'libstorage' || matrix.tests == 'all'
-        run: make -j${ncpu} testLibstorage
+        run: make testLibstorage
 
       ## Part 4 Tests ##
       - name: NAT integration tests

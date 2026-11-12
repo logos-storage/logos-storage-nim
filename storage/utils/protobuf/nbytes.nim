@@ -15,7 +15,7 @@ import pkg/protobuf_serialization/codec
 
 import ../../units
 
-Protobuf.extensionDefaults(NBytes)
+Protobuf.extensionDefaults(NBytes, puint64)
 
 func computeFieldSize*(
     field: int, value: NBytes, ProtoType: type ProtobufExt, skipDefault: static bool
@@ -39,6 +39,10 @@ proc readFieldInto*(
 ): bool {.raises: [SerializationError, IOError].} =
   var raw: uint64
   if readFieldInto(stream, raw, header, puint64):
+    if raw > uint64(high(Natural)):
+      raise newException(
+        SerializationError, "NBytes value " & $raw & " exceeds " & $high(Natural)
+      )
     value = NBytes(raw)
     true
   else:

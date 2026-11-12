@@ -3,13 +3,12 @@ include "build.nims"
 import std/os
 const currentDir = currentSourcePath()[0 .. ^(len("config.nims") + 1)]
 
-when getEnv("NIMBUS_BUILD_SYSTEM") == "yes" and
-    # BEWARE
-    # In Nim 1.6, config files are evaluated with a working directory
-    # matching where the Nim command was invocated. This means that we
-    # must do all file existence checks with full absolute paths:
-    system.fileExists(currentDir & "nimbus-build-system.paths"):
-  include "nimbus-build-system.paths"
+# At the top: `switch("import", "libbacktrace")` below needs these paths.
+# begin Nimble config (version 2)
+--noNimblePath
+when withDir(thisDir(), system.fileExists("nimble.paths")):
+  include "nimble.paths"
+# end Nimble config
 
 when defined(release):
   switch(
@@ -92,14 +91,11 @@ else:
   on
 --warningAsError:
   "ProveField:on"
---define:
-  "libp2p_multicodec_exts:../../../storage/multicodec_exts.nim"
---define:
-  "libp2p_multihash_exts:../../../storage/multihash_exts.nim"
---define:
-  "libp2p_contentids_exts:../../../storage/contentids_exts.nim"
---define:
-  "libp2p_multiaddress_exts:../../../storage/multiaddress_exts.nim"
+# Absolute paths: libp2p now lives in nimbledeps/, not vendor/.
+switch("define", "libp2p_multicodec_exts:" & currentDir & "storage/multicodec_exts.nim")
+switch("define", "libp2p_multihash_exts:" & currentDir & "storage/multihash_exts.nim")
+switch("define", "libp2p_contentids_exts:" & currentDir & "storage/contentids_exts.nim")
+switch("define", "libp2p_multiaddress_exts:" & currentDir & "storage/multiaddress_exts.nim")
 
 when (NimMajor, NimMinor) >= (1, 4):
   --warning:
@@ -118,7 +114,7 @@ when (NimMajor, NimMinor) >= (2, 0):
   --mm:
     refc
 
-# Nim 2.2.12 rejects the merkletree compress closure.
+# Nim >= 2.2.12 rejects the merkletree compress closure.
 when (NimMajor, NimMinor, NimPatch) >= (2, 2, 12):
   switch("legacy", "procParamTypeBackendAliases")
 
@@ -161,8 +157,3 @@ switch("define", "nimOldCaseObjects")
 
 # Enable compat mode for Chronos V4
 switch("define", "chronosHandleException")
-
-# begin Nimble config (version 2)
-when withDir(thisDir(), system.fileExists("nimble.paths")):
-  include "nimble.paths"
-# end Nimble config

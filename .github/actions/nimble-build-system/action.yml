@@ -1,7 +1,7 @@
 # Adapted from:
 # https://github.com/status-im/nimbus-eth2/blob/stable/.github/workflows/ci.yml
 
-name: Setup Nimbus Build System
+name: Setup Nimble build system
 inputs:
   os:
     description: "Operating system to build for"
@@ -11,13 +11,16 @@ inputs:
     default: "amd64"
   nim_version:
     description: "Nim version"
-    default: "v2.0.14"
+    default: "2.2.14"
   shell:
     description: "Shell to run commands in"
     default: "bash --noprofile --norc -e -o pipefail"
   coverage:
     description: "True if the process is used for coverage"
     default: false
+  nimbledeps_cache:
+    description: "Restore and save the nimbledeps cache"
+    default: "true"
 runs:
   using: "composite"
   steps:
@@ -137,8 +140,6 @@ runs:
           printf "'%s'" "$quoted"
         }
 
-        [[ '${{ inputs.cpu }}' == 'i386' ]] && echo "ARCH_OVERRIDE=ARCH_OVERRIDE=x86" >> ${GITHUB_ENV}
-
         # Stack usage on Linux amd64/arm64
         if [[ '${{ inputs.os }}' == 'linux' && ('${{ inputs.cpu }}' == 'amd64' || '${{ inputs.cpu }}' == 'arm64')]]; then
           NIMFLAGS="${NIMFLAGS} -d:limitStackUsage"
@@ -194,28 +195,28 @@ runs:
           echo "NIMFLAGS=${NIMFLAGS}" >> $GITHUB_ENV
         fi
 
-        # Use all available CPUs for build process
-        ncpu=""
-        case '${{ inputs.os }}' in
-        'linux')   ncpu=$(nproc)                ;;
-        'macos')   ncpu=$(sysctl -n hw.ncpu)    ;;
-        'windows') ncpu=${NUMBER_OF_PROCESSORS} ;;
-        esac
-        [[ -z "$ncpu" || $ncpu -le 0 ]] && ncpu=1
-        echo "ncpu=${ncpu}" >> ${GITHUB_ENV}
-
-    - name: Restore Nim toolchain binaries from cache
+    # setup-nim-action builds Nim from source on macOS and Linux arm64, and
+    # deletes any existing install first: on a cache hit, we skip it.
+    - name: Restore Nim from cache
       id: nim-cache
+      if: inputs.os != 'windows'
       uses: actions/cache@v5
-      if: ${{ inputs.coverage != 'true' }}
       with:
-        path: NimBinaries
-        key: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-cache-${{ env.cache_nonce }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-        restore-keys: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-cache-${{ env.cache_nonce }}
+        path: ${{ runner.temp }}/.nim_runtime
+        key: ${{ inputs.os }}-${{ inputs.cpu }}-nim-${{ inputs.nim_version }}-${{ env.cache_nonce }}
 
-    - name: Set NIM_COMMIT
-      shell: ${{ inputs.shell }} {0}
-      run: echo "NIM_COMMIT=${{ inputs.nim_version }}" >> ${GITHUB_ENV}
+    - name: Add cached Nim to PATH
+      if: steps.nim-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: echo "${{ runner.temp }}/.nim_runtime/bin" >> "$GITHUB_PATH"
+
+    - name: Install Nim
+      if: steps.nim-cache.outputs.cache-hit != 'true'
+      uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: ${{ inputs.nim_version }}
+        repo-token: ${{ github.token }}
+        parent-nim-install-directory: ${{ runner.temp }}
 
     - name: MSYS2 (Windows All) - Disable git symbolic links (since miniupnp 2.2.5)
       if: inputs.os == 'windows'
@@ -223,11 +224,19 @@ runs:
       run: |
         git config --global core.symlinks false
 
-    - name: Build Nim and Logos Storage dependencies
+    # Some packages build their C code inside nimbledeps/, hence the os and cpu.
+    - name: Restore Nimble dependencies from cache
+      if: inputs.nimbledeps_cache == 'true'
+      uses: actions/cache@v5
+      with:
+        path: nimbledeps
+        key: ${{ inputs.os }}-${{ inputs.cpu }}-nimbledeps-${{ env.cache_nonce }}-${{ hashFiles('nimble.lock') }}
+
+    - name: Install Logos Storage dependencies
       shell: ${{ inputs.shell }} {0}
       run: |
         which gcc
         gcc --version
-        make -j${ncpu} CI_CACHE=NimBinaries ${ARCH_OVERRIDE} QUICK_AND_DIRTY_COMPILER=1 update
+        make update
         echo
-        ./env.sh nim --version
+        nim --version

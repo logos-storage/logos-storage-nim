@@ -92,7 +92,7 @@ task checkSpr, "build check_spr used for checking bootstrap node health":
     srcDir = "tools/",
     params = "-d:release -d:chronicles_runtime_filtering -d:chronicles_log_level=WARN"
 
-task bootstrapHealthCheck, "ping preset bootstrap nodes; non-zero exit if any are unreachable":
+task bootstrapHealthCheck, "ping fleet bootstrap nodes; non-zero exit if any are unreachable":
   checkSprTask()
 
   # get CI param from make if present
@@ -125,9 +125,6 @@ task testNatIntegration,
 
 task testLibstorage, "Run libstorage Nim tests":
   test "testLibstorage", outName = "testLibstorage"
-
-task build, "build Logos Storage binary":
-  storageTask()
 
 task test, "Run tests":
   testStorageTask()

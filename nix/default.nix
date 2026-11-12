@@ -10,12 +10,7 @@
     "x86_64-linux" "aarch64-linux"
     "x86_64-darwin" "aarch64-darwin"
   ],
-  # Perform 2-stage bootstrap instead of 3-stage to save time.
-  quickAndDirty ? true,
 }:
-
-assert pkgs.lib.assertMsg ((src.submodules or true) == true)
-  "Unable to build without submodules. Append '?submodules=1#' to the URI.";
 
 let
   inherit (pkgs) lib writeScriptBin callPackage;
@@ -26,6 +21,32 @@ let
 
   tools = callPackage ./tools.nix {};
 
+  # The dependencies pinned by nimble.lock. Nix fetches them, not Nimble:
+  # a Nix build has no network.
+  lock = builtins.fromJSON (builtins.readFile ../nimble.lock);
+  deps = lib.mapAttrs (name: pkg: rec {
+    dirName = "${name}-${pkg.version}";
+    src = builtins.fetchGit {
+      url = pkg.url;
+      rev = pkg.vcsRevision;
+      allRefs = true;
+      submodules = true;
+    };
+    srcDir = srcDirOf src;
+  }) (removeAttrs lock.packages [ "nim" ]);
+
+  # The `srcDir` of the package's .nimble file, as Nimble puts it in nimble.paths.
+  srcDirOf = src:
+    let
+      nimbleFile = lib.findFirst (f: lib.hasSuffix ".nimble" f)
+        (throw "no .nimble file in ${src}")
+        (lib.attrNames (builtins.readDir src));
+      lines = lib.splitString "\n" (builtins.readFile "${src}/${nimbleFile}");
+      found = lib.remove null (map
+        (builtins.match "^[[:space:]]*srcDir[[:space:]]*=[[:space:]]*\"([^\"]*)\".*")
+        lines);
+    in if found == [] then "" else "/${lib.head (lib.head found)}";
+
   # Determine the compiler.
   # pkgs.stdenv is the mingw compiler for windows.
   stdenv =
@@ -33,9 +54,9 @@ let
     else if hostPlatform.isLinux then pkgs.gcc13Stdenv
     else pkgs.clang18Stdenv;
 
-  # -lws2_32: Windows sockets, used by boringssl, libplum and miniupnpc.
+  # -lws2_32: Windows sockets, used by boringssl and libplum.
   # -lbcrypt: Windows CNG, the random source for boringssl, libplum and Nim.
-  # -liphlpapi: IP Helper API used by miniupnpc and libplum.
+  # -liphlpapi: IP Helper API used by libplum.
   # -lstdc++: nim links LevelDB's C++ objects through gcc, not g++.
   # -lwinpthread: pthread_time.h inlines clock_gettime into a clock_gettime64 call.
   # --out-implib because nim emits only the .dll, and CMake's find_library
@@ -75,6 +96,7 @@ in stdenv.mkDerivation rec {
     # Fix for Nim compiler calling 'git rev-parse' and 'lsb_release'.
     fakeGit = writeScriptBin "git" "echo ${version}";
   in with pkgs.buildPackages; [
+    nim-2_2
     cmake
     which
     fakeGit
@@ -83,9 +105,6 @@ in stdenv.mkDerivation rec {
   ] ++ lib.optionals hostPlatform.isDarwin [
     darwin.cctools
   ] ++ lib.optionals isWindows [
-    # Paired with USE_SYSTEM_NIM=1 below: nimbus-build-system would
-    # otherwise build the Nim compiler itself as a Windows binary.
-    nim-2_2
     gnumake
     # Only nim-boringssl's Windows branch has hand-written asm
     # https://github.com/vacp2p/nim-boringssl/blob/c9505c71ecc67fd232d6ab23e5ae5810957e514f/prelude.nim#L321-L324
@@ -93,50 +112,34 @@ in stdenv.mkDerivation rec {
   ];
 
   # Disable CPU optimizations that make binary not portable.
+  # The nixpkgs Nim links LevelDB's C++ objects through the C compiler, so the
+  # C++ runtime is added by hand (Windows adds it in windowsNimFlags).
   NIMFLAGS = lib.concatStringsSep " " (
     [ "-d:disableMarchNative" "-d:git_revision_override=${revision}" ]
+    ++ lib.optionals hostPlatform.isLinux [ "--passL:-lstdc++" ]
+    ++ lib.optionals hostPlatform.isDarwin [ "--passL:-lc++" ]
     ++ lib.optionals isWindows windowsNimFlags
   );
 
-  makeFlags = targets ++ [
-    "V=${toString verbosity}"
-    "QUICK_AND_DIRTY_COMPILER=${if quickAndDirty then "1" else "0"}"
-    "QUICK_AND_DIRTY_NIMBLE=${if quickAndDirty then "1" else "0"}"
-  ] ++ lib.optionals isWindows [
-    "USE_SYSTEM_NIM=1"
-  ];
-
-  postPatch = lib.optionalString isWindows ''
-    chmod -R +w .
-
-    # Skip the LevelDB setup
-    mkdir -p vendor/nim-leveldbstatic/build
-    touch vendor/nim-leveldbstatic/build/Makefile
-
-    # The wrapper's system config sets os = windows, and `nim e` runs the script before the cmdline can override it.
-    substituteInPlace vendor/nim-bearssl/bearssl/abi/csources.nim \
-      --replace-fail '" e --hints:off' '" e --skipCfg --hints:off'
-  '';
-
+  # Same layout as `nimble setup -l`: the dependencies in nimbledeps/, listed
+  # in nimble.paths, which config.nims includes. Copies, because some
+  # packages build C code in their own folder.
   configurePhase = ''
+    runHook preConfigure
     # Avoid Nim cache permission errors.
     export XDG_CACHE_HOME=$TMPDIR
-    # Force build of Nimble from dist/nimble source.
-    export NIMBLE_COMMIT=""
-    patchShebangs . vendor/nimbus-build-system > /dev/null
-    # nixpkgs only passes makeFlags to its own make so USE_SYSTEM_NIM=1 is passed here.
-    make nimbus-build-system-paths ${lib.optionalString isWindows "USE_SYSTEM_NIM=1"}
+    mkdir -p nimbledeps/pkgs2
+    echo '--noNimblePath' > nimble.paths
+  '' + lib.concatStrings (lib.mapAttrsToList (name: dep: ''
+    cp -r ${dep.src} nimbledeps/pkgs2/${dep.dirName}
+    echo "--path:\"$PWD/nimbledeps/pkgs2/${dep.dirName}${dep.srcDir}\"" >> nimble.paths
+  '') deps) + ''
+    chmod -R u+w nimbledeps
+    patchShebangs nimbledeps > /dev/null
+    runHook postConfigure
   '';
 
-  preBuild = lib.optionalString (!isWindows) ''
-    pushd vendor/nimbus-build-system/vendor/Nim
-    mkdir dist
-    cp -r ${callPackage ./nimble.nix {}}    dist/nimble
-    cp -r ${callPackage ./checksums.nix {}} dist/checksums
-    cp -r ${callPackage ./csources.nix {}}  csources_v3
-    chmod 777 -R dist/nimble csources_v3
-    popd
-  '' + lib.optionalString isWindows ''
+  preBuild = lib.optionalString isWindows ''
     # config.nims joins nimcache with the target's `\`, a relative path on the build host.
     export NIMFLAGS="$NIMFLAGS --nimcache:$PWD/nimcache/release/${lib.concatStringsSep "-" targets}"
 
@@ -146,16 +149,21 @@ in stdenv.mkDerivation rec {
     ln -sf "$(command -v $AR)" $TMPDIR/arshim/ar
     export PATH=$TMPDIR/arshim:$PATH
 
-    # Put the Windows archive where nat_traversal/miniupnpc.nim:29 looks for it,
-    # at the miniupnpc root. nimbus-build-system detects Windows with $(OS),
-    # which reports the build machine os, not the target os.
-    make -C vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc -f Makefile.mingw \
-      CC="$CC" AR="$AR" RANLIB="$RANLIB" libminiupnpc.a
+    # Skip the LevelDB setup
+    mkdir -p nimbledeps/pkgs2/${deps.leveldbstatic.dirName}/build
+    touch nimbledeps/pkgs2/${deps.leveldbstatic.dirName}/build/Makefile
 
-    make -C vendor/nim-nat-traversal/vendor/libnatpmp-upstream \
-      CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-      CFLAGS="-Wall -Os -DENABLE_STRNATPMPERR -DNATPMP_MAX_RETRIES=4 -DNATPMP_STATICLIB" \
-      libnatpmp.a
+    # The wrapper's system config sets os = windows, and `nim e` runs the script before the cmdline can override it.
+    substituteInPlace nimbledeps/pkgs2/${deps.bearssl.dirName}/bearssl/abi/csources.nim \
+      --replace-fail '" e --hints:off' '" e --skipCfg --hints:off'
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+  '' + lib.concatMapStrings (target: ''
+      make ${target} V=${toString verbosity}
+    '') targets + ''
+    runHook postBuild
   '';
 
   installPhase = ''
@@ -179,7 +187,7 @@ in stdenv.mkDerivation rec {
   '' + ''
       cp library/libstorage.h $out/include/
       cp library/generated/*.h $out/include/generated/
-      cp -r vendor/nim-ffi/ffi/codegen/templates/cpp/vendor/tinycbor $out/include/
+      cp -r nimbledeps/pkgs2/${deps.ffi.dirName}/ffi/codegen/templates/cpp/vendor/tinycbor $out/include/
     fi
   '';
 

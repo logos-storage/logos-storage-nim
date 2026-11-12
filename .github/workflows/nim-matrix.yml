@@ -6,7 +6,7 @@ on:
 
 env:
   cache_nonce: 0 # Allows for easily busting actions/cache caches
-  nim_version: pinned
+  nim_version: 2.2.14
 
 jobs:     
   matrix:

@@ -398,6 +398,14 @@ proc sendWantBlocksRequest(
       await self.banAndDropPeer(download, peer.id)
       return
 
+    if view.dataLen != download.ctx.md.manifest.blockSize.int:
+      warn "Block length doesn't match the manifest's block size - not storing it",
+        address = view.address,
+        length = view.dataLen,
+        blockSize = download.ctx.md.manifest.blockSize.int,
+        peer = peer.id
+      continue
+
     let
       bd = view.toBlockDelivery()
       putResult = await self.localStore.putBlock(bd.blk)
