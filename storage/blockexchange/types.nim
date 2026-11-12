@@ -203,3 +203,15 @@ proc merge*(current: BlockAvailability, other: BlockAvailability): BlockAvailabi
       bitmapToRanges(other)
 
   return BlockAvailability.fromRanges(mergeRanges(currentRanges & otherRanges))
+
+proc keepOverlapping*(
+    avail: BlockAvailability, needed: tuple[start: uint64, count: uint64]
+): BlockAvailability =
+  if avail.kind != bakRanges or needed.count > high(uint64) - needed.start:
+    return avail
+
+  var kept: seq[IndexRange] = @[]
+  for r in mergeRanges(avail.ranges):
+    if r.start < needed.start + needed.count and needed.start < r.start + r.count:
+      kept.add(r)
+  BlockAvailability.fromRanges(kept)
