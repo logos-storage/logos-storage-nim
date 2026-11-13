@@ -17,8 +17,14 @@ import pkg/chronos
 import pkg/libp2p
 import pkg/libp2p/routing_record
 import pkg/libp2p/wire
+import pkg/libp2p/extended_peer_record
 import pkg/libp2p/protocols/kademlia except PeerRecord
+import pkg/libp2p/protocols/service_discovery except PeerRecord
+from pkg/libp2p/protocols/connectivity/autonatv2/types import AutonatV2Codec
+from pkg/libp2p/protocols/connectivity/relay/utils import RelayV2HopCodec
 import pkg/libp2p_mix
+import pkg/libp2p_mix/mix_node
+import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
 
@@ -28,6 +34,7 @@ import ./errors
 import ./logutils
 import ./utils/spr
 import ./dht_proxy/client as dht_proxy_client
+import ./dht_proxy/protocol
 
 export routing_record
 
@@ -41,14 +48,27 @@ logScope:
 const
   ProvideTimeout = 1.minutes
   LookupTimeout = 1.minutes
+  ServiceLookupTimeout = 1.minutes
+
+  StorageServiceId* = "/logos-storage/1.0.0"
+  AutonatServiceId* = $AutonatV2Codec.DialRequest
+  CircuitRelayServiceId* = RelayV2HopCodec
+  MixServiceId* = MixProtocolID
+  DhtProxyServiceId* = DhtProxyCodec
 
 type
   Discovery* = ref object of RootObj
     kad*: KadDHT # libp2p Kademlia DHT
+    serviceDiscovery*: ServiceDiscovery # libp2p Service discovery
+    providedServices: seq[string] # services this node provides
+    addressPolicy: PeerAddressPolicy
+    serviceLookupInterval: Duration
+    serviceAds: seq[Advertisement]
+    serviceAdsTime: Moment
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
-    dhtMixProxies*: seq[SignedPeerRecord]
+    dhtMixProxies*: seq[PeerRecord]
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -104,8 +124,7 @@ method findViaMix*(
   var candidates = d.dhtMixProxies
   shuffle(candidates)
 
-  for record in candidates:
-    let proxy = record.data
+  for proxy in candidates:
     let res = await dht_proxy_client.lookupProviders(d.mixProto, proxy, cid)
     if res.isErr:
       warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
@@ -192,8 +211,165 @@ proc updateLocalMultiAddr*(d: Discovery) =
   else:
     info "Mix local address updated", address = mixAddr
 
+proc advertisement(d: Discovery): Result[seq[byte], string] =
+  let addrs = d.addressPolicy.dialableAddrs(
+    d.switch.peerInfo.addrs, d.switch.peerStore.allowUndialableAddrs
+  )
+  if addrs.len == 0:
+    return err("No dialable address to advertise")
+
+  let
+    services = @[StorageServiceId] & d.providedServices
+    record = ExtendedPeerRecord.init(
+      peerId = d.peerId,
+      addresses = addrs,
+      services = services.mapIt(ServiceInfo(id: it)),
+    )
+    signed = SignedExtendedPeerRecord.build(d.switch.peerInfo.privateKey, record).valueOr:
+      return err("Cannot sign the advertisement: " & error)
+  ok(signed.encode())
+
+proc startAdvertisingServices*(d: Discovery) =
+  if d.providedServices.len == 0:
+    return
+
+  let advert = d.advertisement().valueOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
+    return
+
+  d.serviceDiscovery.startAdvertising(
+    ServiceInfo(id: StorageServiceId), Opt.some(advert)
+  ).isOkOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
+
+proc stopAdvertisingServices*(d: Discovery) {.async: (raises: []).} =
+  await noCancel d.serviceDiscovery.stopAdvertising(StorageServiceId)
+
 proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
   discard await d.kad.changeMode(isServer)
+  if not await d.serviceDiscovery.changeMode(isServer):
+    return
+
+  if isServer:
+    d.startAdvertisingServices()
+  else:
+    await d.stopAdvertisingServices()
+
+func providedServices*(
+    autonatServer: bool, relayServer: bool, mixRelay = false, dhtProxyServer = false
+): seq[string] =
+  if autonatServer:
+    result.add(AutonatServiceId)
+  if relayServer:
+    result.add(CircuitRelayServiceId)
+  if mixRelay:
+    result.add(MixServiceId)
+  if dhtProxyServer:
+    result.add(DhtProxyServiceId)
+
+proc lookupServiceProviders(
+    d: Discovery
+): Future[Result[seq[Advertisement], string]] {.async: (raises: [CancelledError]).} =
+  await d.serviceDiscovery.waitBootstrap()
+
+  let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: StorageServiceId))).valueOr:
+    return err("Service lookup failed: " & error)
+
+  var providers: seq[Advertisement]
+  for ad in ads:
+    if ad.data.peerId == d.peerId or providers.anyIt(it.data.peerId == ad.data.peerId):
+      continue
+    providers.add(ad)
+  ok(providers)
+
+proc providersOf(ads: seq[Advertisement], serviceId: string): seq[PeerRecord] =
+  var providers: seq[PeerRecord]
+  for ad in ads:
+    if ad.data.services.anyIt(it.id == serviceId):
+      providers.add(
+        PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
+      )
+  providers
+
+proc findServiceProviders*(
+    d: Discovery, serviceId: string
+): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
+  if Moment.now() - d.serviceAdsTime < d.serviceLookupInterval:
+    let providers = d.serviceAds.providersOf(serviceId)
+    if providers.len > 0:
+      return ok(providers)
+
+  let res =
+    try:
+      await d.lookupServiceProviders().wait(ServiceLookupTimeout)
+    except AsyncTimeoutError:
+      return err("Service lookup timed out after " & $ServiceLookupTimeout)
+
+  let ads = res.valueOr:
+    return err(error)
+
+  d.serviceAds = ads
+  d.serviceAdsTime = Moment.now()
+  ok(ads.providersOf(serviceId))
+
+proc connectServiceProviders*(
+    d: Discovery, serviceId: string, limit: int, exclude: seq[PeerId]
+): Future[seq[PeerId]] {.async: (raises: [CancelledError]).} =
+  proc connect(
+      provider: PeerRecord
+  ): Future[bool] {.async: (raises: [CancelledError]).} =
+    try:
+      await d.switch.connect(provider.peerId, provider.addresses.mapIt(it.address))
+      return true
+    except CancelledError as exc:
+      raise exc
+    except CatchableError as exc:
+      debug "Cannot connect to service provider",
+        serviceId, peer = provider.peerId, err = exc.msg
+      return false
+
+  let providers = (await d.findServiceProviders(serviceId)).valueOr:
+    warn "Unable to find service providers", serviceId, err = error
+    return @[]
+
+  var candidates = providers.filterIt(it.peerId notin exclude)
+  shuffle(candidates)
+  if candidates.len > limit:
+    candidates.setLen(limit)
+
+  debug "Service providers found",
+    serviceId, found = providers.len, connecting = candidates.len
+
+  let connects = candidates.mapIt(connect(it))
+  try:
+    await allFutures(connects)
+  except CancelledError as exc:
+    await noCancel allFutures(connects.mapIt(it.cancelAndWait()))
+    raise exc
+
+  var connected: seq[PeerId]
+  for i, fut in connects:
+    if fut.value():
+      connected.add(candidates[i].peerId)
+
+  if connected.len > 0:
+    info "Connected to service providers", serviceId, connected = connected.len
+  connected
+
+proc findMixRelays*(
+    d: Discovery
+): Future[Result[seq[MixPubInfo], string]] {.async: (raises: [CancelledError]).} =
+  let providers = (await d.findServiceProviders(MixServiceId)).valueOr:
+    return err(error)
+
+  var relays: seq[MixPubInfo]
+  for provider in providers:
+    for address in provider.addresses:
+      let relay = MixPubInfo.fromMixAddress(address.address, Opt.some(provider.peerId)).valueOr:
+        continue
+      relays.add(relay)
+      break
+  ok(relays)
 
 proc isServerMode*(d: Discovery): bool =
   d.kad.isServer
@@ -227,12 +403,19 @@ proc new*(
     dhtMixProxies: openArray[SignedPeerRecord] = [],
     isServer = true,
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
+    providedServices: openArray[string] = [],
+    serviceLookupInterval = ZeroDuration,
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
 
   var self = Discovery(
-    switch: switch, peerId: switch.peerInfo.peerId, dhtMixProxies: @dhtMixProxies
+    switch: switch,
+    peerId: switch.peerInfo.peerId,
+    dhtMixProxies: dhtMixProxies.mapIt(it.data),
+    providedServices: @providedServices,
+    addressPolicy: addressPolicy,
+    serviceLookupInterval: serviceLookupInterval,
   )
 
   self.kad = KadDHT.new(
@@ -241,6 +424,16 @@ proc new*(
     config = KadDHTConfig.new(addressPolicy = addressPolicy),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
+  )
+
+  self.serviceDiscovery = ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = @bootstrapNodes,
+    config = KadDHTConfig.new(
+      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
+    ),
+    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
+    client = not isServer,
   )
 
   self

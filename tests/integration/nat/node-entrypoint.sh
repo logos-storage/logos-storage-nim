@@ -55,10 +55,25 @@ add_bootstrap_options() {
   _config_opts+=(--bootstrap-node="$spr")
 }
 
+_route_wan_subnets() {
+  local subnet wanif=""
+  for subnet in ${WAN_SUBNETS:-}; do
+    wanif=$(ip -o -4 route show "$subnet" | awk '{print $3; exit}')
+    [[ -n "$wanif" ]] && break
+  done
+
+  for subnet in ${WAN_SUBNETS:-}; do
+    if [[ -z "$(ip -o -4 route show "$subnet")" ]]; then
+      ip route add "$subnet" dev "$wanif"
+    fi
+  done
+}
+
 public_node() {
   local wan_ip="$1"
   local bootstrap_addr="${2:-}"
   _echoerr "Node is on the WAN (public IP is $wan_ip)"
+  _route_wan_subnets
 
   add_bootstrap_options "$bootstrap_addr"
   if [[ "$wan_ip" != "use-identify" ]]; then
@@ -144,6 +159,10 @@ enable_nat_servers() {
     _echoerr "Invalid argument. Use 'relay' or 'autonat', or no arguments to enable both."
     return 1
   fi
+}
+
+enable_dht_proxy() {
+  _config_opts+=(--dht-proxy-server)
 }
 
 with_args() {

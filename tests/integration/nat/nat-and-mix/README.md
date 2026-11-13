@@ -20,7 +20,7 @@ leecher ── leecher_lan ── leecher_router (NAT) ──┘        mix_prox
 ```
 
 - **mix_proxy_1..4** — public nodes on the wan, started with `--nat=extip`,
-  autonat + relay servers, and `--mix-enabled`. `mix_proxy_1` is the primary
+  autonat + relay servers, `--mix-enabled` and `--dht-proxy-server`. `mix_proxy_1` is the primary
   bootstrap node; the other three bootstrap off it.
 - **seeder_router / leecher_router** — `lan -> wan` masquerade, *no* inbound
   forward, so each node can dial out but nothing can dial back in.

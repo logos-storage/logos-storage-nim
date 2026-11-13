@@ -16,13 +16,17 @@ import pkg/libp2p/crypto/crypto
 import pkg/libp2p/crypto/secp
 import pkg/libp2p/protocols/protocol
 import pkg/libp2p/protocols/kademlia except PeerRecord
+import pkg/libp2p/protocols/service_discovery except PeerRecord
+import pkg/libp2p/extended_peer_record
 import pkg/libp2p/stream/connection
 import pkg/libp2p_mix
 import pkg/libp2p_mix/[curve25519, mix_node]
+import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/results
 
 import pkg/storage/dht_proxy/protocol
+from pkg/storage/discovery import StorageServiceId, MixServiceId, DhtProxyServiceId
 import pkg/storage/utils/spr
 
 when defined(posix):
@@ -228,13 +232,13 @@ Options:
   --data-dir=<dir>           Directory holding identity files (key + mix-identity).
   --listen-ip=<addr>         Public IPv4 to bind/announce for libp2p TCP.
   --listen-port=<n>          libp2p TCP port (Mix relay + DHT proxy + Kad share this).
-  --bootstrap-node=<spr>     Repeatable. Signed peer record (spr:...) of a Kad bootstrap peer.
+  --bootstrap-node=<spr>     Repeatable. Signed peer record (spr:...) of a Kad and
+                             service discovery bootstrap peer.
   --log-level=<lvl>          TRACE | DEBUG | INFO | NOTICE | WARN | ERROR | FATAL | NONE
                              (default: INFO)
   --log-file=<path>          Write logs to <path> instead of stdout.
   --generate                 Generate fresh identity files if data-dir is empty.
   --no-dht-proxy             Run as a pure Mix relay.
-                             Conflicts with --bootstrap-node.
   --max-inflight=<n>         Max concurrent DHT proxy lookups (default: 100).
   --max-connections=<n>      Max libp2p connections (in + out) (default: 160).
   -h, --help                 Show this help.
@@ -325,9 +329,6 @@ proc parseConf(): Conf =
   if result.listenPort < 1 or result.listenPort > 65535:
     fail "--listen-port out of range: " & $result.listenPort & " (must be 1..65535)"
 
-  if result.noDhtProxy and result.bootstrapNodes.len > 0:
-    fail "--no-dht-proxy conflicts with --bootstrap-node"
-
 var shutdownRequested = false
 
 proc requestShutdown() =
@@ -339,6 +340,36 @@ proc controlCHandler() {.noconv.} =
 when defined(posix):
   proc sigtermHandler(signal: cint) {.noconv.} =
     requestShutdown()
+
+proc newServiceDiscovery(switch: Switch, conf: Conf): ServiceDiscovery =
+  ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
+    config = KadDHTConfig.new(ExtEntryValidator(), ExtEntrySelector()),
+    rng = newRng(),
+  )
+
+proc advertiseServices(
+    switch: Switch, disco: ServiceDiscovery, conf: Conf
+) {.raises: [ValueError].} =
+  var services = @[StorageServiceId, MixServiceId]
+  if not conf.noDhtProxy:
+    services.add(DhtProxyServiceId)
+
+  let
+    addrs = defaultAddressPolicy.dialableAddrs(
+      switch.peerInfo.addrs, switch.peerStore.allowUndialableAddrs
+    )
+    record = ExtendedPeerRecord.init(
+      peerId = switch.peerInfo.peerId,
+      addresses = addrs,
+      services = services.mapIt(ServiceInfo(id: it)),
+    )
+    signed = SignedExtendedPeerRecord.build(switch.peerInfo.privateKey, record).valueOr:
+      raise newException(ValueError, "Cannot sign the advertisement: " & error)
+
+  disco.startAdvertising(ServiceInfo(id: StorageServiceId), Opt.some(signed.encode())).isOkOr:
+    raise newException(ValueError, "Cannot advertise services: " & error)
 
 proc runRelayOnly(
     conf: Conf,
@@ -353,10 +384,15 @@ proc runRelayOnly(
     raise newException(CatchableError, "MixProtocol start failed: " & exc.msg)
   switch.mount(mixProto)
 
+  let disco = newServiceDiscovery(switch, conf)
+  switch.mount(disco)
+
   try:
     await switch.start()
   except CatchableError as exc:
     raise newException(CatchableError, "libp2p switch start failed: " & exc.msg)
+
+  advertiseServices(switch, disco, conf)
 
   notice "Mix relay started (no DHT proxy)",
     peerId = peerId, tcp = $tcpAddr, dataDir = conf.dataDir
@@ -395,6 +431,9 @@ proc runWithDhtProxy(
 
   switch.mount(kad)
 
+  let disco = newServiceDiscovery(switch, conf)
+  switch.mount(disco)
+
   try:
     await switch.start()
   except CatchableError as exc:
@@ -404,6 +443,8 @@ proc runWithDhtProxy(
     await kad.start()
   except CatchableError as exc:
     raise newException(CatchableError, "Kad DHT start failed: " & exc.msg)
+
+  advertiseServices(switch, disco, conf)
 
   let spr = switch.peerInfo.toSpr()
   if spr.isErr:
@@ -521,6 +562,10 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
     raise
       newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
   mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
+
+  let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
+    raise newException(ValueError, "Failed to derive Mix address: " & error)
+  switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
 
   if conf.noDhtProxy:
     await runRelayOnly(conf, switch, mixProto, peerId, tcpAddr)
