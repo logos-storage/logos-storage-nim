@@ -381,6 +381,7 @@ proc new*(
     ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     client = not isServer,
+    discoConfig = ServiceDiscoveryConfig.new(ipSimCoefficient = 0.0),
   )
 
   self

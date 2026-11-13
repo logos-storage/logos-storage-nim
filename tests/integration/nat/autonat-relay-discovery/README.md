@@ -9,12 +9,6 @@ discovery.
 - node: behind NAT, must find both to become `NotReachable` with a circuit address
 - client: public without extip, must find the AutoNAT server to become `Reachable`
 
-Each advertising node is on its own wan subnet (7.7.7.0/24, 39.39.39.0/24,
-71.71.71.0/24). A registrar makes an advertisement wait longer the more the
-advertiser's IP shares a prefix with the IPs it already holds, to slow down
-Sybil nodes from one network. With all of them in one /24 every advertisement
-waits ~15 min.
-
 ```
 node ── lan ── router ── wan ─┬─ bootstrap
                               ├─ autonat_server

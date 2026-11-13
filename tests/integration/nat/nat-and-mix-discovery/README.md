@@ -11,11 +11,6 @@ Public nodes, one service each:
 - mix_relay_1..4: `--mix-enabled`
 - dht_proxy: `--dht-proxy-server`
 
-Each public node is on its own wan subnet. A registrar makes an advertisement
-wait longer the more the advertiser's IP shares a prefix with the IPs it already
-holds, to slow down Sybil nodes from one network. With all of them in one /24
-every advertisement waits ~15 min.
-
 ```
 seeder  ── seeder_lan  ── seeder_router  ──┐         bootstrap
                                            │         relay_server
