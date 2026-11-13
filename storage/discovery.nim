@@ -50,6 +50,7 @@ const
   LookupTimeout = 1.minutes
   ServiceLookupTimeout = 1.minutes
 
+  StorageServiceId* = "/logos-storage/1.0.0"
   AutonatServiceId* = $AutonatV2Codec.DialRequest
   CircuitRelayServiceId* = RelayV2HopCodec
   MixServiceId* = MixProtocolID
@@ -60,6 +61,10 @@ type
     kad*: KadDHT # libp2p Kademlia DHT
     serviceDiscovery*: ServiceDiscovery # libp2p Service discovery
     providedServices: seq[string] # services this node provides
+    addressPolicy: PeerAddressPolicy
+    serviceLookupInterval: Duration
+    serviceAds: seq[Advertisement]
+    serviceAdsTime: Moment
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
@@ -206,14 +211,39 @@ proc updateLocalMultiAddr*(d: Discovery) =
   else:
     info "Mix local address updated", address = mixAddr
 
+proc advertisement(d: Discovery): Result[seq[byte], string] =
+  let addrs = d.addressPolicy.dialableAddrs(
+    d.switch.peerInfo.addrs, d.switch.peerStore.allowUndialableAddrs
+  )
+  if addrs.len == 0:
+    return err("No dialable address to advertise")
+
+  let
+    services = @[StorageServiceId] & d.providedServices
+    record = ExtendedPeerRecord.init(
+      peerId = d.peerId,
+      addresses = addrs,
+      services = services.mapIt(ServiceInfo(id: it)),
+    )
+    signed = SignedExtendedPeerRecord.build(d.switch.peerInfo.privateKey, record).valueOr:
+      return err("Cannot sign the advertisement: " & error)
+  ok(signed.encode())
+
 proc startAdvertisingServices*(d: Discovery) =
-  for serviceId in d.providedServices:
-    d.serviceDiscovery.startAdvertising(ServiceInfo(id: serviceId)).isOkOr:
-      warn "Cannot advertise service", serviceId, err = error
+  if d.providedServices.len == 0:
+    return
+
+  let advert = d.advertisement().valueOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
+    return
+
+  d.serviceDiscovery.startAdvertising(
+    ServiceInfo(id: StorageServiceId), Opt.some(advert)
+  ).isOkOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
 
 proc stopAdvertisingServices*(d: Discovery) {.async: (raises: []).} =
-  for serviceId in d.providedServices:
-    await noCancel d.serviceDiscovery.stopAdvertising(serviceId)
+  await noCancel d.serviceDiscovery.stopAdvertising(StorageServiceId)
 
 proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
   discard await d.kad.changeMode(isServer)
@@ -238,29 +268,49 @@ func providedServices*(
     result.add(DhtProxyServiceId)
 
 proc lookupServiceProviders(
-    d: Discovery, serviceId: string
-): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
+    d: Discovery
+): Future[Result[seq[Advertisement], string]] {.async: (raises: [CancelledError]).} =
   await d.serviceDiscovery.waitBootstrap()
 
-  let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: serviceId))).valueOr:
+  let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: StorageServiceId))).valueOr:
     return err("Service lookup failed: " & error)
 
+  var providers: seq[Advertisement]
+  for ad in ads:
+    if ad.data.peerId == d.peerId or providers.anyIt(it.data.peerId == ad.data.peerId):
+      continue
+    providers.add(ad)
+  ok(providers)
+
+proc providersOf(ads: seq[Advertisement], serviceId: string): seq[PeerRecord] =
   var providers: seq[PeerRecord]
   for ad in ads:
-    if ad.data.peerId == d.peerId or providers.anyIt(it.peerId == ad.data.peerId):
-      continue
-    providers.add(
-      PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
-    )
-  ok(providers)
+    if ad.data.services.anyIt(it.id == serviceId):
+      providers.add(
+        PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
+      )
+  providers
 
 proc findServiceProviders*(
     d: Discovery, serviceId: string
 ): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
-  try:
-    return await d.lookupServiceProviders(serviceId).wait(ServiceLookupTimeout)
-  except AsyncTimeoutError:
-    return err("Service lookup timed out after " & $ServiceLookupTimeout)
+  if Moment.now() - d.serviceAdsTime < d.serviceLookupInterval:
+    let providers = d.serviceAds.providersOf(serviceId)
+    if providers.len > 0:
+      return ok(providers)
+
+  let res =
+    try:
+      await d.lookupServiceProviders().wait(ServiceLookupTimeout)
+    except AsyncTimeoutError:
+      return err("Service lookup timed out after " & $ServiceLookupTimeout)
+
+  let ads = res.valueOr:
+    return err(error)
+
+  d.serviceAds = ads
+  d.serviceAdsTime = Moment.now()
+  ok(ads.providersOf(serviceId))
 
 proc connectServiceProviders*(
     d: Discovery, serviceId: string, limit: int, exclude: seq[PeerId]
@@ -354,6 +404,7 @@ proc new*(
     isServer = true,
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
     providedServices: openArray[string] = [],
+    serviceLookupInterval = ZeroDuration,
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -363,6 +414,8 @@ proc new*(
     peerId: switch.peerInfo.peerId,
     dhtMixProxies: dhtMixProxies.mapIt(it.data),
     providedServices: @providedServices,
+    addressPolicy: addressPolicy,
+    serviceLookupInterval: serviceLookupInterval,
   )
 
   self.kad = KadDHT.new(
@@ -381,7 +434,6 @@ proc new*(
     ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     client = not isServer,
-    discoConfig = ServiceDiscoveryConfig.new(ipSimCoefficient = 0.0),
   )
 
   self

@@ -27,6 +27,7 @@ import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
 import pkg/libp2p_mix/pool
+from pkg/libp2p_mix/sphinx import PathLength
 import pkg/libp2p_mix_transport/address/parse
 import pkg/presto
 import pkg/taskpools
@@ -56,7 +57,21 @@ logScope:
   topics = "storage node"
 
 # A kad dial abandoned before stop can hold switch.stop for the whole dialer timeout.
-const SwitchStopTimeout = 5.seconds
+const
+  SwitchStopTimeout = 5.seconds
+  MinMixRelays = PathLength + 1
+  MaxDiscoveredMixRelays = 4 * MinMixRelays
+  MaxDiscoveredDhtMixProxies = 32
+
+proc leastSeen(discovered: Table[PeerId, Moment], now: Moment): Opt[PeerId] =
+  var
+    peer = Opt.none(PeerId)
+    oldest = now
+  for candidate, seen in discovered:
+    if seen < oldest:
+      peer = Opt.some(candidate)
+      oldest = seen
+  peer
 
 type
   StorageServer* = ref object
@@ -517,6 +532,7 @@ proc new*(
         mixRelay = config.mixEnabled and config.nat.hasExtIp,
         dhtProxyServer = config.dhtProxyServer,
       ),
+      serviceLookupInterval = config.natScheduleInterval,
     )
 
     repoData =
@@ -656,68 +672,80 @@ proc new*(
   if config.mixEnabled:
     let directNetwork = engine.contextFor(DownloadTransport.Direct).network
     var
-      discoveredMixRelays: seq[PeerId]
-      discoveredDhtMixProxies: seq[PeerId]
+      discoveredMixRelays: Table[PeerId, Moment]
+      discoveredDhtMixProxies: Table[PeerId, Moment]
 
     proc refreshMixRelays() {.async: (raises: [CancelledError]).} =
       let relays = (await discovery.findMixRelays()).valueOr:
         warn "Unable to find Mix relays", err = error
         return
 
-      if relays.len == 0:
-        if discoveredMixRelays.len > 0:
-          warn "No Mix relays advertised, keeping the discovered ones",
-            discovered = discoveredMixRelays.len
-        return
-
       let
         nodePool = discovery.mixProto.nodePool
-        advertised = relays.mapIt(it.peerId)
-      for peer in discoveredMixRelays:
-        if peer notin advertised:
-          discard nodePool.remove(peer)
-          switch.peerStore.del(peer)
-      discoveredMixRelays.keepItIf(it in advertised)
+        now = Moment.now()
 
       for relay in relays:
         let existing = nodePool.get(relay.peerId)
-        if existing.isNone:
-          nodePool.add(relay)
-          discoveredMixRelays.add(relay.peerId)
-          directNetwork.excludeRelays([relay.peerId])
-        elif relay.peerId in discoveredMixRelays and (
-          existing.get.multiAddr != relay.multiAddr or
-          existing.get.mixPubKey != relay.mixPubKey
-        ):
+        if existing.isNone or relay.peerId notin discoveredMixRelays:
+          continue
+
+        discoveredMixRelays[relay.peerId] = now
+        if existing.get.multiAddr != relay.multiAddr or
+            existing.get.mixPubKey != relay.mixPubKey:
           # The Mix pool has no proc to remove the address nodePool.add wrote
           # to the peer store, so we delete it here.
           switch.peerStore.del(relay.peerId)
           nodePool.add(relay)
+
+      for relay in relays:
+        if nodePool.get(relay.peerId).isSome:
+          continue
+
+        if discoveredMixRelays.len >= MaxDiscoveredMixRelays:
+          let peer = discoveredMixRelays.leastSeen(now).valueOr:
+            break
+
+          discard nodePool.remove(peer)
+          switch.peerStore.del(peer)
+          discoveredMixRelays.del(peer)
+
+        nodePool.add(relay)
+        discoveredMixRelays[relay.peerId] = now
+        directNetwork.excludeRelays([relay.peerId])
+
+      if nodePool.len < MinMixRelays:
+        warn "Not enough Mix relays to build a path",
+          relays = nodePool.len, min = MinMixRelays
 
     proc refreshDhtMixProxies() {.async: (raises: [CancelledError]).} =
       let proxies = (await discovery.findServiceProviders(DhtProxyServiceId)).valueOr:
         warn "Unable to find DHT Mix proxies", err = error
         return
 
-      if proxies.len == 0:
-        if discoveredDhtMixProxies.len > 0:
-          warn "No DHT Mix proxies advertised, keeping the discovered ones",
-            discovered = discoveredDhtMixProxies.len
-        return
-
-      let advertised = proxies.mapIt(it.peerId)
-      discovery.dhtMixProxies.keepItIf(
-        it.peerId notin discoveredDhtMixProxies or it.peerId in advertised
-      )
-      discoveredDhtMixProxies.keepItIf(it in advertised)
+      let now = Moment.now()
 
       for proxy in proxies:
         let i = discovery.dhtMixProxies.findIt(it.peerId == proxy.peerId)
-        if i < 0:
-          discovery.dhtMixProxies.add(proxy)
-          discoveredDhtMixProxies.add(proxy.peerId)
-        elif proxy.peerId in discoveredDhtMixProxies:
+        if i < 0 or proxy.peerId notin discoveredDhtMixProxies:
+          continue
+
+        discoveredDhtMixProxies[proxy.peerId] = now
+        if discovery.dhtMixProxies[i].addresses != proxy.addresses:
           discovery.dhtMixProxies[i] = proxy
+
+      for proxy in proxies:
+        if discovery.dhtMixProxies.anyIt(it.peerId == proxy.peerId):
+          continue
+
+        if discoveredDhtMixProxies.len >= MaxDiscoveredDhtMixProxies:
+          let peer = discoveredDhtMixProxies.leastSeen(now).valueOr:
+            break
+
+          discovery.dhtMixProxies.keepItIf(it.peerId != peer)
+          discoveredDhtMixProxies.del(peer)
+
+        discovery.dhtMixProxies.add(proxy)
+        discoveredDhtMixProxies[proxy.peerId] = now
 
     serviceProviders.add(
       RequiredService.forMix(

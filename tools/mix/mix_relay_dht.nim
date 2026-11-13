@@ -26,6 +26,7 @@ import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/results
 
 import pkg/storage/dht_proxy/protocol
+from pkg/storage/discovery import StorageServiceId, MixServiceId, DhtProxyServiceId
 import pkg/storage/utils/spr
 
 when defined(posix):
@@ -341,17 +342,34 @@ when defined(posix):
     requestShutdown()
 
 proc newServiceDiscovery(switch: Switch, conf: Conf): ServiceDiscovery =
-  var services = @[ServiceInfo(id: MixProtocolID)]
-  if not conf.noDhtProxy:
-    services.add(ServiceInfo(id: DhtProxyCodec))
-
   ServiceDiscovery.new(
     switch,
     bootstrapNodes = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
     config = KadDHTConfig.new(ExtEntryValidator(), ExtEntrySelector()),
     rng = newRng(),
-    services = services,
   )
+
+proc advertiseServices(
+    switch: Switch, disco: ServiceDiscovery, conf: Conf
+) {.raises: [ValueError].} =
+  var services = @[StorageServiceId, MixServiceId]
+  if not conf.noDhtProxy:
+    services.add(DhtProxyServiceId)
+
+  let
+    addrs = defaultAddressPolicy.dialableAddrs(
+      switch.peerInfo.addrs, switch.peerStore.allowUndialableAddrs
+    )
+    record = ExtendedPeerRecord.init(
+      peerId = switch.peerInfo.peerId,
+      addresses = addrs,
+      services = services.mapIt(ServiceInfo(id: it)),
+    )
+    signed = SignedExtendedPeerRecord.build(switch.peerInfo.privateKey, record).valueOr:
+      raise newException(ValueError, "Cannot sign the advertisement: " & error)
+
+  disco.startAdvertising(ServiceInfo(id: StorageServiceId), Opt.some(signed.encode())).isOkOr:
+    raise newException(ValueError, "Cannot advertise services: " & error)
 
 proc runRelayOnly(
     conf: Conf,
@@ -366,10 +384,15 @@ proc runRelayOnly(
     raise newException(CatchableError, "MixProtocol start failed: " & exc.msg)
   switch.mount(mixProto)
 
+  let disco = newServiceDiscovery(switch, conf)
+  switch.mount(disco)
+
   try:
     await switch.start()
   except CatchableError as exc:
     raise newException(CatchableError, "libp2p switch start failed: " & exc.msg)
+
+  advertiseServices(switch, disco, conf)
 
   notice "Mix relay started (no DHT proxy)",
     peerId = peerId, tcp = $tcpAddr, dataDir = conf.dataDir
@@ -408,6 +431,9 @@ proc runWithDhtProxy(
 
   switch.mount(kad)
 
+  let disco = newServiceDiscovery(switch, conf)
+  switch.mount(disco)
+
   try:
     await switch.start()
   except CatchableError as exc:
@@ -417,6 +443,8 @@ proc runWithDhtProxy(
     await kad.start()
   except CatchableError as exc:
     raise newException(CatchableError, "Kad DHT start failed: " & exc.msg)
+
+  advertiseServices(switch, disco, conf)
 
   let spr = switch.peerInfo.toSpr()
   if spr.isErr:
@@ -538,8 +566,6 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
   let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)
   switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
-
-  switch.mount(newServiceDiscovery(switch, conf))
 
   if conf.noDhtProxy:
     await runRelayOnly(conf, switch, mixProto, peerId, tcpAddr)

@@ -75,7 +75,7 @@ asyncchecksuite "Discovery - service discovery":
   test "a server node advertises its services":
     check:
       advertiser.serviceDiscovery.isServer
-      AutonatServiceId.hashServiceId() in
+      StorageServiceId.hashServiceId() in
         advertiser.serviceDiscovery.advertiser.providedAdverts
 
   test "a client node does not advertise its services":
@@ -154,11 +154,11 @@ asyncchecksuite "Discovery - service discovery":
 
   test "a server node stops advertising in client mode and resumes in server mode":
     await advertiser.setServerMode(isServer = false)
-    check AutonatServiceId.hashServiceId() notin
+    check StorageServiceId.hashServiceId() notin
       advertiser.serviceDiscovery.advertiser.providedAdverts
 
     await advertiser.setServerMode(isServer = true)
-    check AutonatServiceId.hashServiceId() in
+    check StorageServiceId.hashServiceId() in
       advertiser.serviceDiscovery.advertiser.providedAdverts
 
   test "a Mix relay lookup skips providers without a Mix address":
@@ -188,7 +188,30 @@ asyncchecksuite "Discovery - service discovery":
 
     await discovery.setServerMode(isServer = true)
 
-    check CircuitRelayServiceId.hashServiceId() in
+    check StorageServiceId.hashServiceId() in
       discovery.serviceDiscovery.advertiser.providedAdverts
+
+    await switch.stop()
+
+  test "a client finds a node for each service it advertises":
+    let
+      switch = newStandardSwitch()
+      provider = Discovery.new(
+        switch,
+        bootstrapNodes =
+          [(advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs)],
+        providedServices = [CircuitRelayServiceId, DhtProxyServiceId],
+      )
+    await switch.mountAndStart(provider)
+    provider.startAdvertisingServices()
+
+    check:
+      (await client.waitForProvider(CircuitRelayServiceId, switch.peerInfo.peerId)).anyIt(
+        it.peerId == switch.peerInfo.peerId
+      )
+      (await client.waitForProvider(DhtProxyServiceId, switch.peerInfo.peerId)).anyIt(
+        it.peerId == switch.peerInfo.peerId
+      )
+      provider.serviceDiscovery.advertiser.providedAdverts.len == 1
 
     await switch.stop()
