@@ -72,6 +72,75 @@ asyncchecksuite "Test Node - Basic":
     check res.isErr
     check res.error of BlockNotFoundError
 
+  proc waitEnded(
+      downloadId: uint64, cid: Cid
+  ): Future[BackgroundDownloadStatus] {.async.} =
+    for _ in 0 ..< 200:
+      let status = node.backgroundDownloadStatus(downloadId, cid).get()
+      if status.state != BackgroundDownloadState.Active:
+        return status
+      await sleepAsync(10.milliseconds)
+    raiseAssert "background download did not end"
+
+  test "Background download reports completion by manifest and tree cid":
+    let
+      md = await storeDataGetManifest(localStore, chunker)
+      downloadId = (await node.startBackgroundDownload(md)).tryGet()
+      status = await waitEnded(downloadId, md.manifestCid)
+
+    check:
+      status.state == BackgroundDownloadState.Completed
+      status.error == ""
+      status.progress.totalBlocks == md.manifest.blocksCount.uint64
+      node.backgroundDownloadStatus(downloadId, md.manifest.treeCid).get() == status
+      node.getDownloadProgress(downloadId, md.manifestCid).isNone
+
+  test "Background download reports why it failed":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    # A missing block keeps the download running: no peer has it.
+    (await localStore.delBlock(md.manifest.treeCid, 0)).tryGet()
+
+    let downloadId = (await node.startBackgroundDownload(md)).tryGet()
+    downloadManager
+      .getDownload(downloadId, md.manifest.treeCid)
+      .get()
+      .signalCompletionIfDone((ref StorageError)(msg: "no provider for the dataset"))
+
+    let status = await waitEnded(downloadId, md.manifestCid)
+    check:
+      status.state == BackgroundDownloadState.Failed
+      status.error == "no provider for the dataset"
+
+  test "Background download can be cancelled by its manifest cid":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    # A missing block keeps the download running: no peer has it.
+    (await localStore.delBlock(md.manifest.treeCid, 0)).tryGet()
+
+    let downloadId = (await node.startBackgroundDownload(md)).tryGet()
+    check:
+      node.backgroundDownloadStatus(downloadId, md.manifestCid).get().state ==
+        BackgroundDownloadState.Active
+      node.getDownloadProgress(downloadId, md.manifestCid).isSome
+      node.cancelBackgroundDownload(downloadId, md.manifestCid)
+
+    let status = await waitEnded(downloadId, md.manifestCid)
+    check status.state == BackgroundDownloadState.Cancelled
+
+  test "Background download status is unknown for another cid":
+    let
+      md = await storeDataGetManifest(localStore, chunker)
+      downloadId = (await node.startBackgroundDownload(md)).tryGet()
+
+    discard await waitEnded(downloadId, md.manifestCid)
+    let other = Cid.example
+    check node.backgroundDownloadStatus(downloadId, other).isNone
+
   test "Should store Data Stream":
     let
       stream = BufferStream.new()
