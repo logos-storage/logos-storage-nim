@@ -24,6 +24,8 @@ export signed_envelope
 
 const
   MaxLabelLength* = 64
+  NameRecordVersion* = 1'u32
+  MaxExpirationDelay* = 48 * 60 * 60
   NameRecordCodec = multiCodec("storage-name-record")
   NameRecordDomain = "logos-storage-name-record"
 
@@ -103,5 +105,30 @@ proc decodeNameRecord*(bytes: seq[byte]): Result[SignedNameRecord, ref Catchable
   ## are not a name record or if the signature is not valid.
   let signed = SignedNameRecord.decode(bytes).valueOr:
     return failure("Cannot decode the name record: " & $error)
+
+  ok(signed)
+
+proc validate*(
+    name: Name, bytes: seq[byte], now: int64
+): Result[SignedNameRecord, ref CatchableError] =
+  ## Decodes the bytes stored under `name` in the DHT and checks every rule of
+  ## a valid name record. `now` is in Unix seconds.
+  let signed = decodeNameRecord(bytes).valueOr:
+    return failure(error.msg)
+
+  if signed.data.version != NameRecordVersion:
+    return failure("Unknown name record version: " & $signed.data.version)
+
+  if signed.data.expiration <= now:
+    return failure("The name record has expired")
+
+  if signed.data.expiration > now + MaxExpirationDelay:
+    return failure("The name record expires too far in the future")
+
+  let recordName = signed.name().valueOr:
+    return failure(error.msg)
+
+  if recordName != name:
+    return failure("The name is not the hash of the public key and the label")
 
   ok(signed)
