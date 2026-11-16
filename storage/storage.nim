@@ -27,7 +27,6 @@ import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
 import pkg/libp2p_mix/pool
-from pkg/libp2p_mix/sphinx import PathLength
 import pkg/libp2p_mix_transport/address/parse
 import pkg/presto
 import pkg/taskpools
@@ -57,21 +56,7 @@ logScope:
   topics = "storage node"
 
 # A kad dial abandoned before stop can hold switch.stop for the whole dialer timeout.
-const
-  SwitchStopTimeout = 5.seconds
-  MinMixRelays = PathLength + 1
-  MaxDiscoveredMixRelays = 4 * MinMixRelays
-  MaxDiscoveredDhtMixProxies = 32
-
-proc leastSeen(discovered: Table[PeerId, Moment], now: Moment): Opt[PeerId] =
-  var
-    peer = Opt.none(PeerId)
-    oldest = now
-  for candidate, seen in discovered:
-    if seen < oldest:
-      peer = Opt.some(candidate)
-      oldest = seen
-  peer
+const SwitchStopTimeout = 5.seconds
 
 type
   StorageServer* = ref object
@@ -88,7 +73,6 @@ type
     natMapper*: Option[NatPortMapper]
     serviceProviders: Option[ServiceProviders]
     holePunchHandler: Option[connmanager.PeerEventHandler]
-    bootstrapNodes: seq[SignedPeerRecord]
     mixTransport: MixTransport
     isStarted: bool
 
@@ -231,6 +215,7 @@ proc start*(self: StorageServer) {.async.} =
     let (mixProto, relayPool) = await self.enableMix()
 
     self.storageNode.discovery.mixProto = mixProto
+    self.storageNode.discovery.staticMixRelays = relayPool.keys.toSeq.toHashSet
     self.storageNode.engine.contextFor(DownloadTransport.Direct).network.excludeRelays(
       relayPool.keys.toSeq
     )
@@ -264,15 +249,14 @@ proc start*(self: StorageServer) {.async.} =
   if self.config.nat.hasExtIp:
     self.storageNode.discovery.startAdvertisingServices()
 
-  # Connect to the Autonat servers (currently bootsrap nodes) in order to
+  # Connect to the Autonat servers (bootstrap nodes and discovered ones) in order to
   # have connected peers for Autonat. The dials are run concurrently in case of
   # a dead autonat server that could timeout.
-  proc connectAutonatServer(
-      record: SignedPeerRecord
-  ) {.async: (raises: [CancelledError]).} =
+  proc connectAutonatServer(record: PeerRecord) {.async: (raises: [CancelledError]).} =
     try:
-      let (peerId, addresses) = record.toPeerIdAndAddrs()
-      await self.storageNode.switch.connect(peerId, addresses)
+      await self.storageNode.switch.connect(
+        record.peerId, record.addresses.mapIt(it.address)
+      )
     except CancelledError as exc:
       raise exc
     except CatchableError as e:
@@ -281,7 +265,7 @@ proc start*(self: StorageServer) {.async.} =
   # noCancel: cancelling allFutures does not cancel the
   # connectAutonatServer futures.
   await noCancel allFutures(
-    findAutonatServers(self.bootstrapNodes).mapIt(connectAutonatServer(it))
+    self.storageNode.discovery.findAutonatServers().mapIt(connectAutonatServer(it))
   )
 
   if self.serviceProviders.isSome:
@@ -622,24 +606,44 @@ proc new*(
     relayService.setup(switch)
     autoRelayService = some(relayService)
 
-    serviceProviders.add(
-      RequiredService.forNat(
+    proc refreshAutonatServers() {.async: (raises: [CancelledError]).} =
+      (await discovery.findServiceProviders(AutonatServiceId)).isOkOr:
+        warn "Unable to find AutoNAT servers", err = error
+
+      await connectMissing(
         discovery,
         switch,
         AutonatServiceId,
+        discovery.findAutonatServers(),
         config.natNumPeersToAsk,
-        proc(): bool =
-          true,
       )
-    )
-    serviceProviders.add(
-      RequiredService.forNat(
+
+    proc refreshCircuitRelayServers() {.async: (raises: [CancelledError]).} =
+      (await discovery.findServiceProviders(CircuitRelayServiceId)).isOkOr:
+        warn "Unable to find circuit relay servers", err = error
+
+      await connectMissing(
         discovery,
         switch,
         CircuitRelayServiceId,
+        discovery.findCircuitRelayServers(),
         config.natMaxRelays,
+      )
+
+    serviceProviders.add(
+      RequiredService.new(
+        AutonatServiceId,
+        proc(): bool =
+          true,
+        refreshAutonatServers,
+      )
+    )
+    serviceProviders.add(
+      RequiredService.new(
+        CircuitRelayServiceId,
         proc(): bool =
           relayService.isRunning,
+        refreshCircuitRelayServers,
       )
     )
 
@@ -671,9 +675,6 @@ proc new*(
 
   if config.mixEnabled:
     let directNetwork = engine.contextFor(DownloadTransport.Direct).network
-    var
-      discoveredMixRelays: Table[PeerId, Moment]
-      discoveredDhtMixProxies: Table[PeerId, Moment]
 
     proc refreshMixRelays() {.async: (raises: [CancelledError]).} =
       let relays = (await discovery.findMixRelays()).valueOr:
@@ -682,73 +683,38 @@ proc new*(
 
       let
         nodePool = discovery.mixProto.nodePool
-        now = Moment.now()
+        discovered = relays.mapIt(it.peerId)
+
+      for peer in nodePool.peerIds:
+        if peer notin discovery.staticMixRelays and peer notin discovered:
+          discard nodePool.remove(peer)
+          switch.peerStore.del(peer)
 
       for relay in relays:
-        let existing = nodePool.get(relay.peerId)
-        if existing.isNone or relay.peerId notin discoveredMixRelays:
+        if relay.peerId in discovery.staticMixRelays:
           continue
 
-        discoveredMixRelays[relay.peerId] = now
-        if existing.get.multiAddr != relay.multiAddr or
+        let existing = nodePool.get(relay.peerId)
+        if existing.isNone:
+          nodePool.add(relay)
+          directNetwork.excludeRelays([relay.peerId])
+        elif existing.get.multiAddr != relay.multiAddr or
             existing.get.mixPubKey != relay.mixPubKey:
           # The Mix pool has no proc to remove the address nodePool.add wrote
           # to the peer store, so we delete it here.
           switch.peerStore.del(relay.peerId)
           nodePool.add(relay)
 
-      for relay in relays:
-        if nodePool.get(relay.peerId).isSome:
-          continue
-
-        if discoveredMixRelays.len >= MaxDiscoveredMixRelays:
-          let peer = discoveredMixRelays.leastSeen(now).valueOr:
-            break
-
-          discard nodePool.remove(peer)
-          switch.peerStore.del(peer)
-          discoveredMixRelays.del(peer)
-
-        nodePool.add(relay)
-        discoveredMixRelays[relay.peerId] = now
-        directNetwork.excludeRelays([relay.peerId])
-
       if nodePool.len < MinMixRelays:
         warn "Not enough Mix relays to build a path",
           relays = nodePool.len, min = MinMixRelays
 
     proc refreshDhtMixProxies() {.async: (raises: [CancelledError]).} =
-      let proxies = (await discovery.findServiceProviders(DhtProxyServiceId)).valueOr:
+      (await discovery.findServiceProviders(DhtProxyServiceId)).isOkOr:
         warn "Unable to find DHT Mix proxies", err = error
-        return
-
-      let now = Moment.now()
-
-      for proxy in proxies:
-        let i = discovery.dhtMixProxies.findIt(it.peerId == proxy.peerId)
-        if i < 0 or proxy.peerId notin discoveredDhtMixProxies:
-          continue
-
-        discoveredDhtMixProxies[proxy.peerId] = now
-        if discovery.dhtMixProxies[i].addresses != proxy.addresses:
-          discovery.dhtMixProxies[i] = proxy
-
-      for proxy in proxies:
-        if discovery.dhtMixProxies.anyIt(it.peerId == proxy.peerId):
-          continue
-
-        if discoveredDhtMixProxies.len >= MaxDiscoveredDhtMixProxies:
-          let peer = discoveredDhtMixProxies.leastSeen(now).valueOr:
-            break
-
-          discovery.dhtMixProxies.keepItIf(it.peerId != peer)
-          discoveredDhtMixProxies.del(peer)
-
-        discovery.dhtMixProxies.add(proxy)
-        discoveredDhtMixProxies[proxy.peerId] = now
 
     serviceProviders.add(
-      RequiredService.forMix(
+      RequiredService.new(
         MixServiceId,
         proc(): bool =
           true,
@@ -756,7 +722,7 @@ proc new*(
       )
     )
     serviceProviders.add(
-      RequiredService.forMix(
+      RequiredService.new(
         DhtProxyServiceId,
         proc(): bool =
           true,
@@ -797,6 +763,5 @@ proc new*(
       else:
         ServiceProviders.none,
     holePunchHandler: holePunchHandler,
-    bootstrapNodes: bootstrapNodes,
     mixTransport: nil,
   )

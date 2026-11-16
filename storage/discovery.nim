@@ -24,6 +24,7 @@ from pkg/libp2p/protocols/connectivity/autonatv2/types import AutonatV2Codec
 from pkg/libp2p/protocols/connectivity/relay/utils import RelayV2HopCodec
 import pkg/libp2p_mix
 import pkg/libp2p_mix/mix_node
+from pkg/libp2p_mix/sphinx import PathLength
 import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
@@ -56,19 +57,30 @@ const
   MixServiceId* = MixProtocolID
   DhtProxyServiceId* = DhtProxyCodec
 
+  MinMixRelays* = PathLength + 1
+  MaxMixRelays = 4 * MinMixRelays
+  MaxServiceProviders = 32
+
 type
+  ServiceProvider = object
+    record: PeerRecord
+    lastSeen: Moment
+
   Discovery* = ref object of RootObj
     kad*: KadDHT # libp2p Kademlia DHT
     serviceDiscovery*: ServiceDiscovery # libp2p Service discovery
     providedServices: seq[string] # services this node provides
     addressPolicy: PeerAddressPolicy
     serviceLookupInterval: Duration
-    serviceAds: seq[Advertisement]
-    serviceAdsTime: Moment
+    serviceProviders: Table[string, Table[PeerId, ServiceProvider]]
+    lastServiceLookup: Moment
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
-    dhtMixProxies*: seq[PeerRecord]
+    staticMixRelays*: HashSet[PeerId]
+    staticDhtMixProxies*: seq[PeerRecord]
+    staticAutonatServers: seq[PeerRecord]
+    staticCircuitRelayServers: seq[PeerRecord]
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -117,6 +129,34 @@ proc findPeer*(
     warn "Error finding peer", peerId = peerId, exc = exc.msg
 
   return PeerRecord.none
+
+proc providersFor(d: Discovery, serviceId: string): var Table[PeerId, ServiceProvider] =
+  d.serviceProviders.mgetOrPut(serviceId, initTable[PeerId, ServiceProvider]())
+
+proc serviceProvidersOf(d: Discovery, serviceId: string): seq[PeerRecord] =
+  toSeq(d.providersFor(serviceId).values).mapIt(it.record)
+
+proc withDiscovered(
+    d: Discovery, staticProviders: seq[PeerRecord], serviceId: string
+): seq[PeerRecord] =
+  var providers = staticProviders
+  for provider in d.serviceProvidersOf(serviceId):
+    if not providers.anyIt(it.peerId == provider.peerId):
+      providers.add(provider)
+  providers
+
+proc dhtMixProxies*(d: Discovery): seq[PeerRecord] =
+  d.withDiscovered(d.staticDhtMixProxies, DhtProxyServiceId)
+
+proc findAutonatServers*(d: Discovery): seq[PeerRecord] =
+  ## Returns the list of Autonat servers.
+  ## The nodes are expected to be directly reachable.
+  ## Returns the static AutoNAT servers and the discovered ones.
+  d.withDiscovered(d.staticAutonatServers, AutonatServiceId)
+
+proc findCircuitRelayServers*(d: Discovery): seq[PeerRecord] =
+  ## Returns the static circuit relay servers and the discovered ones.
+  d.withDiscovered(d.staticCircuitRelayServers, CircuitRelayServiceId)
 
 method findViaMix*(
     d: Discovery, cid: Cid
@@ -282,20 +322,49 @@ proc lookupServiceProviders(
     providers.add(ad)
   ok(providers)
 
-proc providersOf(ads: seq[Advertisement], serviceId: string): seq[PeerRecord] =
-  var providers: seq[PeerRecord]
+func maxProviders(serviceId: string): int =
+  if serviceId == MixServiceId: MaxMixRelays else: MaxServiceProviders
+
+proc leastSeen(
+    d: Discovery, providers: Table[PeerId, ServiceProvider], now: Moment
+): Opt[PeerId] =
+  var
+    peer = Opt.none(PeerId)
+    oldest = now
+  for peerId, provider in providers:
+    if provider.lastSeen < oldest and not d.switch.isConnected(peerId):
+      peer = Opt.some(peerId)
+      oldest = provider.lastSeen
+  peer
+
+proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
+  let now = Moment.now()
+  var added: seq[(string, PeerId, PeerRecord)]
+
   for ad in ads:
-    if ad.data.services.anyIt(it.id == serviceId):
-      providers.add(
-        PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
-      )
-  providers
+    let record =
+      PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
+    for service in ad.data.services:
+      if service.id == StorageServiceId:
+        continue
+      if ad.data.peerId in d.providersFor(service.id):
+        d.providersFor(service.id)[ad.data.peerId] =
+          ServiceProvider(record: record, lastSeen: now)
+      else:
+        added.add((service.id, ad.data.peerId, record))
+
+  for (serviceId, peerId, record) in added:
+    if d.providersFor(serviceId).len >= maxProviders(serviceId):
+      let evicted = d.leastSeen(d.providersFor(serviceId), now).valueOr:
+        continue
+      d.providersFor(serviceId).del(evicted)
+    d.providersFor(serviceId)[peerId] = ServiceProvider(record: record, lastSeen: now)
 
 proc findServiceProviders*(
     d: Discovery, serviceId: string
 ): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
-  if Moment.now() - d.serviceAdsTime < d.serviceLookupInterval:
-    let providers = d.serviceAds.providersOf(serviceId)
+  if Moment.now() - d.lastServiceLookup < d.serviceLookupInterval:
+    let providers = d.serviceProvidersOf(serviceId)
     if providers.len > 0:
       return ok(providers)
 
@@ -308,53 +377,12 @@ proc findServiceProviders*(
   let ads = res.valueOr:
     return err(error)
 
-  d.serviceAds = ads
-  d.serviceAdsTime = Moment.now()
-  ok(ads.providersOf(serviceId))
+  d.updateServiceProviders(ads)
+  d.lastServiceLookup = Moment.now()
+  ok(d.serviceProvidersOf(serviceId))
 
-proc connectServiceProviders*(
-    d: Discovery, serviceId: string, limit: int, exclude: seq[PeerId]
-): Future[seq[PeerId]] {.async: (raises: [CancelledError]).} =
-  proc connect(
-      provider: PeerRecord
-  ): Future[bool] {.async: (raises: [CancelledError]).} =
-    try:
-      await d.switch.connect(provider.peerId, provider.addresses.mapIt(it.address))
-      return true
-    except CancelledError as exc:
-      raise exc
-    except CatchableError as exc:
-      debug "Cannot connect to service provider",
-        serviceId, peer = provider.peerId, err = exc.msg
-      return false
-
-  let providers = (await d.findServiceProviders(serviceId)).valueOr:
-    warn "Unable to find service providers", serviceId, err = error
-    return @[]
-
-  var candidates = providers.filterIt(it.peerId notin exclude)
-  shuffle(candidates)
-  if candidates.len > limit:
-    candidates.setLen(limit)
-
-  debug "Service providers found",
-    serviceId, found = providers.len, connecting = candidates.len
-
-  let connects = candidates.mapIt(connect(it))
-  try:
-    await allFutures(connects)
-  except CancelledError as exc:
-    await noCancel allFutures(connects.mapIt(it.cancelAndWait()))
-    raise exc
-
-  var connected: seq[PeerId]
-  for i, fut in connects:
-    if fut.value():
-      connected.add(candidates[i].peerId)
-
-  if connected.len > 0:
-    info "Connected to service providers", serviceId, connected = connected.len
-  connected
+proc removeServiceProvider*(d: Discovery, serviceId: string, peerId: PeerId) =
+  d.providersFor(serviceId).del(peerId)
 
 proc findMixRelays*(
     d: Discovery
@@ -412,7 +440,10 @@ proc new*(
   var self = Discovery(
     switch: switch,
     peerId: switch.peerInfo.peerId,
-    dhtMixProxies: dhtMixProxies.mapIt(it.data),
+    staticDhtMixProxies: dhtMixProxies.mapIt(it.data),
+    staticAutonatServers: bootstrapNodes.mapIt(PeerRecord.init(it[0], it[1], seqNo = 0)),
+    staticCircuitRelayServers:
+      bootstrapNodes.mapIt(PeerRecord.init(it[0], it[1], seqNo = 0)),
     providedServices: @providedServices,
     addressPolicy: addressPolicy,
     serviceLookupInterval: serviceLookupInterval,

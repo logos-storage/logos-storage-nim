@@ -6,17 +6,13 @@ import pkg/results
 import ../asynctest
 import ./helpers
 import ../../storage/discovery
+import ../../storage/nat
 import ../../storage/serviceproviders {.all.}
 
 proc mountAndStart(switch: Switch, discovery: Discovery) {.async.} =
   switch.mount(discovery.kad)
   switch.mount(discovery.serviceDiscovery)
   await switch.start()
-
-proc connected(providers: ServiceProviders): int =
-  privateAccess(ServiceProviders)
-  privateAccess(RequiredService)
-  providers.requiredServices[0].connected()
 
 proc waitForAd(discovery: Discovery, provider: PeerId) {.async.} =
   for _ in 0 ..< 50:
@@ -34,6 +30,9 @@ asyncchecksuite "Service providers":
     providers: ServiceProviders
     needed: bool
 
+  proc connected(): bool =
+    clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+
   setup:
     advertiserSwitch = newStandardSwitch()
     advertiser = Discovery.new(advertiserSwitch, providedServices = [AutonatServiceId])
@@ -49,17 +48,21 @@ asyncchecksuite "Service providers":
     )
     await clientSwitch.mountAndStart(client)
     await client.waitForAd(advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+
+    proc refresh() {.async: (raises: [CancelledError]).} =
+      await connectMissing(
+        client, clientSwitch, AutonatServiceId, client.findAutonatServers(), 1
+      )
 
     needed = true
     providers = ServiceProviders.new(1.hours)
     providers.add(
-      RequiredService.forNat(
-        client,
-        clientSwitch,
+      RequiredService.new(
         AutonatServiceId,
-        1,
         proc(): bool =
           needed,
+        refresh,
       )
     )
 
@@ -71,49 +74,43 @@ asyncchecksuite "Service providers":
   test "a needed service connects to its providers":
     await providers.maintain()
 
-    check providers.connected == 1
-    check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+    check connected()
 
   test "a service that is not needed is not looked up":
     needed = false
     await providers.maintain()
 
-    check providers.connected == 0
+    check not connected()
 
   test "a service at its target is not looked up again":
     await providers.maintain()
     await providers.maintain()
 
-    check providers.connected == 1
+    check connected()
 
   test "a disconnected provider is dropped and looked up again":
     await providers.maintain()
     await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
-    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+    check not connected()
 
     await providers.maintain()
 
-    check providers.connected == 1
-    check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+    check connected()
 
   test "start looks up the needed services":
     providers.start()
 
-    check eventually(providers.connected == 1)
+    check eventually(connected())
 
   test "a check looks up a service that became needed":
     needed = false
     providers.start()
-    check providers.connected == 0
+    check not connected()
 
     needed = true
     providers.check()
-    for _ in 0 ..< 50:
-      if providers.connected > 0:
-        break
-      await sleepAsync(100.milliseconds)
 
-    check providers.connected == 1
+    check eventually(connected())
 
   test "stop ends the maintenance loop":
     privateAccess(ServiceProviders)
@@ -127,7 +124,7 @@ asyncchecksuite "Service providers":
     var refreshes = 0
     let service = ServiceProviders.new(1.hours)
     service.add(
-      RequiredService.forMix(
+      RequiredService.new(
         MixServiceId,
         proc(): bool =
           true,
@@ -145,7 +142,7 @@ asyncchecksuite "Service providers":
     var refreshes = 0
     let service = ServiceProviders.new(1.hours)
     service.add(
-      RequiredService.forMix(
+      RequiredService.new(
         MixServiceId,
         proc(): bool =
           false,

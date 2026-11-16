@@ -9,12 +9,8 @@
 
 {.push raises: [].}
 
-import std/sequtils
-
 import pkg/chronos
-import pkg/libp2p/[peerid, switch]
 
-import ./discovery
 import ./logutils
 
 logScope:
@@ -22,25 +18,12 @@ logScope:
 
 type
   ServiceNeeded* = proc(): bool {.gcsafe, raises: [].}
-  ServiceCount* = proc(): int {.gcsafe, raises: [].}
-  ServiceConnect* =
-    proc(missing: int): Future[void] {.gcsafe, async: (raises: [CancelledError]).}
   ServiceRefresh* = proc(): Future[void] {.gcsafe, async: (raises: [CancelledError]).}
-
-  ServiceKind* = enum
-    Nat
-    Mix
 
   RequiredService* = object
     id: string
     needed: ServiceNeeded
-    case kind: ServiceKind
-    of Nat:
-      target: int
-      connected: ServiceCount
-      connect: ServiceConnect
-    of Mix:
-      refresh: ServiceRefresh
+    refresh: ServiceRefresh
 
   ServiceProviders* = ref object
     interval: Duration
@@ -48,36 +31,10 @@ type
     checkNow: AsyncEvent
     loop: Future[void].Raising([CancelledError])
 
-func forMix*(
+func new*(
     T: type RequiredService, id: string, needed: ServiceNeeded, refresh: ServiceRefresh
 ): T =
-  T(kind: Mix, id: id, needed: needed, refresh: refresh)
-
-proc forNat*(
-    T: type RequiredService,
-    discovery: Discovery,
-    switch: Switch,
-    id: string,
-    target: int,
-    needed: ServiceNeeded,
-): T =
-  var peers: seq[PeerId]
-
-  proc connected(): int =
-    peers.keepItIf(switch.isConnected(it))
-    peers.len
-
-  proc connect(missing: int) {.async: (raises: [CancelledError]).} =
-    peers.add(await discovery.connectServiceProviders(id, missing, peers))
-
-  T(
-    kind: Nat,
-    id: id,
-    needed: needed,
-    target: target,
-    connected: connected,
-    connect: connect,
-  )
+  T(id: id, needed: needed, refresh: refresh)
 
 proc new*(T: type ServiceProviders, interval: Duration): T =
   T(interval: interval, checkNow: newAsyncEvent())
@@ -93,18 +50,8 @@ proc maintain(self: ServiceProviders) {.async: (raises: [CancelledError]).} =
     if not service.needed():
       continue
 
-    case service.kind
-    of Nat:
-      let missing = service.target - service.connected()
-      if missing <= 0:
-        continue
-
-      debug "Looking up service providers",
-        serviceId = service.id, missing, target = service.target
-      await service.connect(missing)
-    of Mix:
-      debug "Refreshing service providers", serviceId = service.id
-      await service.refresh()
+    debug "Refreshing service providers", serviceId = service.id
+    await service.refresh()
 
 proc run(self: ServiceProviders) {.async: (raises: [CancelledError]).} =
   while true:

@@ -8,7 +8,7 @@
 
 {.push raises: [].}
 
-import std/[options, net, os, sequtils, json]
+import std/[options, net, os, random, sequtils, json]
 import results
 
 import pkg/chronos
@@ -227,12 +227,45 @@ proc peerConnections*(switch: Switch): JsonNode =
     entry["direct"] = newJBool(muxers.anyIt(not isRelayed(it.connection)))
     result.add(entry)
 
-proc findAutonatServers*(bootstrapNodes: seq[SignedPeerRecord]): seq[SignedPeerRecord] =
-  ## Returns the list of Autonat servers.
-  ## The nodes are expected to be directly reachable.
-  ## Currently returns bootstrap nodes. In the future, any network participant
-  ## confirmed reachable by AutoNAT and running as AutonatServer could be included.
-  bootstrapNodes
+proc connectMissing*(
+    discovery: Discovery,
+    switch: Switch,
+    serviceId: string,
+    servers: seq[PeerRecord],
+    target: int,
+) {.async: (raises: [CancelledError]).} =
+  proc connect(server: PeerRecord): Future[bool] {.async: (raises: [CancelledError]).} =
+    try:
+      await switch.connect(server.peerId, server.addresses.mapIt(it.address))
+      return true
+    except CancelledError as exc:
+      raise exc
+    except CatchableError as e:
+      warn "Cannot connect to NAT server",
+        serviceId, peer = server.peerId, error = e.msg
+      return false
+
+  let missing = target - servers.countIt(switch.isConnected(it.peerId))
+  if missing <= 0:
+    return
+
+  var candidates = servers.filterIt(not switch.isConnected(it.peerId))
+  shuffle(candidates)
+  if candidates.len > missing:
+    candidates.setLen(missing)
+
+  debug "Connecting to NAT servers", serviceId, missing, connecting = candidates.len
+
+  let connects = candidates.mapIt(connect(it))
+  try:
+    await allFutures(connects)
+  except CancelledError as exc:
+    await noCancel allFutures(connects.mapIt(it.cancelAndWait()))
+    raise exc
+
+  for i, fut in connects:
+    if not fut.value():
+      discovery.removeServiceProvider(serviceId, candidates[i].peerId)
 
 # Hole punching logic below is adapted from libp2p's HPService
 # (libp2p/services/hpservice.nim). HPService cannot be used directly because it
