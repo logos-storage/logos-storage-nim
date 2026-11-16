@@ -20,9 +20,7 @@ checksuite "Name record validation":
     publisherName = name(publicKey, label).tryGet()
 
   proc newRecord(
-      label: string,
-      version = NameRecordVersion,
-      expiration = now + 3600,
+      label: string, version = NameRecordVersion, expiration = now + 3600
   ): NameRecord =
     NameRecord(
       version: version,
