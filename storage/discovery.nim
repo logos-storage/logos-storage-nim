@@ -41,6 +41,8 @@ logScope:
 const
   ProvideTimeout = 1.minutes
   LookupTimeout = 1.minutes
+  PutValueTimeout = 1.minutes
+  ValueQuorum = 1
 
 type
   Discovery* = ref object of RootObj
@@ -169,6 +171,40 @@ method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
   ##
   d.kad.providerManager.providedKeys.provided.clear()
 
+proc putValue*(
+    d: Discovery, key: seq[byte], value: seq[byte]
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Store a value under a key on the closest server nodes
+  ##
+  try:
+    let res = await d.kad.putValue(key, value).wait(PutValueTimeout)
+
+    if res.isErr:
+      return failure("Error putting value: " & res.error)
+
+    return success()
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error putting value: " & exc.msg)
+
+proc getValue*(
+    d: Discovery, key: seq[byte]
+): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
+  ## Read the value stored under a key
+  ##
+  try:
+    let res = await d.kad.getValue(key).wait(LookupTimeout)
+
+    if res.isErr:
+      return failure("Error getting value: " & res.error)
+
+    return success res.get().value
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error getting value: " & exc.msg)
+
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
 
@@ -238,7 +274,7 @@ proc new*(
   self.kad = KadDHT.new(
     switch,
     bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(addressPolicy = addressPolicy),
+    config = KadDHTConfig.new(addressPolicy = addressPolicy, quorum = ValueQuorum),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )
