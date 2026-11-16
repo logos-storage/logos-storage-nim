@@ -5,5 +5,9 @@ const MixTransportCodecExts = block:
   CodecExts
 
 const CodecExts =
-  @[("storage-manifest", 0xCD01), ("storage-block", 0xCD02), ("storage-root", 0xCD03)] &
-  @MixTransportCodecExts
+  @[
+    ("storage-manifest", 0xCD01),
+    ("storage-block", 0xCD02),
+    ("storage-root", 0xCD03),
+    ("storage-name-record", 0xCD04),
+  ] & @MixTransportCodecExts
