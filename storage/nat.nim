@@ -227,6 +227,9 @@ proc peerConnections*(switch: Switch): JsonNode =
     entry["direct"] = newJBool(muxers.anyIt(not isRelayed(it.connection)))
     result.add(entry)
 
+proc countOutbound*(servers: seq[PeerRecord], outbound: seq[PeerId]): int =
+  servers.countIt(it.peerId in outbound)
+
 proc connectMissing*(
     discovery: Discovery,
     switch: Switch,
@@ -236,7 +239,14 @@ proc connectMissing*(
 ) {.async: (raises: [CancelledError]).} =
   proc connect(server: PeerRecord): Future[bool] {.async: (raises: [CancelledError]).} =
     try:
-      await switch.connect(server.peerId, server.addresses.mapIt(it.address))
+      # AutoNAT and AutoRelay use outbound connections only, so an inbound one is not reused,
+      # and NAT needs them even when the connection slots are full.
+      await switch.connect(
+        server.peerId,
+        server.addresses.mapIt(it.address),
+        forceDial = true,
+        reuseConnection = false,
+      )
       return true
     except CancelledError as exc:
       raise exc
@@ -245,11 +255,12 @@ proc connectMissing*(
         serviceId, peer = server.peerId, error = e.msg
       return false
 
-  let missing = target - servers.countIt(switch.isConnected(it.peerId))
+  let missing = target - countOutbound(servers, switch.connectedPeers(Direction.Out))
   if missing <= 0:
     return
 
-  var candidates = servers.filterIt(not switch.isConnected(it.peerId))
+  let outbound = switch.connectedPeers(Direction.Out)
+  var candidates = servers.filterIt(it.peerId notin outbound)
   shuffle(candidates)
   if candidates.len > missing:
     candidates.setLen(missing)

@@ -634,7 +634,9 @@ proc new*(
       RequiredService.new(
         AutonatServiceId,
         proc(): bool =
-          true,
+          countOutbound(
+            discovery.findAutonatServers(), switch.connectedPeers(Direction.Out)
+          ) < config.natNumPeersToAsk,
         refreshAutonatServers,
       )
     )
@@ -642,7 +644,10 @@ proc new*(
       RequiredService.new(
         CircuitRelayServiceId,
         proc(): bool =
-          relayService.isRunning,
+          relayService.isRunning and
+            countOutbound(
+              discovery.findCircuitRelayServers(), switch.connectedPeers(Direction.Out)
+            ) < config.natMaxRelays,
         refreshCircuitRelayServers,
       )
     )
