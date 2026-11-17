@@ -22,3 +22,4 @@ const
   StorageBlockProofNamespace* = # Cid and Proof
     StorageMetaNamespace & "/proof"
   StorageQuotaNamespace* = StorageMetaNamespace & "/quota" # quota's namespace
+  StorageNamesNamespace* = StorageMetaNamespace & "/names" # published name records

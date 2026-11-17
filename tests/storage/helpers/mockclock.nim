@@ -30,7 +30,7 @@ proc set*(clock: MockClock, time: SecondsSince1970) =
 proc advance*(clock: MockClock, seconds: int64) =
   clock.set(clock.time + seconds)
 
-method now*(clock: MockClock): SecondsSince1970 =
+method now*(clock: MockClock): SecondsSince1970 {.raises: [].} =
   clock.time
 
 method waitUntil*(
@@ -38,9 +38,19 @@ method waitUntil*(
 ) {.async: (raises: [CancelledError]).} =
   try:
     if time > clock.now():
-      let future = newFuture[void]()
-      clock.waiting.add(Waiting(until: time, future: future))
-      await future
+      let waiting = Waiting(until: time, future: newFuture[void]())
+      clock.waiting.add(waiting)
+
+      try:
+        await waiting.future
+      except CancelledError as e:
+        # A cancelled wait is no longer waiting
+        let index = clock.waiting.find(waiting)
+
+        if index >= 0:
+          clock.waiting.del(index)
+
+        raise e
   except CancelledError as e:
     raise e
   except Exception as e:
