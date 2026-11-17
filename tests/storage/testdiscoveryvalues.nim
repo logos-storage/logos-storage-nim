@@ -1,14 +1,18 @@
 import std/sequtils
 import std/tables
+from std/times import getTime, toUnix
 
 import pkg/chronos
+import pkg/libp2p except setup
 import pkg/nimcrypto/sha2
 import pkg/questionable/results
 
 import ../asynctest
 import ../checktest
 import ./helpers
+import ./examples
 import ../../storage/discovery
+import ../../storage/naming/record
 
 type TestNode = object
   switch: Switch
@@ -18,9 +22,10 @@ asyncchecksuite "Discovery - DHT values":
   var nodes: seq[TestNode]
 
   let
-    value = @[1'u8, 2, 3]
-    newValue = @[4'u8, 5, 6]
+    privateKey = PrivateKey.example
+    publicKey = privateKey.getPublicKey().tryGet()
     lookupTimeout = 30.seconds
+    expiration = getTime().toUnix + 3600
 
   teardown:
     for node in nodes:
@@ -47,7 +52,18 @@ asyncchecksuite "Discovery - DHT values":
     node
 
   proc newKey(label: string): seq[byte] =
-    @(sha256.digest(label).data)
+    @(name(publicKey, label).tryGet())
+
+  proc newValue(label: string, sequenceNumber: uint64): seq[byte] =
+    let record = NameRecord(
+      version: NameRecordVersion,
+      label: label,
+      cid: Cid.example,
+      sequenceNumber: sequenceNumber,
+      expiration: expiration,
+    )
+
+    sign(record, privateKey).tryGet().encode().tryGet()
 
   test "a client node puts a value and a server node reads it":
     let
@@ -55,6 +71,7 @@ asyncchecksuite "Discovery - DHT values":
       serverB = await startNode(isServer = true, bootstrap = @[serverA])
       client = await startNode(isServer = false, bootstrap = @[serverA])
       key = newKey("client-to-server")
+      value = newValue("client-to-server", 1)
 
     # Wait until serverA knows serverB
     check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
@@ -72,6 +89,7 @@ asyncchecksuite "Discovery - DHT values":
       writer = await startNode(isServer = false, bootstrap = @[server])
       reader = await startNode(isServer = false, bootstrap = @[server])
       key = newKey("client-to-client")
+      value = newValue("client-to-client", 1)
 
     check (await writer.disc.putValue(key, value)).isOk
 
@@ -92,6 +110,7 @@ asyncchecksuite "Discovery - DHT values":
     let
       serverA = await startNode(isServer = true)
       key = newKey("late-servers")
+      value = newValue("late-servers", 1)
 
     check (await serverA.disc.putValue(key, value)).isOk
 
@@ -108,6 +127,7 @@ asyncchecksuite "Discovery - DHT values":
       server = await startNode(isServer = true)
       client = await startNode(isServer = false, bootstrap = @[server])
       key = newKey("client-stores-nothing")
+      value = newValue("client-stores-nothing", 1)
 
     check (await server.disc.putValue(key, value)).isOk
 
@@ -119,10 +139,56 @@ asyncchecksuite "Discovery - DHT values":
       writer = await startNode(isServer = false, bootstrap = @[server])
       reader = await startNode(isServer = false, bootstrap = @[server])
       key = newKey("second-put")
+      value = newValue("second-put", 1)
+      newerValue = newValue("second-put", 2)
 
     check (await writer.disc.putValue(key, value)).isOk
-    check (await writer.disc.putValue(key, newValue)).isOk
+    check (await writer.disc.putValue(key, newerValue)).isOk
 
     let got = await reader.disc.getValue(key)
     check got.isOk
-    check got.tryGet == newValue
+    check got.tryGet == newerValue
+
+  test "a put with an older sequence number doesn't replace the value":
+    let
+      server = await startNode(isServer = true)
+      writer = await startNode(isServer = false, bootstrap = @[server])
+      reader = await startNode(isServer = false, bootstrap = @[server])
+      key = newKey("older-put")
+      value = newValue("older-put", 2)
+      olderValue = newValue("older-put", 1)
+
+    check (await writer.disc.putValue(key, value)).isOk
+    check (await writer.disc.putValue(key, olderValue)).isErr
+
+    let got = await reader.disc.getValue(key)
+    check got.isOk
+    check got.tryGet == value
+
+  test "the DHT refuses a value that is not a name record":
+    let
+      server = await startNode(isServer = true)
+      writer = await startNode(isServer = false, bootstrap = @[server])
+      reader = await startNode(isServer = false, bootstrap = @[server])
+      key = @(sha256.digest("not-a-name-record").data)
+
+    check (await writer.disc.putValue(key, @[1'u8, 2, 3])).isErr
+
+    let fut = reader.disc.getValue(key)
+
+    check await fut.withTimeout(lookupTimeout)
+    check fut.read().isErr
+
+  test "the DHT refuses a name record stored under the name of another label":
+    let
+      server = await startNode(isServer = true)
+      writer = await startNode(isServer = false, bootstrap = @[server])
+      reader = await startNode(isServer = false, bootstrap = @[server])
+      key = newKey("catalog")
+
+    check (await writer.disc.putValue(key, newValue("release", 1))).isErr
+
+    let fut = reader.disc.getValue(key)
+
+    check await fut.withTimeout(lookupTimeout)
+    check fut.read().isErr

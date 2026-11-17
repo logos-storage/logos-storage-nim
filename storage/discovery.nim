@@ -30,6 +30,9 @@ import pkg/questionable
 import pkg/questionable/results
 
 import ./rng as storage_rng
+import ./clock
+import ./systemclock
+import ./naming/dht
 import ./utils/mixidentity
 import ./errors
 import ./logutils
@@ -480,6 +483,7 @@ proc new*(
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
     providedServices: openArray[string] = [],
     serviceLookupInterval = ZeroDuration,
+    clock: Clock = SystemClock.new(),
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -499,7 +503,12 @@ proc new*(
   self.kad = KadDHT.new(
     switch,
     bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(addressPolicy = addressPolicy, quorum = ValueQuorum),
+    config = KadDHTConfig.new(
+      addressPolicy = addressPolicy,
+      quorum = ValueQuorum,
+      validator = NameRecordValidator(clock: clock),
+      selector = NameRecordSelector(),
+    ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

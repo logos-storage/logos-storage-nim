@@ -42,6 +42,8 @@ import ./dht_proxy/handler
 import ./utils/fileutils
 import ./utils/mixidentity
 import ./discovery
+import ./systemclock
+import ./naming/publisher
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -65,6 +67,7 @@ type
     restServer: RestServerRef
     storageNode: StorageNodeRef
     repoStore: RepoStore
+    namePublisher: NamePublisher
     maintenance: BlockMaintainer
     taskpool: Taskpool
     # Expose to make reachability accessible from rest api
@@ -276,6 +279,8 @@ proc start*(self: StorageServer) {.async.} =
   if self.autonatService.isSome:
     await self.autonatService.get.start(self.storageNode.switch)
 
+  self.namePublisher.start()
+
   if self.restServer != nil:
     self.restServer.start()
 
@@ -295,6 +300,8 @@ proc stop*(s: StorageServer) {.async.} =
     s.storageNode.switch.removePeerEventHandler(
       s.holePunchHandler.get, PeerEventKind.Joined
     )
+
+  await s.namePublisher.stop()
 
   if not s.mixTransport.isNil:
     try:
@@ -504,6 +511,7 @@ proc new*(
     kadAddressPolicy = dialableMixAddressPolicy
 
   let
+    clock = SystemClock.new()
     discovery = Discovery.new(
       switch,
       bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
@@ -517,6 +525,7 @@ proc new*(
         dhtProxyServer = config.dhtProxyServer,
       ),
       serviceLookupInterval = config.natScheduleInterval,
+      clock = clock,
     )
 
     repoData =
@@ -548,6 +557,8 @@ proc new*(
       quotaMaxBytes = config.storageQuota,
       blockTtl = config.blockTtl,
     )
+
+    namePublisher = NamePublisher.new(discovery, repoStore.metaDs, privateKey, clock)
 
     maintenance = BlockMaintainer.new(
       repoStore,
@@ -753,6 +764,7 @@ proc new*(
     storageNode: storageNode,
     restServer: restServer,
     repoStore: repoStore,
+    namePublisher: namePublisher,
     maintenance: maintenance,
     taskPool: taskPool,
     logFile: logFile,
