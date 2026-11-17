@@ -148,13 +148,13 @@ proc withDiscovered(
 proc dhtMixProxies*(d: Discovery): seq[PeerRecord] =
   d.withDiscovered(d.staticDhtMixProxies, DhtProxyServiceId)
 
-proc findAutonatServers*(d: Discovery): seq[PeerRecord] =
+proc autonatServers*(d: Discovery): seq[PeerRecord] =
   ## Returns the list of Autonat servers.
   ## The nodes are expected to be directly reachable.
   ## Returns the static AutoNAT servers and the discovered ones.
   d.withDiscovered(d.staticAutonatServers, AutonatServiceId)
 
-proc findCircuitRelayServers*(d: Discovery): seq[PeerRecord] =
+proc circuitRelayServers*(d: Discovery): seq[PeerRecord] =
   ## Returns the static circuit relay servers and the discovered ones.
   d.withDiscovered(d.staticCircuitRelayServers, CircuitRelayServiceId)
 

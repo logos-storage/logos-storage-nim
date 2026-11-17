@@ -52,7 +52,7 @@ asyncchecksuite "Service providers":
 
     proc refresh() {.async: (raises: [CancelledError]).} =
       await connectMissing(
-        client, clientSwitch, AutonatServiceId, client.findAutonatServers(), 1
+        client, clientSwitch, AutonatServiceId, client.autonatServers(), 1
       )
 
     needed = true

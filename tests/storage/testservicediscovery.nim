@@ -122,7 +122,7 @@ asyncchecksuite "Discovery - service discovery":
     check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
 
     await connectMissing(
-      client, clientSwitch, AutonatServiceId, client.findAutonatServers(), 1
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 1
     )
 
     check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
@@ -133,7 +133,7 @@ asyncchecksuite "Discovery - service discovery":
     await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
 
     await connectMissing(
-      client, clientSwitch, AutonatServiceId, client.findAutonatServers(), 0
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 0
     )
 
     check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)

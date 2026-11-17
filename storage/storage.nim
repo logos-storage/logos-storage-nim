@@ -265,7 +265,7 @@ proc start*(self: StorageServer) {.async.} =
   # noCancel: cancelling allFutures does not cancel the
   # connectAutonatServer futures.
   await noCancel allFutures(
-    self.storageNode.discovery.findAutonatServers().mapIt(connectAutonatServer(it))
+    self.storageNode.discovery.autonatServers().mapIt(connectAutonatServer(it))
   )
 
   if self.serviceProviders.isSome:
@@ -614,7 +614,7 @@ proc new*(
         discovery,
         switch,
         AutonatServiceId,
-        discovery.findAutonatServers(),
+        discovery.autonatServers(),
         config.natNumPeersToAsk,
       )
 
@@ -626,7 +626,7 @@ proc new*(
         discovery,
         switch,
         CircuitRelayServiceId,
-        discovery.findCircuitRelayServers(),
+        discovery.circuitRelayServers(),
         config.natMaxRelays,
       )
 
@@ -634,9 +634,8 @@ proc new*(
       RequiredService.new(
         AutonatServiceId,
         proc(): bool =
-          countOutbound(
-            discovery.findAutonatServers(), switch.connectedPeers(Direction.Out)
-          ) < config.natNumPeersToAsk,
+          countOutbound(discovery.autonatServers(), switch.connectedPeers(Direction.Out)) <
+            config.natNumPeersToAsk,
         refreshAutonatServers,
       )
     )
@@ -646,7 +645,7 @@ proc new*(
         proc(): bool =
           relayService.isRunning and
             countOutbound(
-              discovery.findCircuitRelayServers(), switch.connectedPeers(Direction.Out)
+              discovery.circuitRelayServers(), switch.connectedPeers(Direction.Out)
             ) < config.natMaxRelays,
         refreshCircuitRelayServers,
       )
