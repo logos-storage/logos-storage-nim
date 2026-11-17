@@ -31,7 +31,7 @@ asyncchecksuite "Service providers":
     needed: bool
 
   proc connected(): bool =
-    clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+    advertiserSwitch.peerInfo.peerId in clientSwitch.connectedPeers(Direction.Out)
 
   setup:
     advertiserSwitch = newStandardSwitch()

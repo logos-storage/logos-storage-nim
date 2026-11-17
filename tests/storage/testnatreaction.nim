@@ -1,4 +1,4 @@
-import std/[importutils, net]
+import std/[importutils, net, sequtils]
 import pkg/chronos
 import pkg/libp2p/[multiaddress, multihash, multicodec]
 import pkg/libp2p/protocols/connectivity/autonat/types
@@ -251,3 +251,130 @@ asyncchecksuite "NAT - mapNatPorts":
     mapper.start()
 
     check (await mapper.mapNatPorts()) == some((Port(9000), MappingProtocol.UPnP))
+
+proc mountAndStart(switch: Switch, discovery: Discovery) {.async.} =
+  switch.mount(discovery.kad)
+  switch.mount(discovery.serviceDiscovery)
+  await switch.start()
+
+proc waitForProvider(
+    discovery: Discovery, serviceId: string, provider: PeerId
+): Future[seq[PeerRecord]] {.async.} =
+  for _ in 0 ..< 50:
+    let found = (await discovery.findServiceProviders(serviceId)).tryGet()
+    if found.anyIt(it.peerId == provider):
+      return found
+    await sleepAsync(100.milliseconds)
+
+asyncchecksuite "NAT - connecting to NAT servers":
+  var
+    advertiserSwitch: Switch
+    clientSwitch: Switch
+    advertiser: Discovery
+    client: Discovery
+
+  setup:
+    advertiserSwitch = newStandardSwitch()
+    advertiser = Discovery.new(advertiserSwitch, providedServices = [AutonatServiceId])
+    await advertiserSwitch.mountAndStart(advertiser)
+    advertiser.startAdvertisingServices()
+
+    clientSwitch = newStandardSwitch()
+    client = Discovery.new(
+      clientSwitch,
+      bootstrapNodes =
+        [(advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs)],
+      isServer = false,
+    )
+    await clientSwitch.mountAndStart(client)
+
+  teardown:
+    await clientSwitch.stop()
+    await advertiserSwitch.stop()
+
+  proc connectedOutbound(switch: Switch): bool =
+    advertiserSwitch.peerInfo.peerId in switch.connectedPeers(Direction.Out)
+
+  proc inboundSwitch(): Future[Switch] {.async.} =
+    let switch = newStandardSwitch()
+    await switch.start()
+    await advertiserSwitch.connect(switch.peerInfo.peerId, switch.peerInfo.addrs)
+    check eventually(switch.isConnected(advertiserSwitch.peerInfo.peerId))
+    check not switch.connectedOutbound()
+    switch
+
+  test "connecting to service providers connects to the advertiser":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+
+    await connectMissing(
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 1
+    )
+
+    check clientSwitch.connectedOutbound()
+
+  test "connecting to service providers connects to none with a limit of zero":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+
+    await connectMissing(
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 0
+    )
+
+    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+
+  test "connecting to service providers dials out to a server connected inbound":
+    let switch = await inboundSwitch()
+
+    await connectMissing(client, switch, AutonatServiceId, client.autonatServers(), 1)
+
+    check switch.connectedOutbound()
+
+    await switch.stop()
+
+  test "connecting to service providers connects when the connection slots are full":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    let
+      fullSwitch = newStandardSwitch(maxConnections = 1)
+      otherSwitch = newStandardSwitch()
+    await fullSwitch.start()
+    await otherSwitch.start()
+    await fullSwitch.connect(otherSwitch.peerInfo.peerId, otherSwitch.peerInfo.addrs)
+
+    expect DialFailedError:
+      await fullSwitch.connect(
+        advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs
+      )
+
+    await connectMissing(
+      client, fullSwitch, AutonatServiceId, client.autonatServers(), 1
+    )
+
+    check fullSwitch.connectedOutbound()
+
+    await fullSwitch.stop()
+    await otherSwitch.stop()
+
+  test "a server connected inbound is not counted as outbound":
+    let switch = await inboundSwitch()
+
+    check countOutbound(client.autonatServers(), switch.connectedPeers(Direction.Out)) ==
+      0
+
+    await switch.stop()
+
+  test "a server connected outbound is counted as outbound":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.connect(
+      advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs
+    )
+
+    check countOutbound(
+      client.autonatServers(), clientSwitch.connectedPeers(Direction.Out)
+    ) == 1

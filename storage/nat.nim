@@ -8,7 +8,7 @@
 
 {.push raises: [].}
 
-import std/[options, net, os, random, sequtils, json]
+import std/[options, net, os, random, sequtils, sets, json]
 import results
 
 import pkg/chronos
@@ -230,12 +230,20 @@ proc peerConnections*(switch: Switch): JsonNode =
 proc countOutbound*(servers: seq[PeerRecord], outbound: seq[PeerId]): int =
   servers.countIt(it.peerId in outbound)
 
+proc relayPeers*(relayAddresses: seq[MultiAddress]): HashSet[PeerId] =
+  for address in relayAddresses:
+    let circuit = address[0 .. ^2].valueOr:
+      continue
+    let relay = parseFullAddress(circuit).valueOr:
+      continue
+    result.incl(relay[0])
+
 proc connectMissing*(
     discovery: Discovery,
     switch: Switch,
     serviceId: string,
     servers: seq[PeerRecord],
-    target: int,
+    missing: int,
 ) {.async: (raises: [CancelledError]).} =
   proc connect(server: PeerRecord): Future[bool] {.async: (raises: [CancelledError]).} =
     try:
@@ -255,7 +263,6 @@ proc connectMissing*(
         serviceId, peer = server.peerId, error = e.msg
       return false
 
-  let missing = target - countOutbound(servers, switch.connectedPeers(Direction.Out))
   if missing <= 0:
     return
 

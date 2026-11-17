@@ -6,8 +6,9 @@ proc newStandardSwitch*(
     sendSignedPeerRecord = false,
     addrs: MultiAddress =
       MultiAddress.init("/ip4/127.0.0.1/tcp/0").expect("invalid multiaddress"),
+    maxConnections = 0,
 ): Switch =
-  SwitchBuilder
+  var builder = SwitchBuilder
     .new()
     .withAddresses(@[addrs])
     .withWildcardResolver(true)
@@ -17,7 +18,9 @@ proc newStandardSwitch*(
     .withNoise()
     .withMplex()
     .withTcpTransport(transportFlags)
-    .build()
+  if maxConnections > 0:
+    builder = builder.withMaxConnections(maxConnections)
+  builder.build()
 
 proc examplePeerInfo*(): PeerInfo =
   let switch = newStandardSwitch()

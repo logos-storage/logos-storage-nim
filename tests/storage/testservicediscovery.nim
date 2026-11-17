@@ -6,7 +6,6 @@ import pkg/libp2p/protocols/service_discovery except PeerRecord
 import ../asynctest
 import ./helpers
 import ../../storage/discovery
-import ../../storage/nat
 
 proc mountAndStart(switch: Switch, discovery: Discovery) {.async.} =
   switch.mount(discovery.kad)
@@ -114,29 +113,6 @@ asyncchecksuite "Discovery - service discovery":
     let found = (await advertiser.findServiceProviders(AutonatServiceId)).tryGet()
 
     check not found.anyIt(it.peerId == advertiserSwitch.peerInfo.peerId)
-
-  test "connecting to service providers connects to the advertiser":
-    discard
-      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
-    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
-    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
-
-    await connectMissing(
-      client, clientSwitch, AutonatServiceId, client.autonatServers(), 1
-    )
-
-    check clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
-
-  test "connecting to service providers connects to none with a limit of zero":
-    discard
-      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
-    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
-
-    await connectMissing(
-      client, clientSwitch, AutonatServiceId, client.autonatServers(), 0
-    )
-
-    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
 
   test "switching to server mode switches the service discovery":
     await client.setServerMode(isServer = true)

@@ -615,7 +615,10 @@ proc new*(
         switch,
         AutonatServiceId,
         discovery.autonatServers(),
-        config.natNumPeersToAsk,
+        config.natNumPeersToAsk -
+          countOutbound(
+            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
+          ),
       )
 
     proc refreshCircuitRelayServers() {.async: (raises: [CancelledError]).} =
@@ -627,15 +630,16 @@ proc new*(
         switch,
         CircuitRelayServiceId,
         discovery.circuitRelayServers(),
-        config.natMaxRelays,
+        config.natMaxRelays - relayPeers(relayService.getAddresses()).len,
       )
 
     serviceProviders.add(
       RequiredService.new(
         AutonatServiceId,
         proc(): bool =
-          countOutbound(discovery.autonatServers(), switch.connectedPeers(Direction.Out)) <
-            config.natNumPeersToAsk,
+          countOutbound(
+            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
+          ) < config.natNumPeersToAsk,
         refreshAutonatServers,
       )
     )
@@ -644,9 +648,7 @@ proc new*(
         CircuitRelayServiceId,
         proc(): bool =
           relayService.isRunning and
-            countOutbound(
-              discovery.circuitRelayServers(), switch.connectedPeers(Direction.Out)
-            ) < config.natMaxRelays,
+            relayPeers(relayService.getAddresses()).len < config.natMaxRelays,
         refreshCircuitRelayServers,
       )
     )
@@ -692,7 +694,6 @@ proc new*(
       for peer in nodePool.peerIds:
         if peer notin discovery.staticMixRelays and peer notin discovered:
           discard nodePool.remove(peer)
-          switch.peerStore.del(peer)
 
       for relay in relays:
         if relay.peerId in discovery.staticMixRelays:
@@ -701,12 +702,9 @@ proc new*(
         let existing = nodePool.get(relay.peerId)
         if existing.isNone:
           nodePool.add(relay)
-          directNetwork.excludeRelays([relay.peerId])
+          # directNetwork.excludeRelays([relay.peerId])
         elif existing.get.multiAddr != relay.multiAddr or
             existing.get.mixPubKey != relay.mixPubKey:
-          # The Mix pool has no proc to remove the address nodePool.add wrote
-          # to the peer store, so we delete it here.
-          switch.peerStore.del(relay.peerId)
           nodePool.add(relay)
 
       if nodePool.len < MinMixRelays:
