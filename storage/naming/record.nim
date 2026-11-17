@@ -97,9 +97,6 @@ proc sign*(
 
   ok(signed)
 
-proc encode*(signed: SignedNameRecord): Result[seq[byte], ref CatchableError] =
-  ok(signed.envelope.encode())
-
 proc decodeNameRecord*(bytes: seq[byte]): Result[SignedNameRecord, ref CatchableError] =
   ## Decodes a signed name record and checks its signature. Fails if the bytes
   ## are not a name record or if the signature is not valid.
@@ -109,12 +106,12 @@ proc decodeNameRecord*(bytes: seq[byte]): Result[SignedNameRecord, ref Catchable
   ok(signed)
 
 proc validate*(
-    name: Name, bytes: seq[byte], now: int64
+    expected: Name, bytes: seq[byte], now: int64
 ): Result[SignedNameRecord, ref CatchableError] =
-  ## Decodes the bytes stored under `name` in the DHT and checks every rule of
-  ## a valid name record. `now` is in Unix seconds.
+  ## Decodes the bytes stored under the `expected` name in the DHT and checks
+  ## every rule of a valid name record. `now` is in Unix seconds.
   let signed = decodeNameRecord(bytes).valueOr:
-    return failure(error.msg)
+    return err(error)
 
   if signed.data.version != NameRecordVersion:
     return failure("Unknown name record version: " & $signed.data.version)
@@ -126,9 +123,9 @@ proc validate*(
     return failure("The name record expires too far in the future")
 
   let recordName = signed.name().valueOr:
-    return failure(error.msg)
+    return err(error)
 
-  if recordName != name:
+  if recordName != expected:
     return failure("The name is not the hash of the public key and the label")
 
   ok(signed)

@@ -31,9 +31,9 @@ checksuite "Name record validation":
     )
 
   proc signedBytes(record: NameRecord, key = privateKey): seq[byte] =
-    SignedNameRecord.init(key, record).tryGet().encode().tryGet()
+    SignedNameRecord.init(key, record).tryGet().encode()
 
-  test "accepts a valid record and returns the decoded record":
+  test "accepts a valid name record and returns the decoded name record":
     let
       record = newRecord(label)
       validated = validate(publisherName, signedBytes(record), now).tryGet()
@@ -45,7 +45,7 @@ checksuite "Name record validation":
     check validated.data.expiration == record.expiration
     check validated.envelope.publicKey == publicKey
 
-  test "refuses a record whose signed content was changed":
+  test "refuses a name record whose signed content was changed":
     let
       record = newRecord(label)
       cidBytes = string.fromBytes(record.cid.data.buffer)
@@ -57,32 +57,32 @@ checksuite "Name record validation":
     check validate(publisherName, bytes, now).isOk
     check validate(publisherName, modified, now).isErr
 
-  test "refuses a record with an expiration equal to now":
+  test "refuses a name record with an expiration equal to now":
     let bytes = signedBytes(newRecord(label, expiration = now))
 
     check validate(publisherName, bytes, now).isErr
 
-  test "refuses a record with an expiration before now":
+  test "refuses a name record with an expiration before now":
     let bytes = signedBytes(newRecord(label, expiration = now - 1))
 
     check validate(publisherName, bytes, now).isErr
 
-  test "accepts a record that expires exactly at the maximum delay":
+  test "accepts a name record that expires exactly at the maximum delay":
     let bytes = signedBytes(newRecord(label, expiration = now + MaxExpirationDelay))
 
     check validate(publisherName, bytes, now).isOk
 
-  test "refuses a record that expires after the maximum delay":
+  test "refuses a name record that expires after the maximum delay":
     let bytes = signedBytes(newRecord(label, expiration = now + MaxExpirationDelay + 1))
 
     check validate(publisherName, bytes, now).isErr
 
-  test "refuses a record with an unknown version":
+  test "refuses a name record with an unknown version":
     let bytes = signedBytes(newRecord(label, version = NameRecordVersion + 1))
 
     check validate(publisherName, bytes, now).isErr
 
-  test "refuses a record with a label longer than the maximum":
+  test "refuses a name record with a label longer than the maximum":
     let
       longLabel = 'a'.repeat(MaxLabelLength + 1)
       limitName = name(publicKey, 'a'.repeat(MaxLabelLength)).tryGet()
@@ -90,14 +90,14 @@ checksuite "Name record validation":
 
     check validate(limitName, bytes, now).isErr
 
-  test "refuses a record whose name does not match the label":
+  test "refuses a name record whose name does not match the label":
     let
       bytes = signedBytes(newRecord("alpha"))
       betaName = name(publicKey, "beta").tryGet()
 
     check validate(betaName, bytes, now).isErr
 
-  test "refuses a record signed by another key":
+  test "refuses a name recordsigned by another key":
     let
       attackerKey = PrivateKey.example
       catalogName = name(publicKey, "catalog").tryGet()

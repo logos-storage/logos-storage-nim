@@ -40,9 +40,9 @@ checksuite "Name record selector":
     let signed =
       SignedNameRecord.init(privateKey, newRecord(sequenceNumber, expiration))
 
-    signed.tryGet().encode().tryGet()
+    signed.tryGet().encode()
 
-  test "selects the newest record wherever it is in the list":
+  test "selects the newest name record wherever it is in the list":
     let
       newest = EntryRecord(value: signedBytes(43'u64, tenOClock))
       older = EntryRecord(value: signedBytes(42'u64, twoOClock))
@@ -52,7 +52,7 @@ checksuite "Name record selector":
     check selector.select(key, @[older, newest, oldest]).tryGet() == 1
     check selector.select(key, @[oldest, older, newest]).tryGet() == 2
 
-  test "selects the record that expires later when sequence numbers are equal":
+  test "selects the name record that expires later when sequence numbers are equal":
     let
       expiresEarlier = EntryRecord(value: signedBytes(42'u64, tenOClock))
       expiresLater = EntryRecord(value: signedBytes(42'u64, twoOClock))
@@ -60,14 +60,14 @@ checksuite "Name record selector":
     check selector.select(key, @[expiresEarlier, expiresLater]).tryGet() == 1
     check selector.select(key, @[expiresLater, expiresEarlier]).tryGet() == 0
 
-  test "keeps the first record when both have the same fields":
+  test "keeps the first name record when both have the same fields":
     let
       first = EntryRecord(value: signedBytes(42'u64, tenOClock))
       second = EntryRecord(value: signedBytes(42'u64, tenOClock))
 
     check selector.select(key, @[first, second]).tryGet() == 0
 
-  test "skips a record that doesn't decode":
+  test "skips a name record that doesn't decode":
     let
       undecodable = EntryRecord(value: @[1'u8, 2, 3])
       older = EntryRecord(value: signedBytes(41'u64, twoOClock))
@@ -76,7 +76,7 @@ checksuite "Name record selector":
     check selector.select(key, @[undecodable, valid]).tryGet() == 1
     check selector.select(key, @[older, undecodable, valid]).tryGet() == 2
 
-  test "fails when no record decodes":
+  test "fails when no name record decodes":
     let undecodable = EntryRecord(value: @[1'u8, 2, 3])
 
     check selector.select(key, @[undecodable, undecodable]).isErr
@@ -94,9 +94,9 @@ checksuite "Name record validator":
   proc signedBytes(label = "catalog", expiration = currentTime + 3600): seq[byte] =
     let signed = SignedNameRecord.init(privateKey, newRecord(42'u64, expiration, label))
 
-    signed.tryGet().encode().tryGet()
+    signed.tryGet().encode()
 
-  test "accepts a valid record under its name":
+  test "accepts a valid name record under its name":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
     check validator.isValid(key, EntryRecord(value: signedBytes()))
@@ -111,12 +111,12 @@ checksuite "Name record validator":
 
     check not validator.isValid(key & @[0'u8], EntryRecord(value: signedBytes()))
 
-  test "refuses a valid record stored under the name of another label":
+  test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
     check not validator.isValid(key, EntryRecord(value: signedBytes(label = "release")))
 
-  test "refuses a record once the clock is past its expiration":
+  test "refuses a name record once the clock is past its expiration":
     let
       clock = MockClock.new(currentTime)
       validator = NameRecordValidator(clock: clock)

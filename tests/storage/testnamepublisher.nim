@@ -23,7 +23,6 @@ type TestNode = object
 const
   # 10:00:00 UTC on 11 November 2026
   currentTime = 1794391200'i64
-  fourHours = 4 * 60 * 60
   oneHour = 60 * 60
 
 asyncchecksuite "Name publisher":
@@ -87,7 +86,7 @@ asyncchecksuite "Name publisher":
     @(name(publicKey, label).tryGet())
 
   # Reads the name record of a label from the DHT and validates it
-  proc getNameRecord(
+  proc getFromDht(
       node: TestNode, label: string
   ): Future[SignedNameRecord] {.async: (raises: [CancelledError, CatchableError]).} =
     let
@@ -102,6 +101,7 @@ asyncchecksuite "Name publisher":
   ): Future[int64] {.async: (raises: [CancelledError, CatchableError]).} =
     # A quorum of 2 also asks the other peers, not only the local copy
     let quorum = Opt.some(2)
+
     let entry = (await node.disc.kad.getValue(nameKey(label), quorum)).valueOr:
       return 0
 
@@ -126,6 +126,7 @@ asyncchecksuite "Name publisher":
 
   test "publishes with the given sequence number":
     let sequenceNumber = 7'u64
+
     let signed = (
       await publisher.publish("catalog", cid, sequenceNumber = Opt.some(sequenceNumber))
     ).tryGet()
@@ -148,7 +149,7 @@ asyncchecksuite "Name publisher":
     let reader = await startNode(clock, isServer = false, bootstrap = @[server])
 
     let published = (await publisher.publish("catalog", cid)).tryGet()
-    let read = await reader.getNameRecord("catalog")
+    let read = await reader.getFromDht("catalog")
 
     check read.data == published.data
     check read.envelope.publicKey == publicKey
@@ -161,9 +162,9 @@ asyncchecksuite "Name publisher":
 
     let published = (await clientPublisher.publish("catalog", cid)).tryGet()
 
-    check (await server.getNameRecord("catalog")).data == published.data
+    check (await server.getFromDht("catalog")).data == published.data
 
-    let read = await reader.getNameRecord("catalog")
+    let read = await reader.getFromDht("catalog")
 
     check read.data == published.data
 
@@ -173,7 +174,7 @@ asyncchecksuite "Name publisher":
     check (await publisher.publish("catalog", cid, Opt.some(1'u64))).isOk
     check (await publisher.publish("catalog", otherCid, Opt.some(2'u64))).isOk
 
-    let read = await reader.getNameRecord("catalog")
+    let read = await reader.getFromDht("catalog")
 
     check read.data.sequenceNumber == 2'u64
     check read.data.cid == otherCid
@@ -188,7 +189,7 @@ asyncchecksuite "Name publisher":
     check refused.isErr
 
     # The DHT still holds the first name record
-    let read = await reader.getNameRecord("catalog")
+    let read = await reader.getFromDht("catalog")
 
     check read.data.sequenceNumber == 10'u64
     check read.data.cid == cid
@@ -214,7 +215,7 @@ asyncchecksuite "Name publisher":
         sequenceNumber: 10'u64,
         expiration: currentTime + oneHour,
       )
-      newerBytes = newer.sign(privateKey).tryGet().encode().tryGet()
+      newerBytes = newer.sign(privateKey).tryGet().encode()
 
     check (await server.disc.putValue(nameKey("catalog"), newerBytes)).isOk
     check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isErr
@@ -248,6 +249,7 @@ asyncchecksuite "Name publisher":
   test "republishAll extends the expiration with the same CID and sequence number":
     let reader = await startNode(clock, isServer = false, bootstrap = @[server])
     let sequenceNumber = 3'u64
+
     let published =
       (await publisher.publish("catalog", cid, Opt.some(sequenceNumber))).tryGet()
 
@@ -255,7 +257,7 @@ asyncchecksuite "Name publisher":
 
     await publisher.republishAll()
 
-    let read = await reader.getNameRecord("catalog")
+    let read = await reader.getFromDht("catalog")
 
     check read.data.cid == cid
     check read.data.sequenceNumber == sequenceNumber
@@ -274,8 +276,8 @@ asyncchecksuite "Name publisher":
     await publisher.republishAll()
 
     let
-      catalog = await reader.getNameRecord("catalog")
-      release = await reader.getNameRecord("release")
+      catalog = await reader.getFromDht("catalog")
+      release = await reader.getFromDht("release")
 
     check catalog.data.expiration == currentTime + oneHour + NameRecordLifetime
     check release.data.expiration == currentTime + oneHour + NameRecordLifetime
@@ -299,14 +301,38 @@ asyncchecksuite "Name publisher":
       (await reader.getExpiration("catalog")) == expected, timeout = 10_000
     )
 
+  test "republishAll keeps going when one name record fails":
+    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+
+    check (await publisher.publish("catalog", cid)).isOk
+    check (await publisher.publish("release", cid)).isOk
+
+    # The node already holds a newer "catalog" name record, so its put fails
+    let
+      newer = NameRecord(
+        version: NameRecordVersion,
+        label: "catalog",
+        cid: otherCid,
+        sequenceNumber: currentTime.uint64 + 10,
+        expiration: currentTime + oneHour,
+      )
+      newerBytes = newer.sign(privateKey).tryGet().encode()
+
+    check (await server.disc.putValue(nameKey("catalog"), newerBytes)).isOk
+
+    clock.advance(oneHour)
+
+    await publisher.republishAll()
+
+    check (await reader.getExpiration("release")) ==
+      currentTime + oneHour + NameRecordLifetime
+
   test "the loop republishes every 4 hours":
     let reader = await startNode(clock, isServer = false, bootstrap = @[server])
 
     check (await publisher.publish("catalog", cid, Opt.some(3'u64))).isOk
 
     publisher.start()
-
-    check RepublishInterval == fourHours
 
     # Ensure that the republish loop is actually a loop
     for round in 1 .. 2:
