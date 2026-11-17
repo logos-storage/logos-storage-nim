@@ -58,7 +58,7 @@ const
   DhtProxyServiceId* = DhtProxyCodec
 
   MinMixRelays* = PathLength + 1
-  MaxMixRelays = 4 * MinMixRelays
+  MaxMixRelays = 1024
   MaxServiceProviders = 32
 
 type
