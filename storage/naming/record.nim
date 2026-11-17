@@ -132,3 +132,11 @@ proc validate*(
     return failure("The name is not the hash of the public key and the label")
 
   ok(signed)
+
+proc isNewer*(a, b: NameRecord): bool =
+  ## `a` is newer than `b` when its sequence number is higher, or when both have
+  ## the same sequence number and `a` expires later.
+  if a.sequenceNumber != b.sequenceNumber:
+    return a.sequenceNumber > b.sequenceNumber
+
+  a.expiration > b.expiration
