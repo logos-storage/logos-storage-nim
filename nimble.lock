@@ -191,7 +191,7 @@
       }
     },
     "libplum": {
-      "version": "#v0.6.3",
+      "version": "0.6.3",
       "vcsRevision": "189a4984d15f0c60780d6ea5a2ab46bbf6a350f8",
       "url": "https://github.com/logos-storage/nim-libplum",
       "downloadMethod": "git",
@@ -508,8 +508,8 @@
       }
     },
     "libp2p": {
-      "version": "2.3.5",
-      "vcsRevision": "05e8dfea23ce355b81c9ffc7df7dffdf9ce8106d",
+      "version": "2.4.2",
+      "vcsRevision": "5295293b0643f2d24e41fe57c18b5ffa4fe7ca13",
       "url": "https://github.com/vacp2p/nim-libp2p",
       "downloadMethod": "git",
       "dependencies": [
@@ -531,12 +531,12 @@
         "libplum"
       ],
       "checksums": {
-        "sha1": "e283d1299e90aee1eadf41352080b69d74c901db"
+        "sha1": "73dd0cb57363a5dd77b7fe9e3192ce5d460f5d52"
       }
     },
     "libp2p_mix": {
-      "version": "#0883587f1f0d7fc6745e8db00fcd0cb0938d7dd0",
-      "vcsRevision": "0883587f1f0d7fc6745e8db00fcd0cb0938d7dd0",
+      "version": "#c4ea3f72afd5be3551bbfbeebb719437d40dc6f0",
+      "vcsRevision": "c4ea3f72afd5be3551bbfbeebb719437d40dc6f0",
       "url": "https://github.com/logos-co/nim-libp2p-mix.git",
       "downloadMethod": "git",
       "dependencies": [
@@ -551,12 +551,12 @@
         "unittest2"
       ],
       "checksums": {
-        "sha1": "3f9a49c22418d120f8a6f07e1e545fbd7694ddd0"
+        "sha1": "48f4e9d1245f7687827f45cd05553ab7a683adca"
       }
     },
     "libp2p_mix_transport": {
-      "version": "#653bcd6d8c2a74b72b7207723938c643416670a0",
-      "vcsRevision": "653bcd6d8c2a74b72b7207723938c643416670a0",
+      "version": "#fbca29c8ccbe3623ab834f5cb18f90f6465e0e64",
+      "vcsRevision": "fbca29c8ccbe3623ab834f5cb18f90f6465e0e64",
       "url": "https://github.com/logos-storage/libp2p-mix-transport",
       "downloadMethod": "git",
       "dependencies": [
@@ -569,7 +569,7 @@
         "results"
       ],
       "checksums": {
-        "sha1": "29d7461da15ac615bda2c57a5057bef040eaaaaa"
+        "sha1": "545a4fce215ab2942a0b797300bf557291564da8"
       }
     },
     "zippy": {

@@ -65,7 +65,7 @@ proc addressMapper*(proto: MixProtocol): AddressMapper =
     # until another update occurs.
     # TODO: derive the Mix advertisement after all endpoint-producing mappers,
     # with a regression test covering a later mapper supplying the endpoint.
-    let mixAddress = proto.localMixPubInfo.toMixAddress().valueOr:
+    let mixAddress = proto.localMixPubInfo.flatMap(toMixAddress).valueOr:
       error "Failed to get Mix address", err = error
       return
 

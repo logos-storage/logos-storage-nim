@@ -5,9 +5,8 @@ license = "MIT"
 binDir = "build"
 srcDir = "."
 installDirs = @["storage", "library"]
-installFiles = @[
-  "storage.nim", "build.nims", "config.nims", "LICENSE-APACHEv2", "LICENSE-MIT",
-]
+installFiles =
+  @["storage.nim", "build.nims", "config.nims", "LICENSE-APACHEv2", "LICENSE-MIT"]
 
 # Older Nimble versions cannot resolve these dependencies.
 when (NimbleMajor, NimbleMinor) < (0, 26):
@@ -29,10 +28,11 @@ requires "faststreams >= 0.5.0 & < 0.6.0"
 # The C bindings need fixes made after v0.3.1-rc.0, which have no tag yet.
 requires "ffi#16aab491d3aa6d604df0600fbdfe7190ba169577"
 requires "libbacktrace >= 0.2.0 & < 0.3.0"
-requires "libp2p >= 2.3.5 & < 2.4.0"
-# These packages have no releases containing the required mix support.
-requires "https://github.com/logos-storage/libp2p-mix-transport#653bcd6d8c2a74b72b7207723938c643416670a0"
-requires "https://github.com/logos-co/nim-libp2p-mix.git#0883587f1f0d7fc6745e8db00fcd0cb0938d7dd0"
+requires "libp2p == 2.4.2"
+requires "websock == 0.4.1"
+# Match the Mix revision pinned by the MixTransport release.
+requires "https://github.com/logos-storage/libp2p-mix-transport#fbca29c8ccbe3623ab834f5cb18f90f6465e0e64"
+requires "https://github.com/logos-co/nim-libp2p-mix.git#c4ea3f72afd5be3551bbfbeebb719437d40dc6f0"
 requires "https://github.com/logos-storage/nim-merkletree >= 1.0.1 & < 2.0.0"
 requires "https://github.com/logos-storage/nim-serde >= 1.2.3 & < 1.3.0"
 requires "https://github.com/status-im/nim-blscurve#3bf34027a2eff87e5fe8418bc97f09219452823a"
