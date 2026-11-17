@@ -25,11 +25,11 @@ checksuite "Name record":
       expiration: 1794477600'i64,
     )
 
-  test "a decoded record has the same fields and public key as the original":
+  test "a decoded name record has the same fields and public key as the original":
     let
       record = newRecord(label)
       signed = record.sign(privateKey).tryGet()
-      bytes = signed.encode().tryGet()
+      bytes = signed.encode()
       decoded = decodeNameRecord(bytes).tryGet()
 
     check decoded.data.version == record.version
@@ -62,9 +62,9 @@ checksuite "Name record":
     check name(publicKey, 'a'.repeat(MaxLabelLength + 1)).isErr
     check name(publicKey, 'a'.repeat(MaxLabelLength)).isOk
 
-  test "the name of a signed record matches its signing key and label":
+  test "the name of a signed name record matches its signing key and label":
     let
-      bytes = newRecord(label).sign(privateKey).tryGet().encode().tryGet()
+      bytes = newRecord(label).sign(privateKey).tryGet().encode()
       decoded = decodeNameRecord(bytes).tryGet()
 
     check decoded.name().tryGet() == name(publicKey, label).tryGet()

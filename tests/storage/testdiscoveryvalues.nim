@@ -63,7 +63,7 @@ asyncchecksuite "Discovery - DHT values":
       expiration: expiration,
     )
 
-    sign(record, privateKey).tryGet().encode().tryGet()
+    sign(record, privateKey).tryGet().encode()
 
   test "a client node puts a value and a server node reads it":
     let
