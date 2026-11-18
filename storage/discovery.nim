@@ -54,7 +54,7 @@ const
   LookupTimeout = 1.minutes
   ServiceLookupTimeout = 1.minutes
   PutValueTimeout = 1.minutes
-  ValueQuorum = 1
+  ValueQuorum = 2
 
   StorageServiceId* = "/logos-storage/1.0.0"
   AutonatServiceId* = $AutonatV2Codec.DialRequest

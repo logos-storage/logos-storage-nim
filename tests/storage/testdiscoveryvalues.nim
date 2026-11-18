@@ -38,9 +38,9 @@ asyncchecksuite "Discovery - DHT values":
   ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
     let
       switch = newStandardSwitch()
-      bootstrapNodes =
+      bootstrapPeers =
         bootstrap.mapIt((it.switch.peerInfo.peerId, it.switch.peerInfo.addrs))
-      disc = Discovery.new(switch, bootstrapNodes = bootstrapNodes, isServer = isServer)
+      disc = Discovery.new(switch, bootstrapNodes = bootstrapPeers, isServer = isServer)
 
     switch.mount(disc.kad)
 
@@ -82,14 +82,19 @@ asyncchecksuite "Discovery - DHT values":
     check got.isOk
     check got.tryGet == value
 
-  test "a client reads another client's value from a single server node":
-    # The read quorum is 1 for now, so a single Storage node is enough
+  test "a client reads another client's value from the server nodes":
+    # The read quorum is 2, so two Storage nodes are needed
     let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
+      serverA = await startNode(isServer = true)
+      serverB = await startNode(isServer = true, bootstrap = @[serverA])
+      bootstrapNodes = @[serverA, serverB]
+      writer = await startNode(isServer = false, bootstrap = bootstrapNodes)
+      reader = await startNode(isServer = false, bootstrap = bootstrapNodes)
       key = newKey("client-to-client")
       value = newValue("client-to-client", 1)
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
 
@@ -109,8 +114,12 @@ asyncchecksuite "Discovery - DHT values":
   test "the quorum doesn't count empty replies":
     let
       serverA = await startNode(isServer = true)
+      serverB = await startNode(isServer = true, bootstrap = @[serverA])
       key = newKey("late-servers")
       value = newValue("late-servers", 1)
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await serverA.disc.putValue(key, value)).isOk
 
@@ -135,12 +144,17 @@ asyncchecksuite "Discovery - DHT values":
 
   test "a second put on the same key replaces the value":
     let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
+      serverA = await startNode(isServer = true)
+      serverB = await startNode(isServer = true, bootstrap = @[serverA])
+      bootstrapNodes = @[serverA, serverB]
+      writer = await startNode(isServer = false, bootstrap = bootstrapNodes)
+      reader = await startNode(isServer = false, bootstrap = bootstrapNodes)
       key = newKey("second-put")
       value = newValue("second-put", 1)
       newerValue = newValue("second-put", 2)
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
     check (await writer.disc.putValue(key, newerValue)).isOk
@@ -151,12 +165,17 @@ asyncchecksuite "Discovery - DHT values":
 
   test "a put with an older sequence number doesn't replace the value":
     let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
+      serverA = await startNode(isServer = true)
+      serverB = await startNode(isServer = true, bootstrap = @[serverA])
+      bootstrapNodes = @[serverA, serverB]
+      writer = await startNode(isServer = false, bootstrap = bootstrapNodes)
+      reader = await startNode(isServer = false, bootstrap = bootstrapNodes)
       key = newKey("older-put")
       value = newValue("older-put", 2)
       olderValue = newValue("older-put", 1)
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
     check (await writer.disc.putValue(key, olderValue)).isErr
