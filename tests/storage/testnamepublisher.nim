@@ -3,7 +3,6 @@ import std/sequtils
 import pkg/chronos
 import pkg/libp2p except setup
 import pkg/datastore
-import pkg/datastore/typedds
 import pkg/questionable/results
 
 import ../asynctest
@@ -32,7 +31,7 @@ asyncchecksuite "Name publisher":
     server: TestNode
     secondServer: TestNode
     bootstrapNodes: seq[TestNode]
-    metaDs: TypedDatastore
+    metaDs: Datastore
     publisher: NamePublisher
 
   let
@@ -72,12 +71,12 @@ asyncchecksuite "Name publisher":
 
     node
 
-  proc newMetaDs(): TypedDatastore =
-    TypedDatastore.init(SQLiteDatastore.new(Memory).tryGet())
+  proc newMetaDs(): Datastore =
+    SQLiteDatastore.new(Memory).tryGet()
 
   proc newPublisher(
       node: TestNode,
-      metaDs: TypedDatastore,
+      metaDs: Datastore,
       clock: Clock,
       signingKey: PrivateKey = privateKey,
   ): NamePublisher =
