@@ -207,13 +207,28 @@ asyncchecksuite "Name publisher":
     check read.data.sequenceNumber == 10'u64
     check read.data.cid == cid
 
-  test "accepts a sequence number equal to the stored one":
+  test "accepts the same CID for an existing sequence number":
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
 
     let again = await publisher.publish("catalog", cid, Opt.some(10'u64))
 
     check again.isOk
     check again.tryGet().data.sequenceNumber == 10'u64
+
+  test "refuses a different CID for an existing sequence number":
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+
+    check (await publisher.publish("catalog", cid, Opt.some(42'u64))).isOk
+
+    let refused = await publisher.publish("catalog", otherCid, Opt.some(42'u64))
+
+    check refused.isErr
+
+    # The DHT still holds the first name record
+    let read = await reader.getFromDht("catalog")
+
+    check read.data.sequenceNumber == 42'u64
+    check read.data.cid == cid
 
   test "keeps the name record stored when the DHT put fails":
     # The publisher is a fresh node that lost its previous name record,
