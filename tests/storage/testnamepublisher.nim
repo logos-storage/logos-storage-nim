@@ -271,6 +271,20 @@ asyncchecksuite "Name publisher":
     check stored.len == 1
     check stored[0].data.label == "release"
 
+  test "unpublish stops extending the expiration in the DHT":
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+
+    let published = (await publisher.publish("catalog", cid)).tryGet()
+
+    check (await publisher.unpublish("catalog")).isOk
+
+    clock.advance(oneHour)
+
+    await publisher.republishAll()
+
+    # The DHT still holds the expiration of the publication
+    check (await reader.getExpiration("catalog")) == published.data.expiration
+
   test "unpublish of an unknown label does not return an error":
     check (await publisher.unpublish("unknown")).isOk
 
