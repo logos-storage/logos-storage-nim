@@ -2,7 +2,6 @@ import std/sequtils
 
 import pkg/chronos
 import pkg/libp2p except setup
-from pkg/libp2p/protocols/kademlia/get import getValue
 import pkg/datastore
 import pkg/datastore/typedds
 import pkg/questionable/results
@@ -31,6 +30,8 @@ asyncchecksuite "Name publisher":
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
+    secondServer: TestNode
+    bootstrapNodes: seq[TestNode]
     metaDs: TypedDatastore
     publisher: NamePublisher
 
@@ -56,10 +57,10 @@ asyncchecksuite "Name publisher":
   ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
     let
       switch = newStandardSwitch()
-      bootstrapNodes =
+      bootstrapPeers =
         bootstrap.mapIt((it.switch.peerInfo.peerId, it.switch.peerInfo.addrs))
       disc = Discovery.new(
-        switch, bootstrapNodes = bootstrapNodes, isServer = isServer, clock = clock
+        switch, bootstrapNodes = bootstrapPeers, isServer = isServer, clock = clock
       )
 
     switch.mount(disc.kad)
@@ -99,13 +100,10 @@ asyncchecksuite "Name publisher":
   proc getExpiration(
       node: TestNode, label: string
   ): Future[int64] {.async: (raises: [CancelledError, CatchableError]).} =
-    # A quorum of 2 also asks the other peers, not only the local copy
-    let quorum = Opt.some(2)
-
-    let entry = (await node.disc.kad.getValue(nameKey(label), quorum)).valueOr:
+    let bytes = (await node.disc.getValue(nameKey(label))).valueOr:
       return 0
 
-    let signed = validate(name(publicKey, label).tryGet(), entry.value, clock.now()).valueOr:
+    let signed = validate(name(publicKey, label).tryGet(), bytes, clock.now()).valueOr:
       return 0
 
     signed.data.expiration
@@ -113,8 +111,14 @@ asyncchecksuite "Name publisher":
   setup:
     clock = MockClock.new(currentTime)
     server = await startNode(clock, isServer = true)
+    # The read quorum is 2, so a read needs two server nodes
+    secondServer = await startNode(clock, isServer = true, bootstrap = @[server])
+    bootstrapNodes = @[server, secondServer]
     metaDs = newMetaDs()
     publisher = newPublisher(server, metaDs, clock)
+
+    # Wait until the first server knows the second one
+    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
   test "publishes with the current time as sequence number by default":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
@@ -146,7 +150,7 @@ asyncchecksuite "Name publisher":
     check name(signed).tryGet() == name(publicKey, "catalog").tryGet()
 
   test "another node reads the published name record through the DHT":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     let published = (await publisher.publish("catalog", cid)).tryGet()
     let read = await reader.getFromDht("catalog")
@@ -156,8 +160,8 @@ asyncchecksuite "Name publisher":
 
   test "a publisher that is a client node publishes through a server node":
     let
-      client = await startNode(clock, isServer = false, bootstrap = @[server])
-      reader = await startNode(clock, isServer = false, bootstrap = @[server])
+      client = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
       clientPublisher = newPublisher(client, newMetaDs(), clock)
 
     let published = (await clientPublisher.publish("catalog", cid)).tryGet()
@@ -169,9 +173,15 @@ asyncchecksuite "Name publisher":
     check read.data == published.data
 
   test "publishing a newer sequence number replaces the name record":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(1'u64))).isOk
+
+    # This read gives the reader a local copy
+    let first = await reader.getFromDht("catalog")
+
+    check first.data.sequenceNumber == 1'u64
+
     check (await publisher.publish("catalog", otherCid, Opt.some(2'u64))).isOk
 
     let read = await reader.getFromDht("catalog")
@@ -180,7 +190,7 @@ asyncchecksuite "Name publisher":
     check read.data.cid == otherCid
 
   test "refuses a sequence number lower than the stored one":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
 
@@ -247,7 +257,7 @@ asyncchecksuite "Name publisher":
     check (await publisher.unpublish("unknown")).isOk
 
   test "republishAll extends the expiration with the same CID and sequence number":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let sequenceNumber = 3'u64
 
     let published =
@@ -266,7 +276,7 @@ asyncchecksuite "Name publisher":
     check read.envelope.publicKey == publicKey
 
   test "republishAll republishes every stored name record":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", otherCid)).isOk
@@ -283,7 +293,7 @@ asyncchecksuite "Name publisher":
     check release.data.expiration == currentTime + oneHour + NameRecordLifetime
 
   test "start republishes the stored name records right away after a restart":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let sequenceNumber = 3'u64
 
     check (await publisher.publish("catalog", cid, Opt.some(sequenceNumber))).isOk
@@ -302,7 +312,7 @@ asyncchecksuite "Name publisher":
     )
 
   test "republishAll keeps going when one name record fails":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", cid)).isOk
@@ -328,7 +338,7 @@ asyncchecksuite "Name publisher":
       currentTime + oneHour + NameRecordLifetime
 
   test "the loop republishes every 4 hours":
-    let reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(3'u64))).isOk
 

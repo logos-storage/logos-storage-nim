@@ -45,7 +45,7 @@ const
   ProvideTimeout = 1.minutes
   LookupTimeout = 1.minutes
   PutValueTimeout = 1.minutes
-  ValueQuorum = 1
+  ValueQuorum = 2
 
 type
   Discovery* = ref object of RootObj
