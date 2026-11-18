@@ -207,13 +207,25 @@ proc republish(
   await self.discovery.putValue(@nameBytes, signed.encode())
 
 proc republishAll*(self: NamePublisher) {.async: (raises: [CancelledError]).} =
-  ## Puts every stored name record in the DHT again with a new expiration. A
-  ## failure on one name record is logged and doesn't stop the others.
+  ## Puts every stored name record in the DHT again with a new expiration.
+  ## A failure on one name record is logged and doesn't stop the others.
+  ##
+  ## The name records signed by another key are skipped. They stay in the store,
+  ## in case the node restarts with the key that signed them.
+  let publicKey = self.privateKey.getPublicKey().valueOr:
+    warn "Cannot republish the name records", error = $error
+    return
+
   let records = (await self.getNameRecords()).valueOr:
     warn "Cannot republish the name records", error = error.msg
     return
 
   for signed in records:
+    if signed.envelope.publicKey != publicKey:
+      warn "Not republishing a name record signed by another key",
+        label = signed.data.label
+      continue
+
     let published = await self.republish(signed.data)
 
     if published.isErr:
