@@ -97,7 +97,7 @@ checksuite "Name record validation":
 
     check validate(betaName, bytes, now).isErr
 
-  test "refuses a name recordsigned by another key":
+  test "refuses a name record signed by another key":
     let
       attackerKey = PrivateKey.example
       catalogName = name(publicKey, "catalog").tryGet()
