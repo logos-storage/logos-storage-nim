@@ -246,11 +246,9 @@ proc republishAll*(self: NamePublisher) {.async: (raises: [CancelledError]).} =
         label = signed.data.label, error = published.error.msg
 
 proc republishLoop(self: NamePublisher) {.async: (raises: [CancelledError]).} =
-  await self.republishAll()
-
   while true:
-    await self.clock.waitUntil(self.clock.now() + RepublishInterval)
     await self.republishAll()
+    await self.clock.waitUntil(self.clock.now() + RepublishInterval)
 
 proc start*(self: NamePublisher) =
   ## Republishes the stored name records now, then every `RepublishInterval`.
