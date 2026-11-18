@@ -108,6 +108,10 @@ proc getNameRecords(
       warn "Cannot read a stored name record", error = error.msg
       break
 
+    # The last item of the iterator has no key and no data
+    if item.key.isNone:
+      continue
+
     let signed = decodeNameRecord(item.data).valueOr:
       warn "Cannot decode a stored name record", error = error.msg
       continue
