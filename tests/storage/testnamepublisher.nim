@@ -76,9 +76,12 @@ asyncchecksuite "Name publisher":
     TypedDatastore.init(SQLiteDatastore.new(Memory).tryGet())
 
   proc newPublisher(
-      node: TestNode, metaDs: TypedDatastore, clock: Clock
+      node: TestNode,
+      metaDs: TypedDatastore,
+      clock: Clock,
+      signingKey: PrivateKey = privateKey,
   ): NamePublisher =
-    let publisher = NamePublisher.new(node.disc, metaDs, privateKey, clock)
+    let publisher = NamePublisher.new(node.disc, metaDs, signingKey, clock)
     publishers.add(publisher)
 
     publisher
@@ -336,6 +339,31 @@ asyncchecksuite "Name publisher":
 
     check (await reader.getExpiration("release")) ==
       currentTime + oneHour + NameRecordLifetime
+
+  test "republishAll skips the name records signed by another key":
+    let
+      reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      otherKey = PrivateKey.example
+      otherPublicKey = otherKey.getPublicKey().tryGet()
+      otherPublisher = newPublisher(server, metaDs, clock, otherKey)
+
+    check (await publisher.publish("catalog", cid)).isOk
+
+    await otherPublisher.republishAll()
+
+    # The name record of the first key is in the DHT
+    check (await reader.disc.getValue(nameKey("catalog"))).isOk
+
+    # The name record of the other key is not in the DHT
+    let otherName = @(name(otherPublicKey, "catalog").tryGet())
+
+    check (await reader.disc.getValue(otherName)).isErr
+
+    # The name record is persisted in the store
+    let stored = (await otherPublisher.getNameRecords()).tryGet()
+
+    check stored.len == 1
+    check stored[0].envelope.publicKey == publicKey
 
   test "the loop republishes every 4 hours":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
