@@ -52,12 +52,11 @@ proc new*(
     discovery: discovery, metaDs: metaDs, privateKey: privateKey, clock: clock
   )
 
-proc persistenceKeyFromName(name: Name): Result[Key, ref CatchableError] =
+proc persistenceKeyFromName(name: Name): Key =
   ## The name is raw bytes, so it is written in hex to make a valid key.
-  let key = Key.init(StorageNamesNamespace & "/" & byteutils.toHex(name)).valueOr:
-    return failure("Cannot make the storage key of the name record: " & error.msg)
-
-  ok(key)
+  Key.init(StorageNamesNamespace & "/" & byteutils.toHex(name)).expect(
+    "The namespace is constant and the name is written in hex"
+  )
 
 proc name(self: NamePublisher, label: string): Result[Name, ref CatchableError] =
   let publicKey = self.privateKey.getPublicKey().valueOr:
@@ -87,8 +86,8 @@ proc getNameRecords(
     async: (raises: [CancelledError])
 .} =
   ## Returns the stored name records. It logs and skips those that don't decode.
-  let queryKey = Key.init(StorageNamesNamespace & "/*").valueOr:
-    return failure("Cannot make the query key of the name records: " & error.msg)
+  let queryKey =
+    Key.init(StorageNamesNamespace & "/*").expect("The query key is constant")
 
   let iter = (await self.metaDs.query(Query.init(queryKey))).valueOr:
     return failure("Cannot query the stored name records: " & error.msg)
@@ -142,8 +141,8 @@ proc publish*(
   let
     nameBytes = self.name(label).valueOr:
       return err(error)
-    persistenceKey = persistenceKeyFromName(nameBytes).valueOr:
-      return err(error)
+    persistenceKey = persistenceKeyFromName(nameBytes)
+    dhtKey = dhtKeyFromName(nameBytes)
     sequence = sequenceNumber.valueOr:
       self.clock.now().uint64
 
@@ -175,9 +174,6 @@ proc publish*(
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
-  let dhtKey = dhtKeyFromName(nameBytes).valueOr:
-    return err(error)
-
   let put = await self.discovery.putValue(dhtKey, bytes)
 
   if put.isErr:
@@ -193,8 +189,7 @@ proc unpublish*(
   let
     nameBytes = self.name(label).valueOr:
       return err(error)
-    persistenceKey = persistenceKeyFromName(nameBytes).valueOr:
-      return err(error)
+    persistenceKey = persistenceKeyFromName(nameBytes)
 
   let deleted = await self.metaDs.delete(persistenceKey)
 
@@ -214,8 +209,7 @@ proc republish(
       return err(error)
     nameBytes = signed.name().valueOr:
       return err(error)
-    dhtKey = dhtKeyFromName(nameBytes).valueOr:
-      return err(error)
+    dhtKey = dhtKeyFromName(nameBytes)
 
   await self.discovery.putValue(dhtKey, signed.encode())
 

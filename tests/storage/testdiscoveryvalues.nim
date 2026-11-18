@@ -53,7 +53,7 @@ asyncchecksuite "Discovery - DHT values":
     node
 
   proc newKey(label: string): seq[byte] =
-    dhtKeyFromName(name(publicKey, label).tryGet()).tryGet()
+    dhtKeyFromName(name(publicKey, label).tryGet())
 
   proc newValue(label: string, sequenceNumber: uint64): seq[byte] =
     let record = NameRecord(
