@@ -9,16 +9,14 @@
 
 {.push raises: [].}
 
+import pkg/cbor_serialization
+import pkg/cbor_serialization/value_ops
 import pkg/libp2p
 import pkg/libp2p/signed_envelope
 import pkg/libp2p/vbuffer
 import pkg/nimcrypto/sha2
-import pkg/protobuf_serialization
 import pkg/questionable
 import pkg/questionable/results
-
-import ../utils/protobuf/cid
-import ../utils/protobuf/serializer
 
 export signed_envelope
 
@@ -28,20 +26,20 @@ const
   MaxExpirationDelay* = 48 * 60 * 60
   NameRecordCodec = multiCodec("storage-name-record")
   NameRecordDomain = "logos-storage-name-record"
+  IntegerKinds = {CborValueKind.Unsigned, CborValueKind.Negative}
 
 type
   Name* = array[32, byte]
 
-  NameRecord* {.proto2.} = object
-    version* {.fieldNumber: 1, required, pint.}: uint32
-    label* {.fieldNumber: 2, required.}: string
-    cid* {.fieldNumber: 3, required, ext.}: Cid
-    sequenceNumber* {.fieldNumber: 4, required, pint.}: uint64
-    expiration* {.fieldNumber: 5, required, pint.}: int64
+  NameRecord* = object
+    version*: uint32
+    label*: string
+    cid*: Cid
+    # `seq` in the protocol, renamed to avoid a collision with the Nim `seq` type
+    sequenceNumber*: uint64
+    expiration*: int64
 
   SignedNameRecord* = SignedPayload[NameRecord]
-
-Protobuf.serializerForResult([NameRecord])
 
 proc payloadDomain*(T: typedesc[NameRecord]): string =
   ## The signature domain of a name record, needed so that a signature made
@@ -50,12 +48,102 @@ proc payloadDomain*(T: typedesc[NameRecord]): string =
 
 proc payloadType*(T: typedesc[NameRecord]): seq[byte] =
   ## The payload type of a name record, needed to tell that the envelope
-  ## payload is a protobuf-encoded name record
+  ## payload is a CBOR-encoded name record
   var buffer = initVBuffer()
   buffer.writeVarint(uint64(int(NameRecordCodec)))
   buffer.finish()
 
   buffer.buffer
+
+proc writeValue(
+    w: var CborWriter[DefaultFlavor], record: NameRecord
+) {.raises: [IOError].} =
+  ## The expiration is an integer under tag 1, the `time` of the protocol:
+  ## https://www.rfc-editor.org/rfc/rfc8949#section-3.4.2
+  w.beginObject(5)
+  w.writeField("version", record.version)
+  w.writeField("label", record.label)
+  w.writeField("cid", record.cid.data.buffer)
+  w.writeField("seq", record.sequenceNumber)
+  w.writeField("expiration", CborTag[int64](tag: 1, val: record.expiration))
+  w.endObject(stopCode = false)
+
+proc encode*(record: NameRecord): seq[byte] =
+  Cbor.encode(record)
+
+proc readField(
+    fields: CborValueRef, key: string, kinds: set[CborValueKind]
+): Result[CborValueRef, ref CatchableError] =
+  let value = fields.getOrDefault(key)
+
+  if value.isNil:
+    return failure("The name record has no `" & key & "` field")
+
+  if value.kind notin kinds:
+    return failure("The `" & key & "` field of the name record has the wrong type")
+
+  ok(value)
+
+proc readInteger[T: SomeInteger](
+    fields: CborValueRef, key: string
+): Result[T, ref CatchableError] =
+  let value = fields.readField(key, IntegerKinds).valueOr:
+    return err(error)
+
+  let number = value.numVal.toInt(T).valueOr:
+    return failure("The `" & key & "` field of the name record is out of range")
+
+  ok(number)
+
+proc readTime(fields: CborValueRef, key: string): Result[int64, ref CatchableError] =
+  let value = fields.readField(key, {CborValueKind.Tag}).valueOr:
+    return err(error)
+
+  if value.tagVal.tag != 1 or value.tagVal.val.kind notin IntegerKinds:
+    return failure(
+      "The `" & key & "` field of the name record is not an integer under tag 1"
+    )
+
+  let number = value.tagVal.val.numVal.toInt(int64).valueOr:
+    return failure("The `" & key & "` field of the name record is out of range")
+
+  ok(number)
+
+proc decode*(
+    T: typedesc[NameRecord], bytes: seq[byte]
+): Result[NameRecord, ref CatchableError] =
+  ## Decodes the CBOR map of a name record. Fails if a field is missing, has
+  ## the wrong type or is out of range.
+  var fields: CborValueRef
+
+  try:
+    fields = Cbor.decode(bytes, CborValueRef)
+  except SerializationError as exc:
+    return failure("The name record is not valid CBOR: " & exc.msg)
+
+  let
+    version = readInteger[uint32](fields, "version").valueOr:
+      return err(error)
+    label = fields.readField("label", {CborValueKind.String}).valueOr:
+      return err(error)
+    cidBytes = fields.readField("cid", {CborValueKind.Bytes}).valueOr:
+      return err(error)
+    sequenceNumber = readInteger[uint64](fields, "seq").valueOr:
+      return err(error)
+    expiration = readTime(fields, "expiration").valueOr:
+      return err(error)
+    cid = Cid.init(cidBytes.bytesVal).valueOr:
+      return failure("The `cid` field of the name record is not a valid CID: " & $error)
+
+  ok(
+    NameRecord(
+      version: version,
+      label: label.strVal,
+      cid: cid,
+      sequenceNumber: sequenceNumber,
+      expiration: expiration,
+    )
+  )
 
 proc checkLabel(label: string): Result[void, ref CatchableError] =
   if label.len > MaxLabelLength:
