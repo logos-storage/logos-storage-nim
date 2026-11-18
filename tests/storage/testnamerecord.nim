@@ -5,6 +5,8 @@ import pkg/cbor_serialization
 import pkg/cbor_serialization/value_ops
 import pkg/libp2p
 import pkg/libp2p/protobuf/minprotobuf
+import pkg/libp2p/vbuffer
+import pkg/nimcrypto/sha2
 import pkg/questionable/results
 
 import pkg/unittest2
@@ -64,6 +66,67 @@ checksuite "Name record":
   test "refuses a label longer than the maximum":
     check name(publicKey, 'a'.repeat(MaxLabelLength + 1)).isErr
     check name(publicKey, 'a'.repeat(MaxLabelLength)).isOk
+
+  proc createName(publicKey: PublicKey, label: string): Name =
+    var buffer = initVBuffer()
+
+    buffer.writeSeq(publicKey.getBytes().tryGet())
+    buffer.writeSeq(label)
+    buffer.finish()
+
+    sha256.digest(buffer.buffer).data
+
+  let
+    invalidUtf8Labels = [
+      "\xff", # invalid byte
+      "caf\xc3", # truncated sequence
+      "\xE0\x80\x80", # overlong 3-byte form
+      "\xED\xA0\x80", # UTF-16 surrogate
+      "\xF4\x90\x80\x80", # above U+10FFFF
+      "\xF0\x80\x80\x80", # overlong 4-byte form
+      "\xF5\x80\x80\x80", # lead byte F5..F7
+    ]
+
+  test "accepts a label of 1 byte and a label of 256 bytes":
+    check 'a'.repeat(MinLabelLength).len == 1
+    check name(publicKey, 'a'.repeat(MinLabelLength)).isOk
+    check name(publicKey, 'a'.repeat(256)).isOk
+
+  test "refuses an empty label and a label of 257 bytes":
+    check name(publicKey, "").isErr
+    check name(publicKey, 'a'.repeat(257)).isErr
+
+  test "refuses a label that is not valid UTF-8":
+    for invalidLabel in invalidUtf8Labels:
+      check name(publicKey, invalidLabel).isErr
+
+  test "sign refuses an empty label and a label of 257 bytes":
+    check newRecord("").sign(privateKey).isErr
+    check newRecord('a'.repeat(257)).sign(privateKey).isErr
+
+  test "sign refuses a label that is not valid UTF-8":
+    for invalidLabel in invalidUtf8Labels:
+      check newRecord(invalidLabel).sign(privateKey).isErr
+
+  test "validate refuses a name record with an empty label":
+    let
+      record = newRecord("")
+      now = record.expiration - 3600
+      bytes = SignedNameRecord.init(privateKey, record).tryGet().encode()
+
+    check createName(publicKey, label) == name(publicKey, label).tryGet()
+    check validate(createName(publicKey, ""), bytes, now).isErr
+
+  test "validate refuses a name record with a label that is not valid UTF-8":
+    check createName(publicKey, label) == name(publicKey, label).tryGet()
+
+    for invalidLabel in invalidUtf8Labels:
+      let
+        record = newRecord(invalidLabel)
+        now = record.expiration - 3600
+        bytes = SignedNameRecord.init(privateKey, record).tryGet().encode()
+
+      check validate(createName(publicKey, invalidLabel), bytes, now).isErr
 
   test "the name of a signed name record matches its signing key and label":
     let
