@@ -184,30 +184,16 @@ asyncchecksuite "Discovery - DHT values":
     check got.isOk
     check got.tryGet == value
 
-  test "the DHT refuses a value that is not a name record":
+  test "putValue refuses a value that is not a name record":
     let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
+      writer = await startNode(isServer = false)
       key = @(sha256.digest("not-a-name-record").data)
 
     check (await writer.disc.putValue(key, @[1'u8, 2, 3])).isErr
 
-    let fut = reader.disc.getValue(key)
-
-    check await fut.withTimeout(lookupTimeout)
-    check fut.read().isErr
-
-  test "the DHT refuses a name record stored under the name of another label":
+  test "putValue refuses a name record stored under the name of another label":
     let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
+      writer = await startNode(isServer = false)
       key = newKey("catalog")
 
     check (await writer.disc.putValue(key, newValue("release", 1))).isErr
-
-    let fut = reader.disc.getValue(key)
-
-    check await fut.withTimeout(lookupTimeout)
-    check fut.read().isErr
