@@ -335,24 +335,31 @@ asyncchecksuite "Name publisher":
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", cid)).isOk
 
-    # The node already holds a newer "catalog" name record, so its put fails
+    # Make the name record that republishAll reads first fail, then check that
+    # republishAll goes on to the next one
+    let
+      stored = (await publisher.getNameRecords()).tryGet()
+      failingLabel = stored[0].data.label
+      nextLabel = stored[1].data.label
+
+    # The DHT holds a newer name record for this label, so its put fails
     let
       newer = NameRecord(
         version: NameRecordVersion,
-        label: "catalog",
+        label: failingLabel,
         cid: otherCid,
         sequenceNumber: currentTime.uint64 + 10,
         expiration: currentTime + oneHour,
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
-    check (await server.disc.putValue(nameKey("catalog"), newerBytes)).isOk
+    check (await server.disc.putValue(nameKey(failingLabel), newerBytes)).isOk
 
     clock.advance(oneHour)
 
     await publisher.republishAll()
 
-    check (await reader.getExpiration("release")) ==
+    check (await reader.getExpiration(nextLabel)) ==
       currentTime + oneHour + NameRecordLifetime
 
   test "republishAll skips the name records signed by another key":
