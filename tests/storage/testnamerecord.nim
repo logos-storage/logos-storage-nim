@@ -76,16 +76,15 @@ checksuite "Name record":
 
     sha256.digest(buffer.buffer).data
 
-  let
-    invalidUtf8Labels = [
-      "\xff", # invalid byte
-      "caf\xc3", # truncated sequence
-      "\xE0\x80\x80", # overlong 3-byte form
-      "\xED\xA0\x80", # UTF-16 surrogate
-      "\xF4\x90\x80\x80", # above U+10FFFF
-      "\xF0\x80\x80\x80", # overlong 4-byte form
-      "\xF5\x80\x80\x80", # lead byte F5..F7
-    ]
+  let invalidUtf8Labels = [
+    "\xff", # invalid byte
+    "caf\xc3", # truncated sequence
+    "\xE0\x80\x80", # overlong 3-byte form
+    "\xED\xA0\x80", # UTF-16 surrogate
+    "\xF4\x90\x80\x80", # above U+10FFFF
+    "\xF0\x80\x80\x80", # overlong 4-byte form
+    "\xF5\x80\x80\x80", # lead byte F5..F7
+  ]
 
   test "accepts a label of 1 byte and a label of 256 bytes":
     check 'a'.repeat(MinLabelLength).len == 1
