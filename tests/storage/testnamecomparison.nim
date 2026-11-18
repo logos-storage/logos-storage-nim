@@ -89,27 +89,59 @@ checksuite "Name record validator":
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     catalogName = name(publicKey, "catalog").tryGet()
-    key = @catalogName
+    key = dhtKeyFromName(catalogName).tryGet()
 
   proc signedBytes(label = "catalog", expiration = currentTime + 3600): seq[byte] =
     let signed = SignedNameRecord.init(privateKey, newRecord(42'u64, expiration, label))
 
     signed.tryGet().encode()
 
-  test "accepts a valid name record under its name":
+  proc cidKey(codec: MultiCodec, hashCodec: MultiCodec, digest: seq[byte]): seq[byte] =
+    let
+      hash = MultiHash.init(hashCodec, digest).tryGet()
+      cid = Cid.init(CIDv1, codec, hash).tryGet()
+
+    cid.data.buffer
+
+  test "nameFromDhtKey gives back the name of dhtKeyFromName":
+    check nameFromDhtKey(key).tryGet() == catalogName
+
+  test "the key is a CIDv1 with the storage-name codec and a SHA2-256 multihash":
+    let
+      cid = Cid.init(key).tryGet()
+      hash = cid.mhash().tryGet()
+
+    check cid.version == CIDv1
+    check cid.mcodec == multiCodec("storage-name")
+    check hash.mcodec == multiCodec("sha2-256")
+    check hash.data.buffer[hash.dpos ..< hash.dpos + hash.size] == @catalogName
+
+  test "accepts a valid name record under the name's DHT key":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
     check validator.isValid(key, EntryRecord(value: signedBytes()))
 
-  test "refuses a key shorter than 32 bytes":
+  test "refuses a key that is not a CID":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
-    check not validator.isValid(key[0 ..< 31], EntryRecord(value: signedBytes()))
+    check not validator.isValid(key[0 ..< 5], EntryRecord(value: signedBytes()))
 
-  test "refuses a key longer than 32 bytes":
-    let validator = NameRecordValidator(clock: MockClock.new(currentTime))
+  test "refuses a CIDv1 with the right digest and another codec":
+    let
+      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
 
-    check not validator.isValid(key & @[0'u8], EntryRecord(value: signedBytes()))
+    check nameFromDhtKey(otherKey).isErr
+    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
+
+  test "refuses a CID with the right codec and another hash function":
+    let
+      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      otherKey =
+        cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
+
+    check nameFromDhtKey(otherKey).isErr
+    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))

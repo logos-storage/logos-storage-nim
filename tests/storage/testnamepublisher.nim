@@ -12,6 +12,7 @@ import ./helpers/mockclock
 import ./examples
 import ../../storage/discovery
 import ../../storage/naming/record
+import ../../storage/naming/dht
 import ../../storage/naming/publisher {.all.}
 
 type TestNode = object
@@ -85,15 +86,15 @@ asyncchecksuite "Name publisher":
 
     publisher
 
-  proc nameKey(label: string): seq[byte] =
-    @(name(publicKey, label).tryGet())
+  proc dhtKeyFromLabel(label: string): seq[byte] =
+    dhtKeyFromName(name(publicKey, label).tryGet()).tryGet()
 
   # Reads the name record of a label from the DHT and validates it
   proc getFromDht(
       node: TestNode, label: string
   ): Future[SignedNameRecord] {.async: (raises: [CancelledError, CatchableError]).} =
     let
-      key = nameKey(label)
+      key = dhtKeyFromLabel(label)
       bytes = (await node.disc.getValue(key)).tryGet()
 
     validate(name(publicKey, label).tryGet(), bytes, clock.now()).tryGet()
@@ -102,7 +103,7 @@ asyncchecksuite "Name publisher":
   proc getExpiration(
       node: TestNode, label: string
   ): Future[int64] {.async: (raises: [CancelledError, CatchableError]).} =
-    let bytes = (await node.disc.getValue(nameKey(label))).valueOr:
+    let bytes = (await node.disc.getValue(dhtKeyFromLabel(label))).valueOr:
       return 0
 
     let signed = validate(name(publicKey, label).tryGet(), bytes, clock.now()).valueOr:
@@ -159,6 +160,15 @@ asyncchecksuite "Name publisher":
 
     check read.data == published.data
     check read.envelope.publicKey == publicKey
+
+  test "the publisher puts the name record under the name's DHT key":
+    let
+      published = (await publisher.publish("catalog", cid)).tryGet()
+      dhtKey = dhtKeyFromLabel("catalog")
+
+    let bytes = (await server.disc.getValue(dhtKey)).tryGet()
+
+    check bytes == published.encode()
 
   test "a publisher that is a client node publishes through a server node":
     let
@@ -244,7 +254,7 @@ asyncchecksuite "Name publisher":
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
-    check (await server.disc.putValue(nameKey("catalog"), newerBytes)).isOk
+    check (await server.disc.putValue(dhtKeyFromLabel("catalog"), newerBytes)).isOk
     check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isErr
 
     let stored = (await publisher.getNameRecords()).tryGet()
@@ -366,7 +376,7 @@ asyncchecksuite "Name publisher":
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
-    check (await server.disc.putValue(nameKey(failingLabel), newerBytes)).isOk
+    check (await server.disc.putValue(dhtKeyFromLabel(failingLabel), newerBytes)).isOk
 
     clock.advance(oneHour)
 
@@ -387,12 +397,12 @@ asyncchecksuite "Name publisher":
     await otherPublisher.republishAll()
 
     # The name record of the first key is in the DHT
-    check (await reader.disc.getValue(nameKey("catalog"))).isOk
+    check (await reader.disc.getValue(dhtKeyFromLabel("catalog"))).isOk
 
     # The name record of the other key is not in the DHT
-    let otherName = @(name(otherPublicKey, "catalog").tryGet())
+    let otherKey = dhtKeyFromName(name(otherPublicKey, "catalog").tryGet()).tryGet()
 
-    check (await reader.disc.getValue(otherName)).isErr
+    check (await reader.disc.getValue(otherKey)).isErr
 
     # The name record is persisted in the store
     let stored = (await otherPublisher.getNameRecords()).tryGet()

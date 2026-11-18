@@ -19,6 +19,7 @@ import ../clock
 import ../discovery
 import ../logutils
 import ../namespaces
+import ./dht
 import ./record
 
 export record
@@ -51,12 +52,18 @@ proc new*(
     discovery: discovery, metaDs: metaDs, privateKey: privateKey, clock: clock
   )
 
-proc storageKey(name: Name): Result[Key, ref CatchableError] =
+proc persistenceKeyFromName(name: Name): Result[Key, ref CatchableError] =
   ## The name is raw bytes, so it is written in hex to make a valid key.
   let key = Key.init(StorageNamesNamespace & "/" & byteutils.toHex(name)).valueOr:
     return failure("Cannot make the storage key of the name record: " & error.msg)
 
   ok(key)
+
+proc name(self: NamePublisher, label: string): Result[Name, ref CatchableError] =
+  let publicKey = self.privateKey.getPublicKey().valueOr:
+    return failure("Cannot get the public key: " & $error)
+
+  name(publicKey, label)
 
 proc getNameRecord(
     self: NamePublisher, key: Key
@@ -133,17 +140,14 @@ proc publish*(
   ## only be equal to it for the same CID. The name record is persisted, then put
   ## in the DHT.
   let
-    publicKey = self.privateKey.getPublicKey().valueOr:
-      return failure("Cannot get the public key: " & $error)
-    nameBytes = name(publicKey, label).valueOr:
+    nameBytes = self.name(label).valueOr:
       return err(error)
-    key = storageKey(nameBytes).valueOr:
+    persistenceKey = persistenceKeyFromName(nameBytes).valueOr:
       return err(error)
+    sequence = sequenceNumber.valueOr:
+      self.clock.now().uint64
 
-  let sequence = sequenceNumber.valueOr:
-    self.clock.now().uint64
-
-  let current = (await self.getNameRecord(key)).valueOr:
+  let current = (await self.getNameRecord(persistenceKey)).valueOr:
     return err(error)
 
   if current.isSome:
@@ -166,12 +170,15 @@ proc publish*(
       return err(error)
     bytes = signed.encode()
 
-  let stored = await self.metaDs.put(key, bytes)
+  let stored = await self.metaDs.put(persistenceKey, bytes)
 
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
-  let put = await self.discovery.putValue(@nameBytes, bytes)
+  let dhtKey = dhtKeyFromName(nameBytes).valueOr:
+    return err(error)
+
+  let put = await self.discovery.putValue(dhtKey, bytes)
 
   if put.isErr:
     return err(put.error)
@@ -184,14 +191,12 @@ proc unpublish*(
   ## Deletes the stored name record.
   ## It stays in the DHT until it expires.
   let
-    publicKey = self.privateKey.getPublicKey().valueOr:
-      return failure("Cannot get the public key: " & $error)
-    nameBytes = name(publicKey, label).valueOr:
+    nameBytes = self.name(label).valueOr:
       return err(error)
-    key = storageKey(nameBytes).valueOr:
+    persistenceKey = persistenceKeyFromName(nameBytes).valueOr:
       return err(error)
 
-  let deleted = await self.metaDs.delete(key)
+  let deleted = await self.metaDs.delete(persistenceKey)
 
   if deleted.isErr:
     return failure("Cannot delete the name record: " & deleted.error.msg)
@@ -209,8 +214,10 @@ proc republish(
       return err(error)
     nameBytes = signed.name().valueOr:
       return err(error)
+    dhtKey = dhtKeyFromName(nameBytes).valueOr:
+      return err(error)
 
-  await self.discovery.putValue(@nameBytes, signed.encode())
+  await self.discovery.putValue(dhtKey, signed.encode())
 
 proc republishAll*(self: NamePublisher) {.async: (raises: [CancelledError]).} =
   ## Puts every stored name record in the DHT again with a new expiration.
