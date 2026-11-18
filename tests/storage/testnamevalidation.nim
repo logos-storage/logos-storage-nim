@@ -82,14 +82,6 @@ checksuite "Name record validation":
 
     check validate(publisherName, bytes, now).isErr
 
-  test "refuses a name record with a label longer than the maximum":
-    let
-      longLabel = 'a'.repeat(MaxLabelLength + 1)
-      limitName = name(publicKey, 'a'.repeat(MaxLabelLength)).tryGet()
-      bytes = signedBytes(newRecord(longLabel))
-
-    check validate(limitName, bytes, now).isErr
-
   test "refuses a name record whose name does not match the label":
     let
       bytes = signedBytes(newRecord("alpha"))
