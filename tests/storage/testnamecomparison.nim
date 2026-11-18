@@ -89,7 +89,7 @@ checksuite "Name record validator":
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     catalogName = name(publicKey, "catalog").tryGet()
-    key = dhtKeyFromName(catalogName).tryGet()
+    key = dhtKeyFromName(catalogName)
 
   proc signedBytes(label = "catalog", expiration = currentTime + 3600): seq[byte] =
     let signed = SignedNameRecord.init(privateKey, newRecord(42'u64, expiration, label))

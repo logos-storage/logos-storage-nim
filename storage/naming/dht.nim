@@ -33,15 +33,17 @@ type
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
-proc dhtKeyFromName*(name: Name): Result[Key, ref CatchableError] =
+proc dhtKeyFromName*(name: Name): Key =
   ## The name CID of the protocol spec, used as key in the DHT.
   let
-    hash = MultiHash.init(NameHashCodec, name).valueOr:
-      return failure("Cannot make the multihash of the name: " & $error)
-    cid = Cid.init(CIDv1, multiCodec("storage-name"), hash).valueOr:
-      return failure("Cannot make the CID of the name: " & $error)
+    hash = MultiHash.init(NameHashCodec, name).expect(
+        "A name is 32 bytes, the size of a SHA2-256 digest"
+      )
+    cid = Cid.init(CIDv1, multiCodec("storage-name"), hash).expect(
+        "storage-name is a registered content id codec"
+      )
 
-  ok(cid.data.buffer)
+  cid.data.buffer
 
 proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
   ## Refuses a key with another CID version, codec or hash function than

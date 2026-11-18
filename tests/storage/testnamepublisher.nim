@@ -87,7 +87,7 @@ asyncchecksuite "Name publisher":
     publisher
 
   proc dhtKeyFromLabel(label: string): seq[byte] =
-    dhtKeyFromName(name(publicKey, label).tryGet()).tryGet()
+    dhtKeyFromName(name(publicKey, label).tryGet())
 
   # Reads the name record of a label from the DHT and validates it
   proc getFromDht(
@@ -400,9 +400,9 @@ asyncchecksuite "Name publisher":
     check (await reader.disc.getValue(dhtKeyFromLabel("catalog"))).isOk
 
     # The name record of the other key is not in the DHT
-    let otherKey = dhtKeyFromName(name(otherPublicKey, "catalog").tryGet()).tryGet()
+    let otherDhtKey = dhtKeyFromName(name(otherPublicKey, "catalog").tryGet())
 
-    check (await reader.disc.getValue(otherKey)).isErr
+    check (await reader.disc.getValue(otherDhtKey)).isErr
 
     # The name record is persisted in the store
     let stored = (await otherPublisher.getNameRecords()).tryGet()
