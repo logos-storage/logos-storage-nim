@@ -13,6 +13,7 @@ import ./helpers
 import ./examples
 import ../../storage/discovery
 import ../../storage/naming/record
+import ../../storage/naming/dht
 
 type TestNode = object
   switch: Switch
@@ -52,7 +53,7 @@ asyncchecksuite "Discovery - DHT values":
     node
 
   proc newKey(label: string): seq[byte] =
-    @(name(publicKey, label).tryGet())
+    dhtKeyFromName(name(publicKey, label).tryGet()).tryGet()
 
   proc newValue(label: string, sequenceNumber: uint64): seq[byte] =
     let record = NameRecord(

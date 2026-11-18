@@ -10,11 +10,17 @@
 {.push raises: [].}
 
 import pkg/libp2p/protocols/kademlia except PeerRecord
+import pkg/libp2p/cid
+import pkg/libp2p/multicodec
+import pkg/libp2p/multihash
+import pkg/questionable/results
 import pkg/results
 import pkg/stew/arrayops
 
 import ../clock
 import ./record
+
+const NameHashCodec = multiCodec("sha2-256")
 
 type
   NameRecordValidator* = ref object of EntryValidator
@@ -27,13 +33,42 @@ type
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
+proc dhtKeyFromName*(name: Name): Result[Key, ref CatchableError] =
+  ## The name CID of the protocol spec, used as key in the DHT.
+  let
+    hash = MultiHash.init(NameHashCodec, name).valueOr:
+      return failure("Cannot make the multihash of the name: " & $error)
+    cid = Cid.init(CIDv1, multiCodec("storage-name"), hash).valueOr:
+      return failure("Cannot make the CID of the name: " & $error)
+
+  ok(cid.data.buffer)
+
+proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
+  ## Refuses a key with another CID version, codec or hash function than
+  ## `dhtKeyFromName`.
+  let
+    cid = Cid.init(key).valueOr:
+      return failure("The key is not a CID: " & $error)
+    hash = cid.mhash().valueOr:
+      return failure("The CID of the key has no valid multihash: " & $error)
+
+  if cid.version != CIDv1 or cid.mcodec != multiCodec("storage-name"):
+    return failure("The CID of the key is not a CIDv1 of a name")
+
+  if hash.mcodec != NameHashCodec:
+    return failure("The multihash of the key is not SHA2-256")
+
+  let
+    digestStart = hash.dpos
+    name = Name.initCopyFrom(hash.data.buffer[digestStart ..< digestStart + hash.size])
+
+  ok(name)
+
 method isValid*(
     self: NameRecordValidator, key: Key, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
-  if key.len != Name.len:
+  let name = nameFromDhtKey(key).valueOr:
     return false
-
-  let name = Name.initCopyFrom(key)
 
   validate(name, record.value, self.clock.now()).isOk
 
