@@ -31,9 +31,9 @@ const
   NameRecordLifetime* = 24 * 60 * 60 # seconds
 
 type NamePublisher* = ref object
-  ## Publishes the names of the node to the DHT. The name records the node
-  ## publishes are persisted in the metadata store. They are republished when
-  ## the node starts and every 4 hours, with a new expiration.
+  ## Publishes the names of the node to the DHT. The node keeps the name records
+  ## it publishes in its metadata store. It republishes them when it starts and
+  ## every 4 hours, with a new expiration.
   discovery: Discovery
   metaDs: Datastore
   privateKey: PrivateKey
@@ -58,20 +58,6 @@ proc storageKey(name: Name): Result[Key, ref CatchableError] =
 
   ok(key)
 
-proc nameAndStorageKey(
-    self: NamePublisher, label: string
-): Result[tuple[name: Name, key: Key], ref CatchableError] =
-  let publicKey = self.privateKey.getPublicKey().valueOr:
-    return failure("Cannot get the public key: " & $error)
-
-  let nameBytes = name(publicKey, label).valueOr:
-    return err(error)
-
-  let key = storageKey(nameBytes).valueOr:
-    return err(error)
-
-  ok((name: nameBytes, key: key))
-
 proc getNameRecord(
     self: NamePublisher, key: Key
 ): Future[Result[Opt[SignedNameRecord], ref CatchableError]] {.
@@ -93,7 +79,7 @@ proc getNameRecords(
 ): Future[Result[seq[SignedNameRecord], ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
-  ## Every stored name record. Those that don't decode are logged and skipped.
+  ## Returns the stored name records. It logs and skips those that don't decode.
   let queryKey = Key.init(StorageNamesNamespace & "/*").valueOr:
     return failure("Cannot make the query key of the name records: " & error.msg)
 
@@ -144,12 +130,15 @@ proc publish*(
 .} =
   ## Publishes a name record for the label. The sequence number is the current
   ## time unless it is given. It can't be lower than the stored one, and it can
-  ## only be equal to it for the same CID. The name record is stored, then put
+  ## only be equal to it for the same CID. The name record is persisted, then put
   ## in the DHT.
-  let target = self.nameAndStorageKey(label).valueOr:
-    return err(error)
-
-  let key = target.key
+  let
+    publicKey = self.privateKey.getPublicKey().valueOr:
+      return failure("Cannot get the public key: " & $error)
+    nameBytes = name(publicKey, label).valueOr:
+      return err(error)
+    key = storageKey(nameBytes).valueOr:
+      return err(error)
 
   let sequence = sequenceNumber.valueOr:
     self.clock.now().uint64
@@ -182,7 +171,7 @@ proc publish*(
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
-  let put = await self.discovery.putValue(@(target.name), bytes)
+  let put = await self.discovery.putValue(@nameBytes, bytes)
 
   if put.isErr:
     return err(put.error)
@@ -194,10 +183,15 @@ proc unpublish*(
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Deletes the stored name record.
   ## It stays in the DHT until it expires.
-  let target = self.nameAndStorageKey(label).valueOr:
-    return err(error)
+  let
+    publicKey = self.privateKey.getPublicKey().valueOr:
+      return failure("Cannot get the public key: " & $error)
+    nameBytes = name(publicKey, label).valueOr:
+      return err(error)
+    key = storageKey(nameBytes).valueOr:
+      return err(error)
 
-  let deleted = await self.metaDs.delete(target.key)
+  let deleted = await self.metaDs.delete(key)
 
   if deleted.isErr:
     return failure("Cannot delete the name record: " & deleted.error.msg)
