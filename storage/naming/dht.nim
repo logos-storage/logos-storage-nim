@@ -19,14 +19,13 @@ import ./record
 type
   NameRecordValidator* = ref object of EntryValidator
     ## The libp2p KadDHT validator for name records. The DHT calls it on each
-    ## name record it receives or reads, and drops the name records whose key is
-    ## not a name or that don't pass the validation.
+    ## name record it receives or reads, and drops those that don't pass the
+    ## validation.
     clock*: Clock
 
   NameRecordSelector* = ref object of EntrySelector
     ## The libp2p KadDHT selector for name records. When the DHT has several
-    ## name records for a name, it calls it to choose one: the newest, by
-    ## `isNewer`.
+    ## name records for a name, it chooses the newest.
 
 method isValid*(
     self: NameRecordValidator, key: Key, record: EntryRecord
