@@ -141,8 +141,9 @@ proc publish*(
     async: (raises: [CancelledError])
 .} =
   ## Publishes a name record for the label. The sequence number is the current
-  ## time unless it is given. It can't be lower than the stored one. The name
-  ## record is stored, then put in the DHT.
+  ## time unless it is given. It can't be lower than the stored one, and it can
+  ## only be equal to it for the same CID. The name record is stored, then put
+  ## in the DHT.
   let target = self.nameAndStorageKey(label).valueOr:
     return err(error)
 
@@ -154,11 +155,20 @@ proc publish*(
   let current = (await self.getNameRecord(key)).valueOr:
     return err(error)
 
-  if current.isSome and sequence < current.get().data.sequenceNumber:
-    return failure(
-      "The sequence number " & $sequence & " is lower than the stored one: " &
-        $current.get().data.sequenceNumber
-    )
+  if current.isSome:
+    let stored = current.get().data
+
+    if sequence < stored.sequenceNumber:
+      return failure(
+        "The sequence number " & $sequence & " is lower than the stored one: " &
+          $stored.sequenceNumber
+      )
+
+    if sequence == stored.sequenceNumber and cid != stored.cid:
+      return failure(
+        "The sequence number " & $sequence &
+          " is already used by the stored name record with another CID"
+      )
 
   let
     signed = self.mintNameRecord(label, cid, sequence).valueOr:
