@@ -9,6 +9,8 @@
 
 {.push raises: [].}
 
+from pkg/toml_serialization/private/utf8_validate import validateUTF8
+
 import pkg/cbor_serialization
 import pkg/cbor_serialization/value_ops
 import pkg/libp2p
@@ -21,7 +23,8 @@ import pkg/questionable/results
 export signed_envelope
 
 const
-  MaxLabelLength* = 64
+  MinLabelLength* = 1
+  MaxLabelLength* = 256
   NameRecordVersion* = 1'u32
   MaxExpirationDelay* = 48 * 60 * 60
   NameRecordCodec = multiCodec("storage-name-record")
@@ -146,8 +149,14 @@ proc decode*(
   )
 
 proc checkLabel(label: string): Result[void, ref CatchableError] =
+  if label.len < MinLabelLength:
+    return failure("Label is shorter than " & $MinLabelLength & " byte")
+
   if label.len > MaxLabelLength:
     return failure("Label is longer than " & $MaxLabelLength & " bytes")
+
+  if not validateUTF8(label):
+    return failure("Label is not valid UTF-8")
 
   ok()
 
