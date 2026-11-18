@@ -11,7 +11,6 @@
 
 import pkg/chronos
 import pkg/datastore
-import pkg/datastore/typedds
 import pkg/libp2p
 import pkg/questionable/results
 import pkg/stew/byteutils
@@ -36,7 +35,7 @@ type NamePublisher* = ref object
   ## publishes are persisted in the metadata store. They are republished when
   ## the node starts and every 4 hours, with a new expiration.
   discovery: Discovery
-  metaDs: TypedDatastore
+  metaDs: Datastore
   privateKey: PrivateKey
   clock: Clock
   loop: Future[void]
@@ -44,7 +43,7 @@ type NamePublisher* = ref object
 proc new*(
     T: type NamePublisher,
     discovery: Discovery,
-    metaDs: TypedDatastore,
+    metaDs: Datastore,
     privateKey: PrivateKey,
     clock: Clock,
 ): NamePublisher =
@@ -78,7 +77,7 @@ proc getNameRecord(
 ): Future[Result[Opt[SignedNameRecord], ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
-  let bytes = (await self.metaDs.ds.get(key)).valueOr:
+  let bytes = (await self.metaDs.get(key)).valueOr:
     if error of DatastoreKeyNotFound:
       return ok(Opt.none(SignedNameRecord))
 
@@ -98,7 +97,7 @@ proc getNameRecords(
   let queryKey = Key.init(StorageNamesNamespace & "/*").valueOr:
     return failure("Cannot make the query key of the name records: " & error.msg)
 
-  let iter = (await self.metaDs.ds.query(Query.init(queryKey))).valueOr:
+  let iter = (await self.metaDs.query(Query.init(queryKey))).valueOr:
     return failure("Cannot query the stored name records: " & error.msg)
 
   var records: seq[SignedNameRecord]
@@ -178,7 +177,7 @@ proc publish*(
       return err(error)
     bytes = signed.encode()
 
-  let stored = await self.metaDs.ds.put(key, bytes)
+  let stored = await self.metaDs.put(key, bytes)
 
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
@@ -198,7 +197,7 @@ proc unpublish*(
   let target = self.nameAndStorageKey(label).valueOr:
     return err(error)
 
-  let deleted = await self.metaDs.ds.delete(target.key)
+  let deleted = await self.metaDs.delete(target.key)
 
   if deleted.isErr:
     return failure("Cannot delete the name record: " & deleted.error.msg)

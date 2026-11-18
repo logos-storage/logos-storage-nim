@@ -539,7 +539,7 @@ proc new*(
       blockTtl = config.blockTtl,
     )
 
-    namePublisher = NamePublisher.new(discovery, repoStore.metaDs, privateKey, clock)
+    namePublisher = NamePublisher.new(discovery, repoStore.metaDs.ds, privateKey, clock)
 
     maintenance = BlockMaintainer.new(
       repoStore,
