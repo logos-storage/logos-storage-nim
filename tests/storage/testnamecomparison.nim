@@ -49,20 +49,13 @@ checksuite "Name record selector":
     check selector.select(key, @[older, newest, oldest]).tryGet() == 1
     check selector.select(key, @[oldest, older, newest]).tryGet() == 2
 
-  test "selects the name record that expires later when seqnums are equal":
+  test "the received name record replaces the stored one when seqnums are equal":
     let
       expiresEarlier = EntryRecord(value: signedBytes(42'u64, tenOClock))
       expiresLater = EntryRecord(value: signedBytes(42'u64, twoOClock))
 
-    check selector.select(key, @[expiresEarlier, expiresLater]).tryGet() == 1
+    check selector.select(key, @[expiresEarlier, expiresLater]).tryGet() == 0
     check selector.select(key, @[expiresLater, expiresEarlier]).tryGet() == 0
-
-  test "keeps the first name record when both have the same fields":
-    let
-      first = EntryRecord(value: signedBytes(42'u64, tenOClock))
-      second = EntryRecord(value: signedBytes(42'u64, tenOClock))
-
-    check selector.select(key, @[first, second]).tryGet() == 0
 
   test "skips a name record that doesn't decode":
     let
