@@ -30,7 +30,6 @@ asyncchecksuite "Name publisher":
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
-    secondServer: TestNode
     bootstrapNodes: seq[TestNode]
     metaDs: Datastore
     publisher: NamePublisher
@@ -115,14 +114,9 @@ asyncchecksuite "Name publisher":
     clock = MockClock.new(currentTime)
 
     server = await startNode(clock, isServer = true)
-    # The read quorum is 2, so a read needs two server nodes
-    secondServer = await startNode(clock, isServer = true, bootstrap = @[server])
-    bootstrapNodes = @[server, secondServer]
+    bootstrapNodes = @[server]
     metaDs = newMetaDs()
     publisher = newPublisher(server, metaDs, clock)
-
-    # Wait until the first server knows the second one
-    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
   test "publishes with the current time as seqnum by default":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
