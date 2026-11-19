@@ -1,3 +1,4 @@
+import std/sequtils
 import std/strutils
 
 import pkg/cbor_serialization
@@ -21,12 +22,15 @@ checksuite "Name record validation":
     publisherName = name(publicKey, label).tryGet()
 
   proc newRecord(
-      label: string, version = NameRecordVersion, expiration = now + 3600
+      label: string,
+      version = NameRecordVersion,
+      expiration = now + 3600,
+      cid = Cid.example,
   ): NameRecord =
     NameRecord(
       version: version,
       label: label,
-      cid: Cid.example,
+      cid: cid,
       seqnum: 1794304800'u64,
       expiration: expiration,
     )
@@ -80,6 +84,14 @@ checksuite "Name record validation":
 
     check validate(betaName, bytes, now).isErr
 
+  test "refuses a name record with a label longer than the maximum":
+    let
+      longLabel = 'a'.repeat(MaxLabelLength + 1)
+      limitName = name(publicKey, 'a'.repeat(MaxLabelLength)).tryGet()
+      bytes = signedBytes(newRecord(longLabel))
+
+    check validate(limitName, bytes, now).isErr
+
   test "refuses a name record signed by another key":
     let
       attackerKey = PrivateKey.example
@@ -130,6 +142,28 @@ checksuite "Name record validation":
         expiration: validRecord.expiration,
       )
 
-    check cidV0.version == CIDv0
     check validate(publisherName, handBuiltBytes(validRecord), now).isOk
     check validate(publisherName, handBuiltBytes(v0Record), now).isErr
+
+  # 4 bytes of the CID are the version, the codec, the hash code and the
+  # digest length.
+  proc cidWithLength(length: int): Cid =
+    let hash = MultiHash.digest("identity", newSeq[byte](length - 4)).tryGet()
+
+    Cid.init(CIDv1, multiCodec("raw"), hash).tryGet()
+
+  test "refuses a name record whose cid is longer than 128 bytes":
+    let
+      validRecord = newRecord(label, cid = cidWithLength(128))
+      longRecord = newRecord(label, cid = cidWithLength(129))
+
+    check validate(publisherName, handBuiltBytes(validRecord), now).isOk
+    check validate(publisherName, handBuiltBytes(longRecord), now).isErr
+
+  test "refuses bytes that are not a name record":
+    let
+      randomBytes = newSeqWith(100, 0xAB'u8)
+      noBytes = newSeq[byte]()
+
+    check validate(publisherName, randomBytes, now).isErr
+    check validate(publisherName, noBytes, now).isErr

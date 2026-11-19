@@ -85,7 +85,6 @@ checksuite "Name record":
   ]
 
   test "accepts a label of 1 byte and a label of 256 bytes":
-    check 'a'.repeat(MinLabelLength).len == 1
     check name(publicKey, 'a'.repeat(MinLabelLength)).isOk
     check name(publicKey, 'a'.repeat(256)).isOk
 
@@ -112,7 +111,6 @@ checksuite "Name record":
         expiration: 1794477600'i64,
       )
 
-    check cidV0.version == CIDv0
     check newRecord(label).sign(privateKey).isOk
     check record.sign(privateKey).isErr
 
@@ -124,18 +122,10 @@ checksuite "Name record":
     Cid.init(CIDv1, multiCodec("raw"), hash).tryGet()
 
   test "sign accepts a name record whose cid is 128 bytes":
-    let cid = cidWithLength(128)
-
-    check cid.data.buffer.len == 128
-    check Cid.init(cid.data.buffer).tryGet() == cid
-    check newRecord(label, cid).sign(privateKey).isOk
+    check newRecord(label, cidWithLength(128)).sign(privateKey).isOk
 
   test "sign refuses a name record whose cid is longer than 128 bytes":
-    let cid = cidWithLength(129)
-
-    check cid.data.buffer.len == 129
-    check Cid.init(cid.data.buffer).tryGet() == cid
-    check newRecord(label, cid).sign(privateKey).isErr
+    check newRecord(label, cidWithLength(129)).sign(privateKey).isErr
 
   test "sign refuses a label that is not valid UTF-8":
     for invalidLabel in invalidUtf8Labels:
@@ -147,12 +137,9 @@ checksuite "Name record":
       now = record.expiration - 3600
       bytes = SignedNameRecord.init(privateKey, record).tryGet().encode()
 
-    check createName(publicKey, label) == name(publicKey, label).tryGet()
     check validate(createName(publicKey, ""), bytes, now).isErr
 
   test "validate refuses a name record with a label that is not valid UTF-8":
-    check createName(publicKey, label) == name(publicKey, label).tryGet()
-
     for invalidLabel in invalidUtf8Labels:
       let
         record = newRecord(invalidLabel)
@@ -303,12 +290,11 @@ checksuite "Name record":
 
   test "refuses a name record whose cid is longer than 128 bytes":
     let
-      cid = cidWithLength(129)
       validRecord = newRecord(label, cidWithLength(128))
       validBytes = signPayload(Cbor.encode(cborFields(validRecord)))
-      longBytes = signPayload(Cbor.encode(cborFields(newRecord(label, cid))))
+      longRecord = newRecord(label, cidWithLength(129))
+      longBytes = signPayload(Cbor.encode(cborFields(longRecord)))
 
-    check cid.data.buffer.len == 129
     check decodeNameRecord(validBytes).isOk
     check decodeNameRecord(longBytes).isErr
 
