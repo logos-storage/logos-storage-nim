@@ -26,7 +26,6 @@ const
   MinLabelLength* = 1
   MaxLabelLength* = 256
   NameRecordVersion* = 1'u32
-  MaxExpirationDelay* = 48 * 60 * 60
   NameRecordCodec = multiCodec("storage-name")
   NameRecordDomain = "logos-storage-name-record"
   IntegerKinds = {CborValueKind.Unsigned, CborValueKind.Negative}
@@ -221,9 +220,6 @@ proc validate*(
 
   if signed.data.expiration < now:
     return failure("The name record has expired")
-
-  if signed.data.expiration > now + MaxExpirationDelay:
-    return failure("The name record expires too far in the future")
 
   let recordName = signed.name().valueOr:
     return err(error)
