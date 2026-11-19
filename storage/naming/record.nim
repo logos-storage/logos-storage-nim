@@ -219,7 +219,7 @@ proc validate*(
   if signed.data.version != NameRecordVersion:
     return failure("Unknown name record version: " & $signed.data.version)
 
-  if signed.data.expiration <= now:
+  if signed.data.expiration < now:
     return failure("The name record has expired")
 
   if signed.data.expiration > now + MaxExpirationDelay:

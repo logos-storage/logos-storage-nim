@@ -59,10 +59,10 @@ checksuite "Name record validation":
     check validate(publisherName, bytes, now).isOk
     check validate(publisherName, modified, now).isErr
 
-  test "refuses a name record with an expiration equal to now":
+  test "accepts a name record with an expiration equal to now":
     let bytes = signedBytes(newRecord(label, expiration = now))
 
-    check validate(publisherName, bytes, now).isErr
+    check validate(publisherName, bytes, now).isOk
 
   test "refuses a name record with an expiration before now":
     let bytes = signedBytes(newRecord(label, expiration = now - 1))
