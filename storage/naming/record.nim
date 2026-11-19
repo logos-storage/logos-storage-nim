@@ -112,9 +112,8 @@ proc readTime(fields: CborValueRef, key: string): Result[int64, ref CatchableErr
 
 proc checkCid(cid: Cid): Result[void, ref CatchableError] =
   if cid.data.buffer.len > MaxCidLength:
-    return failure(
-      "The cid of the name record is longer than " & $MaxCidLength & " bytes"
-    )
+    return
+      failure("The cid of the name record is longer than " & $MaxCidLength & " bytes")
 
   ok()
 

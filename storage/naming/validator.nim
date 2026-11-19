@@ -69,9 +69,10 @@ method select*(
   ##
   ## When the DHT stores a name record, `records` is a list of two items,
   ## [received, stored]. If the received name record has the same seqnum as the
-  ## stored one, the received one is selected, so that the name record is
-  ## replaced and its 24-hour window restarts, see
-  ## [DefaultRecordExpirationInterval].
+  ## stored one, the received one is selected, so that the DHT replaces its copy
+  ## and restarts its retention window (24 hours by default, see
+  ## [DefaultRecordExpirationInterval]). This window is not the expiration of
+  ## the name record.
   ##
   ## When the DHT reads a name, `records` is a list of items from other peers.
   var
