@@ -5,7 +5,6 @@ import pkg/cbor_serialization
 import pkg/cbor_serialization/value_ops
 import pkg/libp2p
 import pkg/libp2p/protobuf/minprotobuf
-import pkg/libp2p/vbuffer
 import pkg/nimcrypto/sha2
 import pkg/questionable/results
 
@@ -63,18 +62,21 @@ checksuite "Name record":
 
     check name(publicKey, label).tryGet() != name(otherKey, label).tryGet()
 
+  test "the name is the SHA2-256 of the public key bytes followed by the label bytes":
+    let
+      labelBytes = @(label.toOpenArrayByte(0, label.high))
+      expected = sha256.digest(publicKey.getBytes().tryGet() & labelBytes).data
+
+    check name(publicKey, label).tryGet() == expected
+
   test "refuses a label longer than the maximum":
     check name(publicKey, 'a'.repeat(MaxLabelLength + 1)).isErr
     check name(publicKey, 'a'.repeat(MaxLabelLength)).isOk
 
   proc createName(publicKey: PublicKey, label: string): Name =
-    var buffer = initVBuffer()
+    let labelBytes = @(label.toOpenArrayByte(0, label.high))
 
-    buffer.writeSeq(publicKey.getBytes().tryGet())
-    buffer.writeSeq(label)
-    buffer.finish()
-
-    sha256.digest(buffer.buffer).data
+    sha256.digest(publicKey.getBytes().tryGet() & labelBytes).data
 
   let invalidUtf8Labels = [
     "\xff", # invalid byte
