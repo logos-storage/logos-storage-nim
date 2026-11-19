@@ -86,14 +86,14 @@ asyncchecksuite "Name publisher":
 
     publisher
 
-  proc dhtKeyFromLabel(label: string): seq[byte] =
-    dhtKeyFromName(name(publicKey, label).tryGet())
+  proc nameKeyFromLabel(label: string): seq[byte] =
+    nameKey(name(publicKey, label).tryGet())
 
   # Reads the name record of a label from the DHT and validates it
   proc getFromDht(
       node: TestNode, label: string
   ): Future[SignedNameRecord] {.async: (raises: [CancelledError, CatchableError]).} =
-    let key = dhtKeyFromLabel(label)
+    let key = nameKeyFromLabel(label)
 
     let bytes = (await node.disc.getValue(key)).tryGet()
 
@@ -103,7 +103,7 @@ asyncchecksuite "Name publisher":
   proc getExpiration(
       node: TestNode, label: string
   ): Future[int64] {.async: (raises: [CancelledError, CatchableError]).} =
-    let bytes = (await node.disc.getValue(dhtKeyFromLabel(label))).valueOr:
+    let bytes = (await node.disc.getValue(nameKeyFromLabel(label))).valueOr:
       return 0
 
     let signed = validate(name(publicKey, label).tryGet(), bytes, clock.now()).valueOr:
@@ -124,22 +124,21 @@ asyncchecksuite "Name publisher":
     # Wait until the first server knows the second one
     check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
-  test "publishes with the current time as sequence number by default":
+  test "publishes with the current time as seqnum by default":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
 
     check signed.data.version == NameRecordVersion
     check signed.data.label == "catalog"
     check signed.data.cid == cid
-    check signed.data.sequenceNumber == currentTime.uint64
+    check signed.data.seqnum == currentTime.uint64
 
-  test "publishes with the given sequence number":
-    let sequenceNumber = 7'u64
+  test "publishes with the given seqnum":
+    let seqnum = 7'u64
 
-    let signed = (
-      await publisher.publish("catalog", cid, sequenceNumber = Opt.some(sequenceNumber))
-    ).tryGet()
+    let signed =
+      (await publisher.publish("catalog", cid, seqnum = Opt.some(seqnum))).tryGet()
 
-    check signed.data.sequenceNumber == sequenceNumber
+    check signed.data.seqnum == seqnum
 
   test "the expiration is 24 hours after the current time":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
@@ -162,12 +161,12 @@ asyncchecksuite "Name publisher":
     check read.data == published.data
     check read.envelope.publicKey == publicKey
 
-  test "the publisher puts the name record under the name's DHT key":
+  test "the publisher advertises the name record under the name key":
     let
       published = (await publisher.publish("catalog", cid)).tryGet()
-      dhtKey = dhtKeyFromLabel("catalog")
+      nameKey = nameKeyFromLabel("catalog")
 
-    let bytes = (await server.disc.getValue(dhtKey)).tryGet()
+    let bytes = (await server.disc.getValue(nameKey)).tryGet()
 
     check bytes == published.encode()
 
@@ -185,7 +184,7 @@ asyncchecksuite "Name publisher":
 
     check read.data == published.data
 
-  test "publishing a newer sequence number replaces the name record":
+  test "publishing a newer seqnum replaces the name record":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(1'u64))).isOk
@@ -193,16 +192,16 @@ asyncchecksuite "Name publisher":
     # This read gives the reader a local copy
     let first = await reader.getFromDht("catalog")
 
-    check first.data.sequenceNumber == 1'u64
+    check first.data.seqnum == 1'u64
 
     check (await publisher.publish("catalog", otherCid, Opt.some(2'u64))).isOk
 
     let read = await reader.getFromDht("catalog")
 
-    check read.data.sequenceNumber == 2'u64
+    check read.data.seqnum == 2'u64
     check read.data.cid == otherCid
 
-  test "refuses a sequence number lower than the stored one":
+  test "refuses a seqnum lower than the stored one":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
@@ -214,18 +213,18 @@ asyncchecksuite "Name publisher":
     # The DHT still holds the first name record
     let read = await reader.getFromDht("catalog")
 
-    check read.data.sequenceNumber == 10'u64
+    check read.data.seqnum == 10'u64
     check read.data.cid == cid
 
-  test "accepts the same CID for an existing sequence number":
+  test "accepts the same CID for an existing seqnum":
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
 
     let again = await publisher.publish("catalog", cid, Opt.some(10'u64))
 
     check again.isOk
-    check again.tryGet().data.sequenceNumber == 10'u64
+    check again.tryGet().data.seqnum == 10'u64
 
-  test "refuses a different CID for an existing sequence number":
+  test "refuses a different CID for an existing seqnum":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(42'u64))).isOk
@@ -237,32 +236,32 @@ asyncchecksuite "Name publisher":
     # The DHT still holds the first name record
     let read = await reader.getFromDht("catalog")
 
-    check read.data.sequenceNumber == 42'u64
+    check read.data.seqnum == 42'u64
     check read.data.cid == cid
 
-  test "keeps the name record stored when the DHT put fails":
+  test "keeps the name record stored when advertising it fails":
     # The publisher is a fresh node that lost its previous name record,
-    # with sequence number 10.
-    # The put fails because the DHT has a newer name record, but the name
+    # with seqnum 10.
+    # Advertising fails because the DHT has a newer name record, but the name
     # record stays stored locally.
     let
       newer = NameRecord(
         version: NameRecordVersion,
         label: "catalog",
         cid: otherCid,
-        sequenceNumber: 10'u64,
+        seqnum: 10'u64,
         expiration: currentTime + oneHour,
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
-    check (await server.disc.putValue(dhtKeyFromLabel("catalog"), newerBytes)).isOk
+    check (await server.disc.putValue(nameKeyFromLabel("catalog"), newerBytes)).isOk
     check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isErr
 
     let stored = (await publisher.getNameRecords()).tryGet()
 
     check stored.len == 1
     check stored[0].data.cid == cid
-    check stored[0].data.sequenceNumber == 5'u64
+    check stored[0].data.seqnum == 5'u64
 
   test "unpublish deletes the name record":
     check (await publisher.publish("catalog", cid)).isOk
@@ -298,12 +297,11 @@ asyncchecksuite "Name publisher":
   test "unpublish of an unknown label does not return an error":
     check (await publisher.unpublish("unknown")).isOk
 
-  test "republishAll extends the expiration with the same CID and sequence number":
+  test "republishAll extends the expiration with the same CID and seqnum":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-    let sequenceNumber = 3'u64
+    let seqnum = 3'u64
 
-    let published =
-      (await publisher.publish("catalog", cid, Opt.some(sequenceNumber))).tryGet()
+    let published = (await publisher.publish("catalog", cid, Opt.some(seqnum))).tryGet()
 
     clock.advance(oneHour)
 
@@ -312,7 +310,7 @@ asyncchecksuite "Name publisher":
     let read = await reader.getFromDht("catalog")
 
     check read.data.cid == cid
-    check read.data.sequenceNumber == sequenceNumber
+    check read.data.seqnum == seqnum
     check read.data.expiration == currentTime + oneHour + NameRecordLifetime
     check read.data.expiration > published.data.expiration
     check read.envelope.publicKey == publicKey
@@ -336,9 +334,9 @@ asyncchecksuite "Name publisher":
 
   test "start republishes the stored name records right away after a restart":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-    let sequenceNumber = 3'u64
+    let seqnum = 3'u64
 
-    check (await publisher.publish("catalog", cid, Opt.some(sequenceNumber))).isOk
+    check (await publisher.publish("catalog", cid, Opt.some(seqnum))).isOk
 
     await publisher.stop()
 
@@ -366,18 +364,18 @@ asyncchecksuite "Name publisher":
       failingLabel = stored[0].data.label
       nextLabel = stored[1].data.label
 
-    # The DHT holds a newer name record for this label, so its put fails
+    # The DHT holds a newer name record for this label, so advertising it fails
     let
       newer = NameRecord(
         version: NameRecordVersion,
         label: failingLabel,
         cid: otherCid,
-        sequenceNumber: currentTime.uint64 + 10,
+        seqnum: currentTime.uint64 + 10,
         expiration: currentTime + oneHour,
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
-    check (await server.disc.putValue(dhtKeyFromLabel(failingLabel), newerBytes)).isOk
+    check (await server.disc.putValue(nameKeyFromLabel(failingLabel), newerBytes)).isOk
 
     clock.advance(oneHour)
 
@@ -398,12 +396,12 @@ asyncchecksuite "Name publisher":
     await otherPublisher.republishAll()
 
     # The name record of the first key is in the DHT
-    check (await reader.disc.getValue(dhtKeyFromLabel("catalog"))).isOk
+    check (await reader.disc.getValue(nameKeyFromLabel("catalog"))).isOk
 
     # The name record of the other key is not in the DHT
-    let otherDhtKey = dhtKeyFromName(name(otherPublicKey, "catalog").tryGet())
+    let otherNameKey = nameKey(name(otherPublicKey, "catalog").tryGet())
 
-    check (await reader.disc.getValue(otherDhtKey)).isErr
+    check (await reader.disc.getValue(otherNameKey)).isErr
 
     # The name record is persisted in the store
     let stored = (await otherPublisher.getNameRecords()).tryGet()

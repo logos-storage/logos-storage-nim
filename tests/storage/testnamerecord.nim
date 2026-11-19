@@ -25,7 +25,7 @@ checksuite "Name record":
       version: 1,
       label: label,
       cid: Cid.example,
-      sequenceNumber: 1794304800'u64,
+      seqnum: 1794304800'u64,
       expiration: 1794477600'i64,
     )
 
@@ -39,7 +39,7 @@ checksuite "Name record":
     check decoded.data.version == record.version
     check decoded.data.label == record.label
     check decoded.data.cid == record.cid
-    check decoded.data.sequenceNumber == record.sequenceNumber
+    check decoded.data.seqnum == record.seqnum
     check decoded.data.expiration == record.expiration
     check decoded.envelope.publicKey == publicKey
 
@@ -154,7 +154,7 @@ checksuite "Name record":
     fields["label"] = CborValueRef(kind: CborValueKind.String, strVal: record.label)
     fields["cid"] =
       CborValueRef(kind: CborValueKind.Bytes, bytesVal: record.cid.data.buffer)
-    fields["seq"] = unsignedValue(record.sequenceNumber)
+    fields["seqnum"] = unsignedValue(record.seqnum)
     fields["expiration"] = taggedValue(1, unsignedValue(record.expiration.uint64))
 
     fields
@@ -176,7 +176,7 @@ checksuite "Name record":
     check payload["version"].numVal.integer == record.version.uint64
     check payload["label"].strVal == record.label
     check payload["cid"].bytesVal == record.cid.data.buffer
-    check payload["seq"].numVal.integer == record.sequenceNumber
+    check payload["seqnum"].numVal.integer == record.seqnum
     check payload["expiration"].kind == CborValueKind.Tag
     check payload["expiration"].tagVal.tag == 1'u64
     check payload["expiration"].tagVal.val.kind == CborValueKind.Unsigned
@@ -192,7 +192,7 @@ checksuite "Name record":
     check decoded.data.version == record.version
     check decoded.data.label == record.label
     check decoded.data.cid == record.cid
-    check decoded.data.sequenceNumber == record.sequenceNumber
+    check decoded.data.seqnum == record.seqnum
     check decoded.data.expiration == record.expiration
 
   test "refuses a name record whose payload is protobuf":
@@ -202,7 +202,7 @@ checksuite "Name record":
     pb.write(1, record.version.uint64)
     pb.write(2, record.label)
     pb.write(3, record.cid.data.buffer)
-    pb.write(4, record.sequenceNumber)
+    pb.write(4, record.seqnum)
     pb.write(5, record.expiration.uint64)
     pb.finish()
 
@@ -211,7 +211,7 @@ checksuite "Name record":
     check decodeNameRecord(bytes).isErr
 
   test "refuses a name record whose CBOR payload misses a field":
-    for key in ["version", "label", "cid", "seq", "expiration"]:
+    for key in ["version", "label", "cid", "seqnum", "expiration"]:
       let fields = cborFields(newRecord(label))
 
       fields.delete(key)
@@ -223,7 +223,7 @@ checksuite "Name record":
   test "refuses a name record whose CBOR payload has a field of the wrong type":
     let wrongText = CborValueRef(kind: CborValueKind.String, strVal: "1")
 
-    for key in ["version", "label", "cid", "seq", "expiration"]:
+    for key in ["version", "label", "cid", "seqnum", "expiration"]:
       let fields = cborFields(newRecord(label))
 
       fields[key] =
@@ -243,7 +243,7 @@ checksuite "Name record":
 
     for (key, value) in [
       ("version", unsignedValue(uint32.high.uint64 + 1)),
-      ("seq", negativeOne),
+      ("seqnum", negativeOne),
       ("expiration", taggedValue(1, unsignedValue(uint64.high))),
     ]:
       let fields = cborFields(newRecord(label))

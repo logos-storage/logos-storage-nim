@@ -116,34 +116,34 @@ proc getNameRecords(
   ok(records)
 
 proc mintNameRecord(
-    self: NamePublisher, label: string, cid: Cid, sequenceNumber: uint64
+    self: NamePublisher, label: string, cid: Cid, seqnum: uint64
 ): Result[SignedNameRecord, ref CatchableError] =
   ## Builds a name record that expires in `NameRecordLifetime` and signs it.
   let nameRecord = NameRecord(
     version: NameRecordVersion,
     label: label,
     cid: cid,
-    sequenceNumber: sequenceNumber,
+    seqnum: seqnum,
     expiration: self.clock.now() + NameRecordLifetime,
   )
 
   sign(nameRecord, self.privateKey)
 
 proc publish*(
-    self: NamePublisher, label: string, cid: Cid, sequenceNumber = Opt.none(uint64)
+    self: NamePublisher, label: string, cid: Cid, seqnum = Opt.none(uint64)
 ): Future[Result[SignedNameRecord, ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
-  ## Publishes a name record for the label. The sequence number is the current
-  ## time unless it is given. It can't be lower than the stored one, and it can
-  ## only be equal to it for the same CID. The name record is persisted, then put
-  ## in the DHT.
+  ## Publishes a name record for the label. The seqnum is the current time
+  ## unless it is given. It can't be lower than the stored one, and it can only
+  ## be equal to it for the same CID. The name record is persisted, then
+  ## advertised in the DHT.
   let
     nameBytes = self.name(label).valueOr:
       return err(error)
     persistenceKey = persistenceKeyFromName(nameBytes)
-    dhtKey = dhtKeyFromName(nameBytes)
-    sequence = sequenceNumber.valueOr:
+    nameKey = nameKey(nameBytes)
+    sequence = seqnum.valueOr:
       self.clock.now().uint64
 
   let current = (await self.getNameRecord(persistenceKey)).valueOr:
@@ -152,15 +152,14 @@ proc publish*(
   if current.isSome:
     let stored = current.get().data
 
-    if sequence < stored.sequenceNumber:
+    if sequence < stored.seqnum:
       return failure(
-        "The sequence number " & $sequence & " is lower than the stored one: " &
-          $stored.sequenceNumber
+        "The seqnum " & $sequence & " is lower than the stored one: " & $stored.seqnum
       )
 
-    if sequence == stored.sequenceNumber and cid != stored.cid:
+    if sequence == stored.seqnum and cid != stored.cid:
       return failure(
-        "The sequence number " & $sequence &
+        "The seqnum " & $sequence &
           " is already used by the stored name record with another CID"
       )
 
@@ -174,10 +173,10 @@ proc publish*(
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
-  let put = await self.discovery.putValue(dhtKey, bytes)
+  let advertised = await self.discovery.putValue(nameKey, bytes)
 
-  if put.isErr:
-    return err(put.error)
+  if advertised.isErr:
+    return err(advertised.error)
 
   ok(signed)
 
@@ -201,20 +200,18 @@ proc unpublish*(
 proc republish(
     self: NamePublisher, nameRecord: NameRecord
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
-  ## Signs a name record again with a new expiration and puts it in the DHT.
+  ## Signs a name record again with a new expiration and advertises it in the DHT.
   let
-    signed = self.mintNameRecord(
-      nameRecord.label, nameRecord.cid, nameRecord.sequenceNumber
-    ).valueOr:
+    signed = self.mintNameRecord(nameRecord.label, nameRecord.cid, nameRecord.seqnum).valueOr:
       return err(error)
     nameBytes = signed.name().valueOr:
       return err(error)
-    dhtKey = dhtKeyFromName(nameBytes)
+    nameKey = nameKey(nameBytes)
 
-  await self.discovery.putValue(dhtKey, signed.encode())
+  await self.discovery.putValue(nameKey, signed.encode())
 
 proc republishAll*(self: NamePublisher) {.async: (raises: [CancelledError]).} =
-  ## Puts every stored name record in the DHT again with a new expiration.
+  ## Advertises every stored name record in the DHT again with a new expiration.
   ## A failure on one name record is logged and doesn't stop the others.
   ##
   ## The name records signed by another key are skipped. They stay in the store,

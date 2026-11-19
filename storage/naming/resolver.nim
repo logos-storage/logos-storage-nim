@@ -35,7 +35,7 @@ proc resolve*(
   ## The DHT validator has already checked the name record, so it is only
   ## decoded here: see [NameRecordValidator] and `bestValidRecord` in
   ## libp2p/protocols/kademlia/get.nim.
-  let bytes = (await discovery.getValue(dhtKeyFromName(name))).valueOr:
+  let bytes = (await discovery.getValue(nameKey(name))).valueOr:
     if error.msg.endsWith(NoNameRecordError):
       return ok(Opt.none(Cid))
 
