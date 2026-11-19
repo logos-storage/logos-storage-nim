@@ -219,6 +219,17 @@ checksuite "Name record":
     check decoded.data.seqnum == record.seqnum
     check decoded.data.expiration == record.expiration
 
+  test "refuses a name record whose signature is not valid":
+    let
+      payload = Cbor.encode(cborFields(newRecord(label)))
+      otherDomainBytes = Envelope
+        .init(privateKey, NameRecord.payloadType(), payload, "another-domain")
+        .tryGet()
+        .encode()
+
+    check decodeNameRecord(signPayload(payload)).isOk
+    check decodeNameRecord(otherDomainBytes).isErr
+
   test "refuses a name record whose payload is protobuf":
     let record = newRecord(label)
 
