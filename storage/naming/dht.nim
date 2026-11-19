@@ -47,7 +47,7 @@ proc dhtKeyFromName*(name: Name): Key =
 
 proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
   ## Refuses a key with another CID version, codec or hash function than
-  ## `dhtKeyFromName`.
+  ## `dhtKeyFromName`, and a key with bytes after the name CID.
   let
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
@@ -63,6 +63,9 @@ proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
   let
     digestStart = hash.dpos
     name = Name.initCopyFrom(hash.data.buffer[digestStart ..< digestStart + hash.size])
+
+  if dhtKeyFromName(name) != key:
+    return failure("The key has bytes that are not part of the name CID")
 
   ok(name)
 
