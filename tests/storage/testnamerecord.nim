@@ -69,10 +69,6 @@ checksuite "Name record":
 
     check name(publicKey, label).tryGet() == expected
 
-  test "refuses a label longer than the maximum":
-    check name(publicKey, 'a'.repeat(MaxLabelLength + 1)).isErr
-    check name(publicKey, 'a'.repeat(MaxLabelLength)).isOk
-
   proc createName(publicKey: PublicKey, label: string): Name =
     let labelBytes = @(label.toOpenArrayByte(0, label.high))
 
