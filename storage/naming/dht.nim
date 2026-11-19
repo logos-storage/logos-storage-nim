@@ -14,10 +14,10 @@ import pkg/libp2p/cid
 import pkg/libp2p/multicodec
 import pkg/libp2p/multihash
 import pkg/questionable/results
-import pkg/results
 import pkg/stew/arrayops
 
 import ../clock
+import ../utils/digest
 import ./record
 
 const NameHashCodec = multiCodec("sha2-256")
@@ -60,11 +60,7 @@ proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
   if hash.mcodec != NameHashCodec:
     return failure("The multihash of the key is not SHA2-256")
 
-  let
-    digestStart = hash.dpos
-    name = Name.initCopyFrom(hash.data.buffer[digestStart ..< digestStart + hash.size])
-
-  ok(name)
+  ok(Name.initCopyFrom(hash.digestBytes))
 
 method isValid*(
     self: NameRecordValidator, key: Key, record: EntryRecord

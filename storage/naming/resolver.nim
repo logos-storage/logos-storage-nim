@@ -13,7 +13,6 @@ import std/strutils
 
 import pkg/chronos
 import pkg/libp2p
-import pkg/questionable/results
 
 import ../discovery
 import ./dht
