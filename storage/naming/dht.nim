@@ -33,8 +33,8 @@ type
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
-proc dhtKeyFromName*(name: Name): Key =
-  ## The name CID of the protocol spec, used as key in the DHT.
+proc nameKey*(name: Name): Key =
+  ## The name key of the protocol spec: the name CID, used as key in the DHT.
   let
     hash = MultiHash.init(NameHashCodec, name).expect(
         "A name is 32 bytes, the size of a SHA2-256 digest"
@@ -45,9 +45,9 @@ proc dhtKeyFromName*(name: Name): Key =
 
   cid.data.buffer
 
-proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
+proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
   ## Refuses a key with another CID version, codec or hash function than
-  ## `dhtKeyFromName`, and a key with bytes after the name CID.
+  ## `nameKey`, and a key with bytes after the name CID.
   let
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
@@ -64,7 +64,7 @@ proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
     digestStart = hash.dpos
     name = Name.initCopyFrom(hash.data.buffer[digestStart ..< digestStart + hash.size])
 
-  if dhtKeyFromName(name) != key:
+  if nameKey(name) != key:
     return failure("The key has bytes that are not part of the name CID")
 
   ok(name)
@@ -72,7 +72,7 @@ proc nameFromDhtKey*(key: Key): Result[Name, ref CatchableError] =
 method isValid*(
     self: NameRecordValidator, key: Key, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
-  let name = nameFromDhtKey(key).valueOr:
+  let name = nameFromNameKey(key).valueOr:
     return false
 
   validate(name, record.value, self.clock.now()).isOk
@@ -83,7 +83,7 @@ method select*(
   ## Returns the index of the newest name record. Name records that don't decode
   ## are skipped.
   ##
-  ## When name records have the same sequence number and the same expiration,
+  ## When name records have the same seqnum and the same expiration,
   ## the first one in the list is selected.
   ##
   ## When the DHT stores a name record, `records` is a list of two items,

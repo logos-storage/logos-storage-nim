@@ -18,14 +18,12 @@ const
   # 14:00:00 UTC on 12 November 2026
   twoOClock = 1794492000'i64
 
-proc newRecord(
-    sequenceNumber: uint64, expiration: int64, label = "catalog"
-): NameRecord =
+proc newRecord(seqnum: uint64, expiration: int64, label = "catalog"): NameRecord =
   NameRecord(
     version: NameRecordVersion,
     label: label,
     cid: Cid.example,
-    sequenceNumber: sequenceNumber,
+    seqnum: seqnum,
     expiration: expiration,
   )
 
@@ -36,9 +34,8 @@ checksuite "Name record selector":
     key = @(name(publicKey, "catalog").tryGet())
     selector = NameRecordSelector()
 
-  proc signedBytes(sequenceNumber: uint64, expiration: int64): seq[byte] =
-    let signed =
-      SignedNameRecord.init(privateKey, newRecord(sequenceNumber, expiration))
+  proc signedBytes(seqnum: uint64, expiration: int64): seq[byte] =
+    let signed = SignedNameRecord.init(privateKey, newRecord(seqnum, expiration))
 
     signed.tryGet().encode()
 
@@ -52,7 +49,7 @@ checksuite "Name record selector":
     check selector.select(key, @[older, newest, oldest]).tryGet() == 1
     check selector.select(key, @[oldest, older, newest]).tryGet() == 2
 
-  test "selects the name record that expires later when sequence numbers are equal":
+  test "selects the name record that expires later when seqnums are equal":
     let
       expiresEarlier = EntryRecord(value: signedBytes(42'u64, tenOClock))
       expiresLater = EntryRecord(value: signedBytes(42'u64, twoOClock))
@@ -89,7 +86,7 @@ checksuite "Name record validator":
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     catalogName = name(publicKey, "catalog").tryGet()
-    key = dhtKeyFromName(catalogName)
+    key = nameKey(catalogName)
 
   proc signedBytes(label = "catalog", expiration = currentTime + 3600): seq[byte] =
     let signed = SignedNameRecord.init(privateKey, newRecord(42'u64, expiration, label))
@@ -103,8 +100,8 @@ checksuite "Name record validator":
 
     cid.data.buffer
 
-  test "nameFromDhtKey gives back the name of dhtKeyFromName":
-    check nameFromDhtKey(key).tryGet() == catalogName
+  test "nameFromNameKey gives back the name of nameKey":
+    check nameFromNameKey(key).tryGet() == catalogName
 
   test "the key is a CIDv1 with the storage-name codec and a SHA2-256 multihash":
     let
@@ -116,7 +113,7 @@ checksuite "Name record validator":
     check hash.mcodec == multiCodec("sha2-256")
     check hash.data.buffer[hash.dpos ..< hash.dpos + hash.size] == @catalogName
 
-  test "accepts a valid name record under the name's DHT key":
+  test "accepts a valid name record under the name key":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
     check validator.isValid(key, EntryRecord(value: signedBytes()))
@@ -131,7 +128,7 @@ checksuite "Name record validator":
       validator = NameRecordValidator(clock: MockClock.new(currentTime))
       otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
 
-    check nameFromDhtKey(otherKey).isErr
+    check nameFromNameKey(otherKey).isErr
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a CID with the right codec and another hash function":
@@ -140,7 +137,7 @@ checksuite "Name record validator":
       otherKey =
         cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
 
-    check nameFromDhtKey(otherKey).isErr
+    check nameFromNameKey(otherKey).isErr
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a name record under a key with bytes after the name CID":
@@ -148,7 +145,7 @@ checksuite "Name record validator":
       validator = NameRecordValidator(clock: MockClock.new(currentTime))
       longerKey = key & @[0'u8]
 
-    check nameFromDhtKey(longerKey).isErr
+    check nameFromNameKey(longerKey).isErr
     check not validator.isValid(longerKey, EntryRecord(value: signedBytes()))
 
   test "refuses a valid name record stored under the name of another label":

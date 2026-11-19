@@ -53,14 +53,14 @@ asyncchecksuite "Discovery - DHT values":
     node
 
   proc newKey(label: string): seq[byte] =
-    dhtKeyFromName(name(publicKey, label).tryGet())
+    nameKey(name(publicKey, label).tryGet())
 
-  proc newValue(label: string, sequenceNumber: uint64): seq[byte] =
+  proc newValue(label: string, seqnum: uint64): seq[byte] =
     let record = NameRecord(
       version: NameRecordVersion,
       label: label,
       cid: Cid.example,
-      sequenceNumber: sequenceNumber,
+      seqnum: seqnum,
       expiration: expiration,
     )
 
@@ -164,7 +164,7 @@ asyncchecksuite "Discovery - DHT values":
     check got.isOk
     check got.tryGet == newerValue
 
-  test "a put with an older sequence number doesn't replace the value":
+  test "a put with an older seqnum doesn't replace the value":
     let
       serverA = await startNode(isServer = true)
       serverB = await startNode(isServer = true, bootstrap = @[serverA])

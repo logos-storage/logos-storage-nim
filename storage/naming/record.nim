@@ -38,8 +38,7 @@ type
     version*: uint32
     label*: string
     cid*: Cid
-    # `seq` in the protocol, renamed to avoid a collision with the Nim `seq` type
-    sequenceNumber*: uint64
+    seqnum*: uint64
     expiration*: int64
 
   SignedNameRecord* = SignedPayload[NameRecord]
@@ -67,7 +66,7 @@ proc writeValue(
   w.writeField("version", record.version)
   w.writeField("label", record.label)
   w.writeField("cid", record.cid.data.buffer)
-  w.writeField("seq", record.sequenceNumber)
+  w.writeField("seqnum", record.seqnum)
   w.writeField("expiration", CborTag[int64](tag: 1, val: record.expiration))
   w.endObject(stopCode = false)
 
@@ -131,7 +130,7 @@ proc decode*(
       return err(error)
     cidBytes = fields.readField("cid", {CborValueKind.Bytes}).valueOr:
       return err(error)
-    sequenceNumber = readInteger[uint64](fields, "seq").valueOr:
+    seqnum = readInteger[uint64](fields, "seqnum").valueOr:
       return err(error)
     expiration = readTime(fields, "expiration").valueOr:
       return err(error)
@@ -143,7 +142,7 @@ proc decode*(
       version: version,
       label: label.strVal,
       cid: cid,
-      sequenceNumber: sequenceNumber,
+      seqnum: seqnum,
       expiration: expiration,
     )
   )
@@ -229,9 +228,9 @@ proc validate*(
   ok(signed)
 
 proc isNewer*(a, b: NameRecord): bool =
-  ## `a` is newer than `b` when its sequence number is higher, or when both have
-  ## the same sequence number and `a` expires later.
-  if a.sequenceNumber != b.sequenceNumber:
-    return a.sequenceNumber > b.sequenceNumber
+  ## `a` is newer than `b` when its seqnum is higher, or when both have the same
+  ## seqnum and `a` expires later.
+  if a.seqnum != b.seqnum:
+    return a.seqnum > b.seqnum
 
   a.expiration > b.expiration

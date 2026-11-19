@@ -26,7 +26,7 @@ checksuite "Name record validation":
       version: version,
       label: label,
       cid: Cid.example,
-      sequenceNumber: 1794304800'u64,
+      seqnum: 1794304800'u64,
       expiration: expiration,
     )
 
@@ -41,7 +41,7 @@ checksuite "Name record validation":
     check validated.data.version == record.version
     check validated.data.label == record.label
     check validated.data.cid == record.cid
-    check validated.data.sequenceNumber == record.sequenceNumber
+    check validated.data.seqnum == record.seqnum
     check validated.data.expiration == record.expiration
     check validated.envelope.publicKey == publicKey
 
