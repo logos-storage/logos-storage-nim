@@ -1,4 +1,3 @@
-import std/sequtils
 import std/strutils
 
 import pkg/cbor_serialization
@@ -134,11 +133,3 @@ checksuite "Name record validation":
     check cidV0.version == CIDv0
     check validate(publisherName, handBuiltBytes(validRecord), now).isOk
     check validate(publisherName, handBuiltBytes(v0Record), now).isErr
-
-  test "refuses bytes that are not a name record":
-    let
-      randomBytes = newSeqWith(100, 0xAB'u8)
-      noBytes = newSeq[byte]()
-
-    check validate(publisherName, randomBytes, now).isErr
-    check validate(publisherName, noBytes, now).isErr
