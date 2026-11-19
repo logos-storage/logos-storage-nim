@@ -337,6 +337,15 @@ proc leastSeen(
       oldest = provider.lastSeen
   peer
 
+proc expireMixRelays(d: Discovery, now: Moment) =
+  let expiry = 2 * d.serviceDiscovery.discoConfig.advertExpiry
+  var expired: seq[PeerId]
+  for peerId, provider in d.providersFor(MixServiceId):
+    if now - provider.lastSeen > expiry:
+      expired.add(peerId)
+  for peerId in expired:
+    d.providersFor(MixServiceId).del(peerId)
+
 proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
   let now = Moment.now()
   var added: seq[(string, PeerId, PeerRecord)]
@@ -352,6 +361,8 @@ proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
           ServiceProvider(record: record, lastSeen: now)
       else:
         added.add((service.id, ad.data.peerId, record))
+
+  d.expireMixRelays(now)
 
   for (serviceId, peerId, record) in added:
     if d.providersFor(serviceId).len >= maxProviders(serviceId):
