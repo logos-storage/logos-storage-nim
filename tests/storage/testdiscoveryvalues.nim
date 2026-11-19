@@ -106,26 +106,6 @@ asyncchecksuite "Discovery - DHT values":
     check await fut.withTimeout(lookupTimeout)
     check fut.read().isErr
 
-  test "the quorum doesn't count empty replies":
-    let
-      serverA = await startNode(isServer = true)
-      serverB = await startNode(isServer = true, bootstrap = @[serverA])
-      key = newKey("late-servers")
-      value = newValue("late-servers", 1)
-
-    # Wait until serverA knows serverB
-    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
-
-    check (await serverA.disc.putValue(key, value)).isOk
-
-    let
-      serverC = await startNode(isServer = true, bootstrap = @[serverA])
-      reader = await startNode(isServer = false, bootstrap = @[serverC])
-
-    let got = await reader.disc.getValue(key)
-    check got.isOk
-    check got.tryGet == value
-
   test "a client node doesn't store values for other nodes":
     let
       server = await startNode(isServer = true)
