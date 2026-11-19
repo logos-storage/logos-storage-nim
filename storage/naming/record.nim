@@ -17,7 +17,6 @@ import pkg/libp2p
 import pkg/libp2p/signed_envelope
 import pkg/libp2p/vbuffer
 import pkg/nimcrypto/sha2
-import pkg/questionable
 import pkg/questionable/results
 
 export signed_envelope
