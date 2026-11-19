@@ -117,6 +117,18 @@ proc checkCid(cid: Cid): Result[void, ref CatchableError] =
 
   ok()
 
+proc checkLabel(label: string): Result[void, ref CatchableError] =
+  if label.len < MinLabelLength:
+    return failure("Label is shorter than " & $MinLabelLength & " byte")
+
+  if label.len > MaxLabelLength:
+    return failure("Label is longer than " & $MaxLabelLength & " bytes")
+
+  if not validateUTF8(label):
+    return failure("Label is not valid UTF-8")
+
+  ok()
+
 proc decode*(
     T: typedesc[NameRecord], bytes: seq[byte]
 ): Result[NameRecord, ref CatchableError] =
@@ -143,6 +155,11 @@ proc decode*(
     cid = Cid.init(cidBytes.bytesVal).valueOr:
       return failure("The `cid` field of the name record is not a valid CID: " & $error)
 
+  let labelCheck = checkLabel(label.strVal)
+
+  if labelCheck.isErr:
+    return err(labelCheck.error)
+
   if cid.version != CIDv1:
     return failure("The `cid` field of the name record is not a CIDv1")
 
@@ -160,18 +177,6 @@ proc decode*(
       expiration: expiration,
     )
   )
-
-proc checkLabel(label: string): Result[void, ref CatchableError] =
-  if label.len < MinLabelLength:
-    return failure("Label is shorter than " & $MinLabelLength & " byte")
-
-  if label.len > MaxLabelLength:
-    return failure("Label is longer than " & $MaxLabelLength & " bytes")
-
-  if not validateUTF8(label):
-    return failure("Label is not valid UTF-8")
-
-  ok()
 
 proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError] =
   ## The name is the SHA2-256 hash of the public key bytes
@@ -247,6 +252,11 @@ proc validate*(
   ok(signed)
 
 proc isNewer*(a, b: NameRecord): bool =
-  ## `a` is newer than `b` when its seqnum is higher. The expiration doesn't
-  ## count.
-  a.seqnum > b.seqnum
+  ## `a` is newer than `b` when its seqnum is higher, or when both have the same
+  ## seqnum and `a` expires later. Two name records with the same seqnum only
+  ## differ by their expiration (see "Extending Expiry" in the spec), so an
+  ## older copy can't replace an extended one.
+  if a.seqnum != b.seqnum:
+    return a.seqnum > b.seqnum
+
+  a.expiration > b.expiration

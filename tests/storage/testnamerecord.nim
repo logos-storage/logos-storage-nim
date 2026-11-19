@@ -309,6 +309,20 @@ checksuite "Name record":
     check decodeNameRecord(validBytes).isOk
     check decodeNameRecord(longBytes).isErr
 
+  test "refuses a name record with an empty label or a label of 257 bytes":
+    let
+      emptyRecord = newRecord("")
+      longRecord = newRecord('a'.repeat(257))
+
+    check decodeNameRecord(signPayload(Cbor.encode(cborFields(emptyRecord)))).isErr
+    check decodeNameRecord(signPayload(Cbor.encode(cborFields(longRecord)))).isErr
+
+  test "refuses a name record with a label that is not valid UTF-8":
+    for invalidLabel in invalidUtf8Labels:
+      let bytes = signPayload(Cbor.encode(cborFields(newRecord(invalidLabel))))
+
+      check decodeNameRecord(bytes).isErr
+
   test "refuses a name record whose expiration is an integer without tag 1":
     let
       record = newRecord(label)
