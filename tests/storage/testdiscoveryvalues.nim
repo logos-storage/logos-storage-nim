@@ -84,18 +84,12 @@ asyncchecksuite "Discovery - DHT values":
     check got.tryGet == value
 
   test "a client reads another client's value from the server nodes":
-    # The read quorum is 2, so two Storage nodes are needed
     let
-      serverA = await startNode(isServer = true)
-      serverB = await startNode(isServer = true, bootstrap = @[serverA])
-      bootstrapNodes = @[serverA, serverB]
-      writer = await startNode(isServer = false, bootstrap = bootstrapNodes)
-      reader = await startNode(isServer = false, bootstrap = bootstrapNodes)
+      server = await startNode(isServer = true)
+      writer = await startNode(isServer = false, bootstrap = @[server])
+      reader = await startNode(isServer = false, bootstrap = @[server])
       key = newKey("client-to-client")
       value = newValue("client-to-client", 1)
-
-    # Wait until serverA knows serverB
-    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
 

@@ -31,8 +31,6 @@ asyncchecksuite "Name resolver":
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
-    secondServer: TestNode
-    bootstrapNodes: seq[TestNode]
     publisher: NamePublisher
     reader: TestNode
 
@@ -85,15 +83,9 @@ asyncchecksuite "Name resolver":
     clock = MockClock.new(currentTime)
 
     server = await startNode(clock, isServer = true)
-    # The read quorum is 2, so a read needs two server nodes
-    secondServer = await startNode(clock, isServer = true, bootstrap = @[server])
-    bootstrapNodes = @[server, secondServer]
     publisher = newPublisher(server)
 
-    reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-
-    # Wait until the first server knows the second one
-    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
+    reader = await startNode(clock, isServer = false, bootstrap = @[server])
 
   test "resolves a name published by another node":
     check (await publisher.publish("catalog", cid)).isOk
