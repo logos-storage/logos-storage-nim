@@ -93,9 +93,9 @@ asyncchecksuite "Name publisher":
   proc getFromDht(
       node: TestNode, label: string
   ): Future[SignedNameRecord] {.async: (raises: [CancelledError, CatchableError]).} =
-    let
-      key = dhtKeyFromLabel(label)
-      bytes = (await node.disc.getValue(key)).tryGet()
+    let key = dhtKeyFromLabel(label)
+
+    let bytes = (await node.disc.getValue(key)).tryGet()
 
     validate(name(publicKey, label).tryGet(), bytes, clock.now()).tryGet()
 
@@ -113,6 +113,7 @@ asyncchecksuite "Name publisher":
 
   setup:
     clock = MockClock.new(currentTime)
+
     server = await startNode(clock, isServer = true)
     # The read quorum is 2, so a read needs two server nodes
     secondServer = await startNode(clock, isServer = true, bootstrap = @[server])
