@@ -137,6 +137,9 @@ proc decode*(
     cid = Cid.init(cidBytes.bytesVal).valueOr:
       return failure("The `cid` field of the name record is not a valid CID: " & $error)
 
+  if cid.version != CIDv1:
+    return failure("The `cid` field of the name record is not a CIDv1")
+
   ok(
     NameRecord(
       version: version,
@@ -188,6 +191,9 @@ proc sign*(
 
   if labelCheck.isErr:
     return err(labelCheck.error)
+
+  if record.cid.version != CIDv1:
+    return failure("The cid of the name record is not a CIDv1")
 
   let signed = SignedNameRecord.init(privateKey, record).valueOr:
     return failure("Cannot sign the name record: " & $error)
