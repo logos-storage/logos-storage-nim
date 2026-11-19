@@ -25,7 +25,7 @@ const
   MinLabelLength* = 1
   MaxLabelLength* = 256
   NameRecordVersion* = 1'u32
-  NameRecordCodec = multiCodec("storage-name")
+  NameRecordCodec = multiCodec("storage-name-record")
   NameRecordDomain = "logos-storage-name-record"
   IntegerKinds = {CborValueKind.Unsigned, CborValueKind.Negative}
 

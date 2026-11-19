@@ -151,6 +151,11 @@ checksuite "Name record":
 
     check decoded.name().tryGet() == name(publicKey, label).tryGet()
 
+  test "the signed envelope of a name record has the payload type 0xCD05":
+    let signed = newRecord(label).sign(privateKey).tryGet()
+
+    check signed.envelope.payloadType == @[0x85'u8, 0x9A, 0x03]
+
   proc unsignedValue(value: uint64): CborValueRef =
     CborValueRef(
       kind: CborValueKind.Unsigned,
