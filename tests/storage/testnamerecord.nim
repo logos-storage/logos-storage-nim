@@ -20,11 +20,11 @@ checksuite "Name record":
     publicKey = privateKey.getPublicKey().tryGet()
     label = "catalog-release"
 
-  proc newRecord(label: string): NameRecord =
+  proc newRecord(label: string, cid = Cid.example): NameRecord =
     NameRecord(
       version: 1,
       label: label,
-      cid: Cid.example,
+      cid: cid,
       seqnum: 1794304800'u64,
       expiration: 1794477600'i64,
     )
@@ -119,6 +119,27 @@ checksuite "Name record":
     check cidV0.version == CIDv0
     check newRecord(label).sign(privateKey).isOk
     check record.sign(privateKey).isErr
+
+  # 4 bytes of the CID are the version, the codec, the hash code and the
+  # digest length.
+  proc cidWithLength(length: int): Cid =
+    let hash = MultiHash.digest("identity", newSeq[byte](length - 4)).tryGet()
+
+    Cid.init(CIDv1, multiCodec("raw"), hash).tryGet()
+
+  test "sign accepts a name record whose cid is 128 bytes":
+    let cid = cidWithLength(128)
+
+    check cid.data.buffer.len == 128
+    check Cid.init(cid.data.buffer).tryGet() == cid
+    check newRecord(label, cid).sign(privateKey).isOk
+
+  test "sign refuses a name record whose cid is longer than 128 bytes":
+    let cid = cidWithLength(129)
+
+    check cid.data.buffer.len == 129
+    check Cid.init(cid.data.buffer).tryGet() == cid
+    check newRecord(label, cid).sign(privateKey).isErr
 
   test "sign refuses a label that is not valid UTF-8":
     for invalidLabel in invalidUtf8Labels:
@@ -283,6 +304,17 @@ checksuite "Name record":
     let bytes = signPayload(Cbor.encode(fields))
 
     check decodeNameRecord(bytes).isErr
+
+  test "refuses a name record whose cid is longer than 128 bytes":
+    let
+      cid = cidWithLength(129)
+      validRecord = newRecord(label, cidWithLength(128))
+      validBytes = signPayload(Cbor.encode(cborFields(validRecord)))
+      longBytes = signPayload(Cbor.encode(cborFields(newRecord(label, cid))))
+
+    check cid.data.buffer.len == 129
+    check decodeNameRecord(validBytes).isOk
+    check decodeNameRecord(longBytes).isErr
 
   test "refuses a name record whose expiration is an integer without tag 1":
     let
