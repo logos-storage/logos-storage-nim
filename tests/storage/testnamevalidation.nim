@@ -1,6 +1,8 @@
 import std/sequtils
 import std/strutils
 
+import pkg/cbor_serialization
+import pkg/cbor_serialization/value_ops
 import pkg/libp2p
 import pkg/questionable/results
 import pkg/stew/byteutils
@@ -96,6 +98,52 @@ checksuite "Name record validation":
       bytes = signedBytes(newRecord("catalog"), attackerKey)
 
     check validate(catalogName, bytes, now).isErr
+
+  proc unsignedValue(value: uint64): CborValueRef =
+    CborValueRef(
+      kind: CborValueKind.Unsigned,
+      numVal: CborNumber(sign: CborSign.None, integer: value),
+    )
+
+  proc handBuiltBytes(record: NameRecord): seq[byte] =
+    let fields = CborValueRef(kind: CborValueKind.Object)
+
+    fields["version"] = unsignedValue(record.version.uint64)
+    fields["label"] = CborValueRef(kind: CborValueKind.String, strVal: record.label)
+    fields["cid"] =
+      CborValueRef(kind: CborValueKind.Bytes, bytesVal: record.cid.data.buffer)
+    fields["seqnum"] = unsignedValue(record.seqnum)
+    fields["expiration"] = CborValueRef(
+      kind: CborValueKind.Tag,
+      tagVal:
+        CborTag[CborValueRef](tag: 1, val: unsignedValue(record.expiration.uint64)),
+    )
+
+    Envelope
+      .init(
+        privateKey,
+        NameRecord.payloadType(),
+        Cbor.encode(fields),
+        NameRecord.payloadDomain(),
+      )
+      .tryGet()
+      .encode()
+
+  test "refuses a name record whose cid is a CIDv0":
+    let
+      cidV0 = Cid.init("QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n").tryGet()
+      validRecord = newRecord(label)
+      v0Record = NameRecord(
+        version: validRecord.version,
+        label: label,
+        cid: cidV0,
+        seqnum: validRecord.seqnum,
+        expiration: validRecord.expiration,
+      )
+
+    check cidV0.version == CIDv0
+    check validate(publisherName, handBuiltBytes(validRecord), now).isOk
+    check validate(publisherName, handBuiltBytes(v0Record), now).isErr
 
   test "refuses bytes that are not a name record":
     let

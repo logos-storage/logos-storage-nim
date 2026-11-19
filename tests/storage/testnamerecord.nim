@@ -105,6 +105,21 @@ checksuite "Name record":
     check newRecord("").sign(privateKey).isErr
     check newRecord('a'.repeat(257)).sign(privateKey).isErr
 
+  test "sign refuses a name record whose cid is a CIDv0":
+    let
+      cidV0 = Cid.init("QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n").tryGet()
+      record = NameRecord(
+        version: 1,
+        label: label,
+        cid: cidV0,
+        seqnum: 1794304800'u64,
+        expiration: 1794477600'i64,
+      )
+
+    check cidV0.version == CIDv0
+    check newRecord(label).sign(privateKey).isOk
+    check record.sign(privateKey).isErr
+
   test "sign refuses a label that is not valid UTF-8":
     for invalidLabel in invalidUtf8Labels:
       check newRecord(invalidLabel).sign(privateKey).isErr
