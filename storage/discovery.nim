@@ -25,7 +25,7 @@ import pkg/questionable/results
 import ./rng as storage_rng
 import ./clock
 import ./systemclock
-import ./naming/dht
+import ./naming/validator
 import ./utils/mixidentity
 import ./errors
 import ./logutils
