@@ -248,9 +248,6 @@ proc validate*(
   ok(signed)
 
 proc isNewer*(a, b: NameRecord): bool =
-  ## `a` is newer than `b` when its seqnum is higher, or when both have the same
-  ## seqnum and `a` expires later.
-  if a.seqnum != b.seqnum:
-    return a.seqnum > b.seqnum
-
-  a.expiration > b.expiration
+  ## `a` is newer than `b` when its seqnum is higher. The expiration doesn't
+  ## count.
+  a.seqnum > b.seqnum
