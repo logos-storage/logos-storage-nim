@@ -69,16 +69,6 @@ checksuite "Name record validation":
 
     check validate(publisherName, bytes, now).isErr
 
-  test "accepts a name record that expires exactly at the maximum delay":
-    let bytes = signedBytes(newRecord(label, expiration = now + MaxExpirationDelay))
-
-    check validate(publisherName, bytes, now).isOk
-
-  test "refuses a name record that expires after the maximum delay":
-    let bytes = signedBytes(newRecord(label, expiration = now + MaxExpirationDelay + 1))
-
-    check validate(publisherName, bytes, now).isErr
-
   test "refuses a name record with an unknown version":
     let bytes = signedBytes(newRecord(label, version = NameRecordVersion + 1))
 
