@@ -64,15 +64,15 @@ method select*(
   ## Returns the index of the newest name record. Name records that don't decode
   ## are skipped.
   ##
-  ## When name records have the same seqnum, the first one in the list is
-  ## selected.
+  ## When name records have the same seqnum and the same expiration, the first
+  ## one in the list is selected.
   ##
   ## When the DHT stores a name record, `records` is a list of two items,
   ## [received, stored]. If the received name record has the same seqnum as the
-  ## stored one, the received one is selected, so that the DHT replaces its copy
-  ## and restarts its retention window (24 hours by default, see
-  ## [DefaultRecordExpirationInterval]). This window is not the expiration of
-  ## the name record.
+  ## stored one and doesn't expire earlier, the received one is selected, so
+  ## that the DHT replaces its copy and restarts its retention window (24 hours
+  ## by default, see [DefaultRecordExpirationInterval]). This window is not the
+  ## expiration of the name record.
   ##
   ## When the DHT reads a name, `records` is a list of items from other peers.
   var
