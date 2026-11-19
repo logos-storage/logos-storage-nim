@@ -134,11 +134,11 @@ asyncchecksuite "Name publisher":
 
     check signed.data.seqnum == seqnum
 
-  test "the expiration is 24 hours after the current time":
+  test "the expiration is 8 hours after the current time":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
 
     check signed.data.expiration == currentTime + NameRecordLifetime
-    check signed.data.expiration == currentTime + 24 * 60 * 60
+    check signed.data.expiration == currentTime + 8 * 60 * 60
 
   test "the name record is signed with the private key of the publisher":
     let signed = (await publisher.publish("catalog", cid)).tryGet()

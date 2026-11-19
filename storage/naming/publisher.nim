@@ -29,7 +29,7 @@ logScope:
 
 const
   RepublishInterval* = 4 * 60 * 60 # seconds
-  NameRecordLifetime* = 24 * 60 * 60 # seconds
+  NameRecordLifetime* = 8 * 60 * 60 # seconds
 
 type NamePublisher* = ref object
   ## Publishes the names of the node to the DHT. The node keeps the name records
