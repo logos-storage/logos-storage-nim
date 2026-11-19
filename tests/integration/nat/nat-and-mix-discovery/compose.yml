@@ -1,0 +1,284 @@
+# NAT nat-and-mix-discovery scenario — see README.md. Run via testnatandmixdiscovery.nim.
+name: nat-and-mix-discovery
+
+x-addresses:
+  wan_subnet_1: &wan_subnet_1 7.7.7.0/24
+  wan_subnet_2: &wan_subnet_2 39.39.39.0/24
+  wan_subnet_3: &wan_subnet_3 71.71.71.0/24
+  wan_subnet_4: &wan_subnet_4 103.103.103.0/24
+  wan_subnet_5: &wan_subnet_5 135.135.135.0/24
+  wan_subnet_6: &wan_subnet_6 167.167.167.0/24
+  wan_subnet_7: &wan_subnet_7 199.199.199.0/24
+  wan_subnets: &wan_subnets "7.7.7.0/24 39.39.39.0/24 71.71.71.0/24 103.103.103.0/24 135.135.135.0/24 167.167.167.0/24 199.199.199.0/24"
+  leecher_lan_subnet: &leecher_lan_subnet 10.99.3.0/24
+  seeder_lan_subnet: &seeder_lan_subnet 10.99.4.0/24
+
+  # Public nodes, one service each.
+  bootstrap_ip: &bootstrap_ip 7.7.7.10
+  mix_relay_1_ip: &mix_relay_1_ip 39.39.39.11
+  mix_relay_2_ip: &mix_relay_2_ip 71.71.71.12
+  mix_relay_3_ip: &mix_relay_3_ip 103.103.103.13
+  mix_relay_4_ip: &mix_relay_4_ip 135.135.135.14
+  relay_server_ip: &relay_server_ip 167.167.167.15
+  dht_proxy_ip: &dht_proxy_ip 199.199.199.16
+
+  # Both leecher and seeder are behind NATs.
+  leecher_router_wan_ip: &leecher_router_wan_ip 7.7.7.20
+  leecher_router_lan_ip: &leecher_router_lan_ip 10.99.3.20
+  leecher_lan_ip: &leecher_lan_ip 10.99.3.21
+
+  seeder_router_wan_ip: &seeder_router_wan_ip 7.7.7.30
+  seeder_router_lan_ip: &seeder_router_lan_ip 10.99.4.30
+  seeder_lan_ip: &seeder_lan_ip 10.99.4.31
+
+networks:
+  wan:
+    internal: true
+    ipam:
+      config:
+        - subnet: *wan_subnet_1
+        - subnet: *wan_subnet_2
+        - subnet: *wan_subnet_3
+        - subnet: *wan_subnet_4
+        - subnet: *wan_subnet_5
+        - subnet: *wan_subnet_6
+        - subnet: *wan_subnet_7
+
+  leecher_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: *leecher_lan_subnet
+
+  seeder_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: *seeder_lan_subnet
+
+services:
+  # Routers
+  seeder_router:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *seeder_router_wan_ip
+      seeder_lan:
+        ipv4_address: *seeder_router_lan_ip
+    environment:
+      ROUTER_WAN_IP: *seeder_router_wan_ip
+      LAN_SUBNET: *seeder_lan_subnet
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  leecher_router:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *leecher_router_wan_ip
+      leecher_lan:
+        ipv4_address: *leecher_router_lan_ip
+    environment:
+      ROUTER_WAN_IP: *leecher_router_wan_ip
+      LAN_SUBNET: *leecher_lan_subnet
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  # AutoNAT server
+  bootstrap:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *bootstrap_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+      - autonat
+
+  # Circuit relay server
+  relay_server:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *relay_server_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *relay_server_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+      - relay
+
+  # Mix relays
+  mix_relay_1:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *mix_relay_1_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *mix_relay_1_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix
+
+  mix_relay_2:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *mix_relay_2_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *mix_relay_2_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix
+
+  mix_relay_3:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *mix_relay_3_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *mix_relay_3_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix
+
+  mix_relay_4:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *mix_relay_4_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *mix_relay_4_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix
+
+  # DHT proxy
+  dht_proxy:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *dht_proxy_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *dht_proxy_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_dht_proxy
+
+  seeder:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      seeder_lan:
+        ipv4_address: *seeder_lan_ip
+    ports:
+      - "127.0.0.1:18093:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *seeder_router_lan_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix
+
+  leecher:
+    image: localhost/storage-nat
+    logging:
+      driver: k8s-file
+    cap_add: [NET_ADMIN]
+    networks:
+      leecher_lan:
+        ipv4_address: *leecher_lan_ip
+    ports:
+      - "127.0.0.1:18094:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *leecher_router_lan_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_mix

@@ -50,6 +50,19 @@ suite "Conf - validateAutonatConfig":
 
     check config.validateAutonatConfig().isOk
 
+  test "rejects dht proxy server without extip":
+    var config = validConfig()
+    config.dhtProxyServer = true
+
+    check config.validateAutonatConfig().isErr
+
+  test "accepts dht proxy server with extip":
+    var config = validConfig()
+    config.dhtProxyServer = true
+    config.nat = nat.NatConfig(hasExtIp: true, extIp: parseIpAddress("1.2.3.4"))
+
+    check config.validateAutonatConfig().isOk
+
   test "rejects a node without bootstrap node and without extip":
     var config = validConfig()
     config.bootstrapNodes = @[]
