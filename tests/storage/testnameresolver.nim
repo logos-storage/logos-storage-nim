@@ -14,7 +14,7 @@ import ./examples
 import ../../storage/discovery
 import ../../storage/naming/record
 import ../../storage/naming/publisher
-import ../../storage/naming/resolver
+import ../../storage/naming/dht
 
 type TestNode = object
   switch: Switch
