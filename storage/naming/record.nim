@@ -24,6 +24,7 @@ export signed_envelope
 const
   MinLabelLength* = 1
   MaxLabelLength* = 256
+  MaxCidLength* = 128
   NameRecordVersion* = 1'u32
   NameRecordCodec = multiCodec("storage-name-record")
   NameRecordDomain = "logos-storage-name-record"
@@ -109,6 +110,14 @@ proc readTime(fields: CborValueRef, key: string): Result[int64, ref CatchableErr
 
   ok(number)
 
+proc checkCid(cid: Cid): Result[void, ref CatchableError] =
+  if cid.data.buffer.len > MaxCidLength:
+    return failure(
+      "The cid of the name record is longer than " & $MaxCidLength & " bytes"
+    )
+
+  ok()
+
 proc decode*(
     T: typedesc[NameRecord], bytes: seq[byte]
 ): Result[NameRecord, ref CatchableError] =
@@ -137,6 +146,11 @@ proc decode*(
 
   if cid.version != CIDv1:
     return failure("The `cid` field of the name record is not a CIDv1")
+
+  let cidCheck = checkCid(cid)
+
+  if cidCheck.isErr:
+    return err(cidCheck.error)
 
   ok(
     NameRecord(
@@ -192,6 +206,11 @@ proc sign*(
 
   if record.cid.version != CIDv1:
     return failure("The cid of the name record is not a CIDv1")
+
+  let cidCheck = checkCid(record.cid)
+
+  if cidCheck.isErr:
+    return err(cidCheck.error)
 
   let signed = SignedNameRecord.init(privateKey, record).valueOr:
     return failure("Cannot sign the name record: " & $error)
