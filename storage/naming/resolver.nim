@@ -33,7 +33,7 @@ proc resolve*(
   ## CID when the DHT has no name record for the name.
   ##
   ## The DHT validator has already checked the name record, so it is only
-  ## decoded here: see [NameRecordValidator] and `bestValidRecord` in
+  ## decoded here: see [NameRecordValidator] and `getValue` in
   ## libp2p/protocols/kademlia/get.nim.
   let bytes = (await discovery.getValue(nameKey(name))).valueOr:
     if error.msg.endsWith(NoNameRecordError):
