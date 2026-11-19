@@ -161,8 +161,9 @@ proc checkLabel(label: string): Result[void, ref CatchableError] =
   ok()
 
 proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError] =
-  ## The name is the SHA2-256 hash of the public key and the label. Both are
-  ## prefixed with their length, so two different pairs never give the same name.
+  ## The name is the SHA2-256 hash of the public key bytes
+  ## followed by the label.
+  ## Two different pairs never give the same name.
   let labelCheck = checkLabel(label)
 
   if labelCheck.isErr:
@@ -171,12 +172,12 @@ proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError
   let keyBytes = publicKey.getBytes().valueOr:
     return failure("Invalid public key: " & $error)
 
-  var buffer = initVBuffer()
-  buffer.writeSeq(keyBytes)
-  buffer.writeSeq(label)
-  buffer.finish()
+  var hash: sha256
+  hash.init()
+  hash.update(keyBytes)
+  hash.update(label)
 
-  ok(sha256.digest(buffer.buffer).data)
+  ok(hash.finish().data)
 
 proc name*(signed: SignedNameRecord): Result[Name, ref CatchableError] =
   name(signed.envelope.publicKey, signed.data.label)
