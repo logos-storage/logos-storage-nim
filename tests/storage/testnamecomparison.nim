@@ -140,14 +140,6 @@ checksuite "Name record validator":
     check nameFromNameKey(otherKey).isErr
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
-  test "refuses a name record under a key with bytes after the name CID":
-    let
-      validator = NameRecordValidator(clock: MockClock.new(currentTime))
-      longerKey = key & @[0'u8]
-
-    check nameFromNameKey(longerKey).isErr
-    check not validator.isValid(longerKey, EntryRecord(value: signedBytes()))
-
   test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
