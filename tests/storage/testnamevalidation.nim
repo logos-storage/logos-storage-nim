@@ -58,7 +58,6 @@ checksuite "Name record validation":
       bytes = signedBytes(record)
       modified = string.fromBytes(bytes).replace(cidBytes, otherCidBytes).toBytes
 
-    check modified != bytes
     check validate(publisherName, bytes, now).isOk
     check validate(publisherName, modified, now).isErr
 
