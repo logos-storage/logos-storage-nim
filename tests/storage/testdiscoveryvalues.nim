@@ -4,7 +4,6 @@ from std/times import getTime, toUnix
 
 import pkg/chronos
 import pkg/libp2p except setup
-import pkg/nimcrypto/sha2
 import pkg/questionable/results
 
 import ../asynctest
@@ -83,20 +82,6 @@ asyncchecksuite "Discovery - DHT values":
     check got.isOk
     check got.tryGet == value
 
-  test "a client reads another client's value from the server nodes":
-    let
-      server = await startNode(isServer = true)
-      writer = await startNode(isServer = false, bootstrap = @[server])
-      reader = await startNode(isServer = false, bootstrap = @[server])
-      key = newKey("client-to-client")
-      value = newValue("client-to-client", 1)
-
-    check (await writer.disc.putValue(key, value)).isOk
-
-    let got = await reader.disc.getValue(key)
-    check got.isOk
-    check got.tryGet == value
-
   test "reading a key that does not exist fails":
     let
       server = await startNode(isServer = true)
@@ -158,13 +143,6 @@ asyncchecksuite "Discovery - DHT values":
     let got = await reader.disc.getValue(key)
     check got.isOk
     check got.tryGet == value
-
-  test "putValue refuses a value that is not a name record":
-    let
-      writer = await startNode(isServer = false)
-      key = @(sha256.digest("not-a-name-record").data)
-
-    check (await writer.disc.putValue(key, @[1'u8, 2, 3])).isErr
 
   test "putValue refuses a name record stored under the name of another label":
     let

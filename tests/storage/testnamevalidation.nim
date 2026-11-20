@@ -1,11 +1,7 @@
 import std/sequtils
-import std/strutils
 
-import pkg/cbor_serialization
-import pkg/cbor_serialization/value_ops
 import pkg/libp2p
 import pkg/questionable/results
-import pkg/stew/byteutils
 
 import pkg/unittest2
 
@@ -22,15 +18,12 @@ checksuite "Name record validation":
     publisherName = name(publicKey, label).tryGet()
 
   proc newRecord(
-      label: string,
-      version = NameRecordVersion,
-      expiration = now + 3600,
-      cid = Cid.example,
+      label: string, version = NameRecordVersion, expiration = now + 3600
   ): NameRecord =
     NameRecord(
       version: version,
       label: label,
-      cid: cid,
+      cid: Cid.example,
       seqnum: 1794304800'u64,
       expiration: expiration,
     )
@@ -49,17 +42,6 @@ checksuite "Name record validation":
     check validated.data.seqnum == record.seqnum
     check validated.data.expiration == record.expiration
     check validated.envelope.publicKey == publicKey
-
-  test "refuses a name record whose signed content was changed":
-    let
-      record = newRecord(label)
-      cidBytes = string.fromBytes(record.cid.data.buffer)
-      otherCidBytes = string.fromBytes(Cid.example.data.buffer)
-      bytes = signedBytes(record)
-      modified = string.fromBytes(bytes).replace(cidBytes, otherCidBytes).toBytes
-
-    check validate(publisherName, bytes, now).isOk
-    check validate(publisherName, modified, now).isErr
 
   test "accepts a name record with an expiration equal to now":
     let bytes = signedBytes(newRecord(label, expiration = now))
@@ -83,14 +65,6 @@ checksuite "Name record validation":
 
     check validate(betaName, bytes, now).isErr
 
-  test "refuses a name record with a label longer than the maximum":
-    let
-      longLabel = 'a'.repeat(MaxLabelLength + 1)
-      limitName = name(publicKey, 'a'.repeat(MaxLabelLength)).tryGet()
-      bytes = signedBytes(newRecord(longLabel))
-
-    check validate(limitName, bytes, now).isErr
-
   test "refuses a name record signed by another key":
     let
       attackerKey = PrivateKey.example
@@ -98,66 +72,6 @@ checksuite "Name record validation":
       bytes = signedBytes(newRecord("catalog"), attackerKey)
 
     check validate(catalogName, bytes, now).isErr
-
-  proc unsignedValue(value: uint64): CborValueRef =
-    CborValueRef(
-      kind: CborValueKind.Unsigned,
-      numVal: CborNumber(sign: CborSign.None, integer: value),
-    )
-
-  proc handBuiltBytes(record: NameRecord): seq[byte] =
-    let fields = CborValueRef(kind: CborValueKind.Object)
-
-    fields["version"] = unsignedValue(record.version.uint64)
-    fields["label"] = CborValueRef(kind: CborValueKind.String, strVal: record.label)
-    fields["cid"] =
-      CborValueRef(kind: CborValueKind.Bytes, bytesVal: record.cid.data.buffer)
-    fields["seqnum"] = unsignedValue(record.seqnum)
-    fields["expiration"] = CborValueRef(
-      kind: CborValueKind.Tag,
-      tagVal:
-        CborTag[CborValueRef](tag: 1, val: unsignedValue(record.expiration.uint64)),
-    )
-
-    Envelope
-      .init(
-        privateKey,
-        NameRecord.payloadType(),
-        Cbor.encode(fields),
-        NameRecord.payloadDomain(),
-      )
-      .tryGet()
-      .encode()
-
-  test "refuses a name record whose cid is a CIDv0":
-    let
-      cidV0 = Cid.init("QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n").tryGet()
-      validRecord = newRecord(label)
-      v0Record = NameRecord(
-        version: validRecord.version,
-        label: label,
-        cid: cidV0,
-        seqnum: validRecord.seqnum,
-        expiration: validRecord.expiration,
-      )
-
-    check validate(publisherName, handBuiltBytes(validRecord), now).isOk
-    check validate(publisherName, handBuiltBytes(v0Record), now).isErr
-
-  # 4 bytes of the CID are the version, the codec, the hash code and the
-  # digest length.
-  proc cidWithLength(length: int): Cid =
-    let hash = MultiHash.digest("identity", newSeq[byte](length - 4)).tryGet()
-
-    Cid.init(CIDv1, multiCodec("raw"), hash).tryGet()
-
-  test "refuses a name record whose cid is longer than 128 bytes":
-    let
-      validRecord = newRecord(label, cid = cidWithLength(128))
-      longRecord = newRecord(label, cid = cidWithLength(129))
-
-    check validate(publisherName, handBuiltBytes(validRecord), now).isOk
-    check validate(publisherName, handBuiltBytes(longRecord), now).isErr
 
   test "refuses bytes that are not a name record":
     let

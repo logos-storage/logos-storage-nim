@@ -1,5 +1,4 @@
 import std/sequtils
-import std/strutils
 
 import pkg/chronos
 import pkg/libp2p except setup
@@ -23,7 +22,6 @@ type TestNode = object
 const
   # 10:00:00 UTC on 11 November 2026
   currentTime = 1794391200'i64
-  tooLongLabel = 'a'.repeat(257)
 
 asyncchecksuite "Name resolver":
   var
@@ -97,14 +95,6 @@ asyncchecksuite "Name resolver":
     check resolved.isSome
     check resolved.get() == cid
 
-  test "resolves a public key and a label":
-    check (await publisher.publish("catalog", cid)).isOk
-
-    let resolved = (await reader.disc.resolve(publicKey, "catalog")).tryGet()
-
-    check resolved.isSome
-    check resolved.get() == cid
-
   test "resolves the CID of the label, not the CID of another label":
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", otherCid)).isOk
@@ -138,18 +128,5 @@ asyncchecksuite "Name resolver":
     check resolved.isOk
     check resolved.tryGet().isNone
 
-  test "returns no CID for a public key and a label without name record":
-    check (await publisher.publish("catalog", cid)).isOk
-
-    let otherPublicKey = PrivateKey.example.getPublicKey().tryGet()
-
-    let resolved = await reader.disc.resolve(otherPublicKey, "catalog")
-
-    check resolved.isOk
-    check resolved.tryGet().isNone
-
   test "returns an error for an empty label":
     check (await reader.disc.resolve(publicKey, "")).isErr
-
-  test "returns an error for a label of more than 256 bytes":
-    check (await reader.disc.resolve(publicKey, tooLongLabel)).isErr

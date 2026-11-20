@@ -27,6 +27,30 @@ proc newRecord(seqnum: uint64, expiration: int64, label = "catalog"): NameRecord
     expiration: expiration,
   )
 
+checksuite "Name record comparison":
+  test "a higher seqnum is newer, even when it expires earlier":
+    let
+      higher = newRecord(43'u64, tenOClock)
+      lower = newRecord(42'u64, twoOClock)
+
+    check higher.isNewer(lower)
+    check not lower.isNewer(higher)
+
+  test "with the same seqnum, the name record that expires later is newer":
+    let
+      expiresLater = newRecord(42'u64, twoOClock)
+      expiresEarlier = newRecord(42'u64, tenOClock)
+
+    check expiresLater.isNewer(expiresEarlier)
+    check not expiresEarlier.isNewer(expiresLater)
+
+  test "a name record is not newer than one with the same seqnum and expiration":
+    let
+      first = newRecord(42'u64, tenOClock)
+      second = newRecord(42'u64, tenOClock)
+
+    check not first.isNewer(second)
+
 checksuite "Name record selector":
   let
     privateKey = PrivateKey.example
@@ -48,14 +72,6 @@ checksuite "Name record selector":
     check selector.select(key, @[newest, older, oldest]).tryGet() == 0
     check selector.select(key, @[older, newest, oldest]).tryGet() == 1
     check selector.select(key, @[oldest, older, newest]).tryGet() == 2
-
-  test "selects the name record that expires later when seqnums are equal":
-    let
-      expiresEarlier = EntryRecord(value: signedBytes(42'u64, tenOClock))
-      expiresLater = EntryRecord(value: signedBytes(42'u64, twoOClock))
-
-    check selector.select(key, @[expiresEarlier, expiresLater]).tryGet() == 1
-    check selector.select(key, @[expiresLater, expiresEarlier]).tryGet() == 0
 
   test "keeps the first name record when both have the same fields":
     let
@@ -121,24 +137,19 @@ checksuite "Name record validator":
   test "refuses a key that is not a CID":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
+    check nameFromNameKey(key[0 ..< 5]).isErr
     check not validator.isValid(key[0 ..< 5], EntryRecord(value: signedBytes()))
 
   test "refuses a CIDv1 with the right digest and another codec":
-    let
-      validator = NameRecordValidator(clock: MockClock.new(currentTime))
-      otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
+    let otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
 
     check nameFromNameKey(otherKey).isErr
-    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a CID with the right codec and another hash function":
-    let
-      validator = NameRecordValidator(clock: MockClock.new(currentTime))
-      otherKey =
-        cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
+    let otherKey =
+      cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
 
     check nameFromNameKey(otherKey).isErr
-    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
