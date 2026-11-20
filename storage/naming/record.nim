@@ -27,7 +27,7 @@ const
   MaxCidLength* = 128
   NameRecordVersion* = 1'u32
   NameRecordCodec = multiCodec("storage-name-record")
-  NameRecordDomain = "logos-storage-name-record"
+  NameRecordDomain = "logos-name-record"
   IntegerKinds = {CborValueKind.Unsigned, CborValueKind.Negative}
 
 type

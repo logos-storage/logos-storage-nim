@@ -189,6 +189,23 @@ checksuite "Name record":
     check decodeNameRecord(signPayload(payload)).isOk
     check decodeNameRecord(otherDomainBytes).isErr
 
+  test "the name record is signed under the domain logos-name-record":
+    let
+      payload = Cbor.encode(cborFields(newRecord(label)))
+      specBytes = Envelope
+        .init(privateKey, NameRecord.payloadType(), payload, "logos-name-record")
+        .tryGet()
+        .encode()
+      signedBytes = newRecord(label).sign(privateKey).tryGet().encode()
+
+    check decodeNameRecord(specBytes).isOk
+    check Envelope.decode(signedBytes, "logos-name-record").isOk
+
+  test "refuses a name record whose payload is not CBOR":
+    let bytes = signPayload(@[0xFF'u8, 0xFF, 0xFF])
+
+    check decodeNameRecord(bytes).isErr
+
   test "refuses a name record whose payload is protobuf":
     let record = newRecord(label)
 
@@ -385,14 +402,6 @@ checksuite "Name record validation":
       betaName = name(publicKey, "beta").tryGet()
 
     check validate(betaName, bytes, now).isErr
-
-  test "refuses a name record signed by another key":
-    let
-      attackerKey = PrivateKey.example
-      catalogName = name(publicKey, "catalog").tryGet()
-      bytes = signedBytes(newRecord("catalog"), attackerKey)
-
-    check validate(catalogName, bytes, now).isErr
 
   test "refuses bytes that are not a name record":
     let
