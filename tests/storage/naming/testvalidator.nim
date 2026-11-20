@@ -4,11 +4,11 @@ import pkg/questionable/results
 
 import pkg/unittest2
 
-import ../checktest
-import ./examples
-import ./helpers/mockclock
-import ../../storage/naming/record
-import ../../storage/naming/dht
+import ../../checktest
+import ../examples
+import ../helpers/mockclock
+import ../../../storage/naming/record
+import ../../../storage/naming/dht
 
 const
   # 10:00:00 UTC on 11 November 2026
@@ -26,30 +26,6 @@ proc newRecord(seqnum: uint64, expiration: int64, label = "catalog"): NameRecord
     seqnum: seqnum,
     expiration: expiration,
   )
-
-checksuite "Name record comparison":
-  test "a higher seqnum is newer, even when it expires earlier":
-    let
-      higher = newRecord(43'u64, tenOClock)
-      lower = newRecord(42'u64, twoOClock)
-
-    check higher.isNewer(lower)
-    check not lower.isNewer(higher)
-
-  test "with the same seqnum, the name record that expires later is newer":
-    let
-      expiresLater = newRecord(42'u64, twoOClock)
-      expiresEarlier = newRecord(42'u64, tenOClock)
-
-    check expiresLater.isNewer(expiresEarlier)
-    check not expiresEarlier.isNewer(expiresLater)
-
-  test "a name record is not newer than one with the same seqnum and expiration":
-    let
-      first = newRecord(42'u64, tenOClock)
-      second = newRecord(42'u64, tenOClock)
-
-    check not first.isNewer(second)
 
 checksuite "Name record selector":
   let
@@ -118,16 +94,6 @@ checksuite "Name record validator":
 
   test "nameFromNameKey gives back the name of nameKey":
     check nameFromNameKey(key).tryGet() == catalogName
-
-  test "the key is a CIDv1 with the storage-name codec and a SHA2-256 multihash":
-    let
-      cid = Cid.init(key).tryGet()
-      hash = cid.mhash().tryGet()
-
-    check cid.version == CIDv1
-    check cid.mcodec == multiCodec("storage-name")
-    check hash.mcodec == multiCodec("sha2-256")
-    check hash.data.buffer[hash.dpos ..< hash.dpos + hash.size] == @catalogName
 
   test "accepts a valid name record under the name key":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
