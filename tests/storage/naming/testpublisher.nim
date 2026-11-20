@@ -452,11 +452,14 @@ asyncchecksuite "Name publisher":
   test "a second start keeps the running loop":
     publisher.start()
 
-    let loop = publisher.loop
+    check eventually(clock.isWaiting, timeout = 10_000)
 
     publisher.start()
 
-    check publisher.loop == loop
+    await publisher.stop()
+
+    # stop cancels one loop: a second loop would still wait for the clock
+    check not eventually(clock.isWaiting, timeout = 1_000)
 
   test "start after stop starts the loop again":
     publisher.start()
