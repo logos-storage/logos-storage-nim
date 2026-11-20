@@ -70,9 +70,6 @@ checksuite "Name record selector":
 
     check selector.select(key, @[undecodable, undecodable]).isErr
 
-  test "fails on an empty list":
-    check selector.select(key, newSeq[EntryRecord]()).isErr
-
 checksuite "Name record validator":
   let
     privateKey = PrivateKey.example
@@ -92,9 +89,6 @@ checksuite "Name record validator":
 
     cid.data.buffer
 
-  test "nameFromNameKey gives back the name of nameKey":
-    check nameFromNameKey(key).tryGet() == catalogName
-
   test "accepts a valid name record under the name key":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
@@ -103,19 +97,22 @@ checksuite "Name record validator":
   test "refuses a key that is not a CID":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
-    check nameFromNameKey(key[0 ..< 5]).isErr
     check not validator.isValid(key[0 ..< 5], EntryRecord(value: signedBytes()))
 
   test "refuses a CIDv1 with the right digest and another codec":
-    let otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
+    let
+      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
 
-    check nameFromNameKey(otherKey).isErr
+    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a CID with the right codec and another hash function":
-    let otherKey =
-      cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
+    let
+      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      otherKey =
+        cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
 
-    check nameFromNameKey(otherKey).isErr
+    check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))

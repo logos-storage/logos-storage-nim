@@ -440,3 +440,23 @@ asyncchecksuite "Name publisher":
     await publisher.stop()
 
     check not clock.isWaiting
+
+  test "a second start keeps the running loop":
+    publisher.start()
+
+    let loop = publisher.loop
+
+    publisher.start()
+
+    check publisher.loop == loop
+
+  test "start after stop starts the loop again":
+    publisher.start()
+
+    check eventually(clock.isWaiting, timeout = 10_000)
+
+    await publisher.stop()
+
+    publisher.start()
+
+    check eventually(clock.isWaiting, timeout = 10_000)

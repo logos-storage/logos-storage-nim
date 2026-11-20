@@ -33,7 +33,7 @@ type
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
-proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
+proc nameFromNameKey(key: Key): Result[Name, ref CatchableError] =
   ## Refuses a key with another CID version, codec or hash function than
   ## `nameKey`.
   let
