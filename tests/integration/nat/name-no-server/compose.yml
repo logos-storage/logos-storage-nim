@@ -1,0 +1,123 @@
+# NAT name-no-server scenario — see README.md. Run via testnamenoserver.nim.
+name: nat-name-no-server
+
+# Two NATed nodes, one behind each router (separate lans). Both stay Kad
+# clients, so the bootstrap is the only DHT server.
+x-addresses:
+  wan_subnet: &wan_subnet 7.7.7.0/24
+  lan1_subnet: &lan1_subnet 10.99.1.0/24
+  lan2_subnet: &lan2_subnet 10.99.2.0/24
+  # bootstrap: public, autonat + relay server, the only DHT server
+  bootstrap_ip: &bootstrap_ip 7.7.7.10
+  # router1 (A's NAT)
+  router1_wan_ip: &router1_wan_ip 7.7.7.3
+  router1_lan_ip: &router1_lan_ip 10.99.1.2
+  # router2 (B's NAT)
+  router2_wan_ip: &router2_wan_ip 7.7.7.4
+  router2_lan_ip: &router2_lan_ip 10.99.2.2
+  # A behind router1, B behind router2
+  publisher_ip: &publisher_ip 10.99.1.10
+  resolver_ip: &resolver_ip 10.99.2.10
+
+networks:
+  wan:
+    internal: true
+    ipam:
+      config:
+        - subnet: *wan_subnet
+  lan1:
+    ipam:
+      config:
+        - subnet: *lan1_subnet
+  lan2:
+    ipam:
+      config:
+        - subnet: *lan2_subnet
+
+services:
+  router1:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router1_wan_ip
+      lan1:
+        ipv4_address: *router1_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router1_wan_ip
+      LAN_SUBNET: *lan1_subnet
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  router2:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router2_wan_ip
+      lan2:
+        ipv4_address: *router2_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router2_wan_ip
+      LAN_SUBNET: *lan2_subnet
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  # Published port: the test waits for its API after a restart.
+  bootstrap:
+    image: localhost/storage-nat
+    networks:
+      wan:
+        ipv4_address: *bootstrap_ip
+    ports:
+      - "127.0.0.1:18095:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+
+  # A: behind router1, publishes the name
+  publisher:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router1, bootstrap]
+    networks:
+      lan1:
+        ipv4_address: *publisher_ip
+    ports:
+      - "127.0.0.1:18093:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router1_lan_ip
+      - *bootstrap_ip
+
+  # B: behind router2, resolves A's name
+  resolver:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router2, bootstrap]
+    networks:
+      lan2:
+        ipv4_address: *resolver_ip
+    ports:
+      - "127.0.0.1:18094:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router2_lan_ip
+      - *bootstrap_ip
