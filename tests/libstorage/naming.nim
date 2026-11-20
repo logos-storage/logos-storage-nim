@@ -29,7 +29,10 @@ asyncchecksuite "Libstorage - names":
     node = (await createStorage($conf)).tryGet()
 
   teardown:
-    await node.close()
+    if not node.isNil:
+      await node.close()
+
+      node = nil
 
     removeDir(dataDir)
 

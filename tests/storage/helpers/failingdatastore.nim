@@ -18,7 +18,7 @@ proc new*(T: type FailingDatastore, datastore: Datastore): T =
 
 method get*(
     self: FailingDatastore, key: Key
-): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
+): Future[Result[seq[byte], ref CatchableError]] {.async: (raises: [CancelledError]).} =
   if self.failGet:
     return failure("get fails")
 
@@ -26,7 +26,7 @@ method get*(
 
 method put*(
     self: FailingDatastore, key: Key, data: seq[byte]
-): Future[?!void] {.async: (raises: [CancelledError]).} =
+): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   if self.failPut:
     return failure("put fails")
 
@@ -34,7 +34,7 @@ method put*(
 
 method delete*(
     self: FailingDatastore, key: Key
-): Future[?!void] {.async: (raises: [CancelledError]).} =
+): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   if self.failDelete:
     return failure("delete fails")
 
@@ -42,7 +42,7 @@ method delete*(
 
 method query*(
     self: FailingDatastore, query: Query
-): Future[?!QueryIter] {.async: (raises: [CancelledError]).} =
+): Future[Result[QueryIter, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   if self.failQuery:
     return failure("query fails")
 
@@ -55,7 +55,9 @@ method query*(
   let failingIter = QueryIter(dispose: iter.dispose)
   var calls = 0
 
-  proc next(): Future[?!QueryResponse] {.async: (raises: [CancelledError]).} =
+  proc next(): Future[Result[QueryResponse, ref CatchableError]] {.
+      async: (raises: [CancelledError])
+  .} =
     calls.inc
 
     if calls > 1:
