@@ -563,7 +563,7 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
       newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
   mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
 
-  let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
+  let mixAddr = mixProto.localMixPubInfo.flatMap(toMixAddress).valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)
   switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
 

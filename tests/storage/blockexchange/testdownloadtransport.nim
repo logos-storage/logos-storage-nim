@@ -68,7 +68,7 @@ asyncchecksuite "Download transport selection":
       rng = newRng()
       infos = MixNodeInfo.generateRandomMany(2, rng)
       mix = MixProtocol.new(infos[0], newStandardSwitch())
-      address = mix.localMixPubInfo.toMixAddress().tryGet()
+      address = mix.localMixPubInfo.tryGet().toMixAddress().tryGet()
     check mixAddresses(infos[0].peerId, @[address]).len == 1
     check mixAddresses(infos[1].peerId, @[address]).len == 0
     check mixAddresses(infos[0].peerId, @[infos[0].multiAddr]).len == 0
@@ -120,7 +120,10 @@ asyncchecksuite "Download transport selection":
         switches[^1].peerInfo.peerId,
         # Put the Mix advertisement first: Direct dialing must skip an
         # unsupported candidate, not rely on the advertisement being last.
-        @[mixes[^1].localMixPubInfo.toMixAddress().tryGet(), infos[^1].multiAddr],
+        @[
+          mixes[^1].localMixPubInfo.tryGet().toMixAddress().tryGet(),
+          infos[^1].multiAddr,
+        ],
       )
       for index in [0, 4]:
         let
