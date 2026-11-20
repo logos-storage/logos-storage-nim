@@ -51,7 +51,7 @@ proc nameKey*(name: Name): Key =
 
   cid.data.buffer
 
-proc nameFromNameKey(key: Key): Result[Name, ref CatchableError] =
+proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
   ## The name of a DHT key, the reverse of `nameKey`. Refuses a key with another
   ## CID version, codec or hash function.
   let

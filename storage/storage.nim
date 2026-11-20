@@ -89,6 +89,9 @@ func node*(self: StorageServer): StorageNodeRef =
 func repoStore*(self: StorageServer): RepoStore =
   return self.repoStore
 
+func namePublisher*(self: StorageServer): NamePublisher =
+  return self.namePublisher
+
 proc enableMix(
     self: StorageServer
 ): Future[(MixProtocol, MixPool)] {.
