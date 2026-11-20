@@ -165,7 +165,7 @@ proc handleLookupRequest(
     if self.inFlight >= self.maxInFlight:
       debug "DHT proxy at capacity, replying ErrTooBusy",
         inFlight = self.inFlight, max = self.maxInFlight
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrTooBusy).encode())
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrTooBusy))
       return
 
     inc self.inFlight
@@ -177,7 +177,7 @@ proc handleLookupRequest(
         await conn.readLp(MaxLookupRequestBytes).wait(DhtProxyRequestReadTimeout)
       req = LookupRequest.decode(reqBytes).valueOr:
         warn "Failed to decode lookup request"
-        await conn.writeLp(LookupResponse(code: LookupCode.ErrDecodeFailed).encode())
+        await conn.sendResponse(LookupResponse(code: LookupCode.ErrDecodeFailed))
         return
 
     let resp =
@@ -185,7 +185,7 @@ proc handleLookupRequest(
       of FindProviders:
         await self.handleFindProviders(req.queryBytes)
 
-    await conn.writeLp(resp.encode())
+    await conn.sendResponse(resp)
   except CancelledError as exc:
     raise exc
   except LPStreamError as exc:
@@ -433,11 +433,6 @@ proc runWithDhtProxy(
   except CatchableError as exc:
     raise newException(CatchableError, "DhtProxyProtocol start failed: " & exc.msg)
   switch.mount(proxyProto)
-  (await transport.start()).isOkOr:
-    raise newException(CatchableError, "MixTransport start failed: " & error)
-  defer:
-    await noCancel transport.stop()
-
   switch.mount(kad)
 
   let disco = newServiceDiscovery(switch, conf)
@@ -452,6 +447,19 @@ proc runWithDhtProxy(
     await kad.start()
   except CatchableError as exc:
     raise newException(CatchableError, "Kad DHT start failed: " & exc.msg)
+
+  defer:
+    try:
+      await noCancel kad.stop()
+    except CatchableError as exc:
+      warn "Kad DHT close error", err = exc.msg
+    await switch.stop()
+    notice "Stopped"
+
+  (await transport.start()).isOkOr:
+    raise newException(CatchableError, "MixTransport start failed: " & error)
+  defer:
+    await noCancel transport.stop()
 
   advertiseServices(switch, disco, conf)
 
@@ -486,18 +494,9 @@ proc runWithDhtProxy(
   notice "DHT bootstrap SPR", spr = nodeSprStr, file = dhtSprPath
   notice "Mix node SPR", spr = nodeSprStr, file = mixNodeSprPath
 
-  try:
-    while not shutdownRequested:
-      await sleepAsync(200.milliseconds)
-  finally:
-    notice "Stopping"
-    await noCancel transport.stop()
-    try:
-      await noCancel kad.stop()
-    except CatchableError as exc:
-      warn "Kad DHT close error", err = exc.msg
-    await switch.stop()
-    notice "Stopped"
+  while not shutdownRequested:
+    await sleepAsync(200.milliseconds)
+  notice "Stopping"
 
 proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
   let

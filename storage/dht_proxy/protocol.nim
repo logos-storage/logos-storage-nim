@@ -10,6 +10,8 @@
 {.push raises: [].}
 
 import pkg/chronos
+import pkg/libp2p/stream/connection
+from pkg/libp2p_mix_transport import TransportStream
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/std/enums
 import pkg/protobuf_serialization/pkg/results
@@ -49,6 +51,15 @@ type
     providers* {.fieldNumber: 2.}: seq[seq[byte]]
 
 Protobuf.serializerForResult([LookupRequest, LookupResponse])
+
+proc sendResponse*(
+    conn: Connection, response: LookupResponse
+) {.async: (raises: [CancelledError, LPStreamError]).} =
+  await conn.writeLp(response.encode())
+  if conn of TransportStream:
+    # Closing a Mix stream cancels retransmission. Let the client close after
+    # consuming the response. Both handlers bound this wait by the exchange deadline.
+    await conn.join()
 
 proc packProviders*(
     providers: seq[seq[byte]], budget_bytes: int

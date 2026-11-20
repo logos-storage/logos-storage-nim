@@ -121,7 +121,7 @@ asyncchecksuite "DHT proxy over MixTransport":
             .withPrivateKey(PrivateKey(scheme: Secp256k1, skkey: info.libp2pPrivKey))
             .withAddress(listenAddr)
             .withTcpTransport()
-            .withMplex()
+            .withYamux()
             .withNoise()
             .build()
           mix = MixProtocol.new(
@@ -166,6 +166,15 @@ asyncchecksuite "DHT proxy over MixTransport":
           infos[^1].peerId,
           @[mixes[^1].localMixPubInfo.tryGet().toMixAddress().tryGet()],
         )
+      let direct =
+        await switches[0].dial(infos[^1].peerId, @[infos[^1].multiAddr], DhtProxyCodec)
+      await direct.writeLp(@[255'u8])
+      let directReply =
+        LookupResponse.decode(await direct.readLp(MaxLookupResponseBytes)).tryGet()
+      check directReply.code == LookupCode.ErrDecodeFailed
+      await direct.close()
+      await waitForExchange()
+
       for i in 0 ..< 100:
         backend.providers.add(PeerRecord.init(PeerId.example, @[infos[1].multiAddr]))
       var encoded: seq[seq[byte]]
