@@ -203,9 +203,7 @@ proc republish(
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Signs a name record again with a new expiration and advertises it in the DHT.
   let
-    signed = self.mintNameRecord(
-      nameRecord.label, nameRecord.cid, nameRecord.seqnum
-    ).valueOr:
+    signed = self.mintNameRecord(nameRecord.label, nameRecord.cid, nameRecord.seqnum).valueOr:
       return err(error)
     nameKey = nameKey(signed.name())
 
