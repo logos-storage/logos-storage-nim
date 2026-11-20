@@ -51,15 +51,6 @@ proc handleFindProviders(
 
   LookupResponse(code: LookupCode.Ok, providers: packed)
 
-proc sendResponse(
-    conn: Connection, response: LookupResponse
-) {.async: (raises: [CancelledError, LPStreamError]).} =
-  await conn.writeLp(response.encode())
-  # MixTransport may still have reply bytes buffered at the client. The client
-  # closes the stream after reading the response. The exchange deadline bounds
-  # the wait if the client disappears.
-  await conn.join()
-
 proc handleLookupRequest(
     self: DhtProxyProtocol, conn: Connection
 ) {.async: (raises: [CancelledError]).} =
