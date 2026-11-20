@@ -6,34 +6,13 @@ import libp2p
 import ../declare_lib
 import ../../storage/naming/dht
 import ../../storage/naming/publisher
+import ../../storage/utils/nameutils
 
 from ../../storage/storage import StorageServer, node, namePublisher
 from ../../storage/node import discovery
 
 logScope:
   topics = "libstorage naming"
-
-proc parseName(nameKey: string): Result[Name, string] =
-  ## The name of a DHT key encoded as a CID string.
-  let cid = Cid.init(nameKey).valueOr:
-    return err("invalid name key: " & $error)
-
-  let parsed = nameFromNameKey(cid.data.buffer).valueOr:
-    return err("invalid name key: " & error.msg)
-
-  return ok(parsed)
-
-proc parsePublicKey(peerId: string): Result[PublicKey, string] =
-  ## The public key of a peer ID string.
-  let id = PeerId.init(peerId).valueOr:
-    return err("invalid peer ID: " & $error)
-
-  var publicKey: PublicKey
-
-  if not id.extractPublicKey(publicKey):
-    return err("the peer ID has no public key")
-
-  return ok(publicKey)
 
 proc storage_name_publish(
     self: Storage, label: string, cid: string, seqnum: uint64
@@ -53,13 +32,7 @@ proc storage_name_publish(
     let signed = (await self.namePublisher.publish(label, parsed, sequence)).valueOr:
       return err("Failed to publish the name: " & error.msg)
 
-    let
-      name = signed.name().expect(
-          "The publisher built the name record from its own key and a checked label"
-        )
-      nameCid = Cid.init(nameKey(name)).expect("nameKey builds a valid CID")
-
-    return ok($nameCid)
+    return ok(nameKeyString(signed))
   except CancelledError:
     return err("Failed to publish the name: operation cancelled.")
 
@@ -80,7 +53,7 @@ proc storage_name_refresh(
 ): Future[Result[string, string]] {.ffi.} =
   ## Advertises the name record of the name key in the DHT again.
   let name = parseName(nameKey).valueOr:
-    return err("Failed to refresh the name: " & error)
+    return err("Failed to refresh the name: " & error.msg)
 
   try:
     (await self.node.discovery.refresh(name)).isOkOr:
@@ -96,7 +69,7 @@ proc storage_name_resolve(
   ## Returns the CID of the name key, or an empty string when the DHT has no
   ## name record.
   let name = parseName(nameKey).valueOr:
-    return err("Failed to resolve the name: " & error)
+    return err("Failed to resolve the name: " & error.msg)
 
   try:
     let cid = (await self.node.discovery.resolve(name)).valueOr:
@@ -115,7 +88,7 @@ proc storage_name_resolve_key(
   ## Returns the CID of the name that the peer publishes for the label, or an
   ## empty string when the DHT has no name record.
   let publicKey = parsePublicKey(peerId).valueOr:
-    return err("Failed to resolve the name: " & error)
+    return err("Failed to resolve the name: " & error.msg)
 
   try:
     let cid = (await self.node.discovery.resolve(publicKey, label)).valueOr:

@@ -255,6 +255,14 @@ proc withListenPort*(
   startConfig.configs[idx].addCliOption("--listen-port", $port)
   return startConfig
 
+proc withApiCorsOrigin*(
+    self: StorageConfigs, idx: int, origin: string
+): StorageConfigs {.raises: [StorageConfigError].} =
+  self.checkBounds idx
+  var startConfig = self
+  startConfig.configs[idx].addCliOption("--api-cors-origin", origin)
+  return startConfig
+
 # For testing, a node with extip (not behind nat) with autonat server
 # enabled is a bootstrap node
 proc isBootstrapNode*(config: StorageConfig): bool {.raises: [].} =

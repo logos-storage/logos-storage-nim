@@ -110,6 +110,9 @@ method select*(
 
   ok(newestIndex)
 
+proc isNoNameRecordError*(error: ref CatchableError): bool =
+  error.msg.endsWith(NoNameRecordError)
+
 proc resolve*(
     discovery: Discovery, name: Name
 ): Future[Result[Opt[Cid], ref CatchableError]] {.async: (raises: [CancelledError]).} =
@@ -120,7 +123,7 @@ proc resolve*(
   ## decoded here: see [NameRecordValidator] and `getValue` in
   ## libp2p/protocols/kademlia/get.nim.
   let bytes = (await discovery.getValue(nameKey(name))).valueOr:
-    if error.msg.endsWith(NoNameRecordError):
+    if error.isNoNameRecordError:
       return ok(Opt.none(Cid))
 
     return err(error)
