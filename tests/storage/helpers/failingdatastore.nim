@@ -52,7 +52,7 @@ method query*(
   if not self.failSecondNext:
     return success(iter)
 
-  let failingIter = QueryIter.new(dispose = iter.dispose)
+  let failingIter = QueryIter(dispose: iter.dispose)
   var calls = 0
 
   proc next(): Future[?!QueryResponse] {.async: (raises: [CancelledError]).} =
