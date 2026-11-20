@@ -555,7 +555,7 @@
       }
     },
     "libp2p_mix_transport": {
-      "version": "#fbca29c8ccbe3623ab834f5cb18f90f6465e0e64",
+      "version": "#v0.1.0",
       "vcsRevision": "fbca29c8ccbe3623ab834f5cb18f90f6465e0e64",
       "url": "https://github.com/logos-storage/libp2p-mix-transport",
       "downloadMethod": "git",

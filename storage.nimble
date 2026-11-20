@@ -31,7 +31,7 @@ requires "libbacktrace >= 0.2.0 & < 0.3.0"
 requires "libp2p == 2.4.2"
 requires "websock == 0.4.1"
 # Match the Mix revision pinned by the MixTransport release.
-requires "https://github.com/logos-storage/libp2p-mix-transport#fbca29c8ccbe3623ab834f5cb18f90f6465e0e64"
+requires "https://github.com/logos-storage/libp2p-mix-transport#v0.1.0"
 requires "https://github.com/logos-co/nim-libp2p-mix.git#c4ea3f72afd5be3551bbfbeebb719437d40dc6f0"
 requires "https://github.com/logos-storage/nim-merkletree >= 1.0.1 & < 2.0.0"
 requires "https://github.com/logos-storage/nim-serde >= 1.2.3 & < 1.3.0"
