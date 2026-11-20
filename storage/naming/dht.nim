@@ -33,7 +33,7 @@ type
     ## The libp2p KadDHT validator for name records. The DHT calls it on each
     ## name record it receives or reads, and drops those that don't pass the
     ## validation.
-    clock*: Clock
+    clock*: Clock ## The current time, to refuse the expired name records
 
   NameRecordSelector* = ref object of EntrySelector
     ## The libp2p KadDHT selector for name records. When the DHT has several
