@@ -253,9 +253,7 @@ proc validate*(
 
 proc isNewer*(a, b: NameRecord): bool =
   ## `a` is newer than `b` when its seqnum is higher, or when both have the same
-  ## seqnum and `a` expires later. Two name records with the same seqnum only
-  ## differ by their expiration (see "Extending Expiry" in the spec), so an
-  ## older copy can't replace an extended one.
+  ## seqnum and `a` expires later.
   if a.seqnum != b.seqnum:
     return a.seqnum > b.seqnum
 
