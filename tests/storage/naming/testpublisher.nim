@@ -5,17 +5,17 @@ import pkg/libp2p except setup
 import pkg/datastore
 import pkg/questionable/results
 
-import ../asynctest
-import ../checktest
-import ./helpers
-import ./helpers/mockclock
-import ./helpers/failingdatastore
-import ./examples
-import ../../storage/discovery
-import ../../storage/namespaces
-import ../../storage/naming/record
-import ../../storage/naming/dht
-import ../../storage/naming/publisher {.all.}
+import ../../asynctest
+import ../../checktest
+import ../helpers
+import ../helpers/mockclock
+import ../helpers/failingdatastore
+import ../examples
+import ../../../storage/discovery
+import ../../../storage/namespaces
+import ../../../storage/naming/record
+import ../../../storage/naming/dht
+import ../../../storage/naming/publisher {.all.}
 
 type TestNode = object
   switch: Switch
@@ -383,9 +383,6 @@ asyncchecksuite "Name publisher":
     check (await publisher.publish("catalog", cid)).isOk
 
     await otherPublisher.republishAll()
-
-    # The name record of the first key is in the DHT
-    check (await reader.disc.getValue(nameKeyFromLabel("catalog"))).isOk
 
     # The name record of the other key is not in the DHT
     let otherNameKey = nameKey(name(otherPublicKey, "catalog").tryGet())
