@@ -40,7 +40,7 @@ type
     ## name records for a name, it chooses the newest.
 
 proc nameKey*(name: Name): Key =
-  ## The name key of the protocol spec: the name CID, used as key in the DHT.
+  ## The DHT key of the name.
   let
     hash = MultiHash.init(NameHashCodec, name).expect(
         "A name is 32 bytes, the size of a SHA2-256 digest"
@@ -52,8 +52,8 @@ proc nameKey*(name: Name): Key =
   cid.data.buffer
 
 proc nameFromNameKey(key: Key): Result[Name, ref CatchableError] =
-  ## Refuses a key with another CID version, codec or hash function than
-  ## `nameKey`.
+  ## The name of a DHT key, the reverse of `nameKey`. Refuses a key with another
+  ## CID version, codec or hash function.
   let
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
