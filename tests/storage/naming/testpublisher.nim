@@ -130,7 +130,8 @@ asyncchecksuite "Name publisher":
     check bytes == published.encode()
 
   test "refuses a seqnum lower than the stored one":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
 
@@ -153,7 +154,8 @@ asyncchecksuite "Name publisher":
     check again.tryGet().data.seqnum == 10'u64
 
   test "refuses a different CID for an existing seqnum":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(42'u64))).isOk
 
@@ -259,7 +261,8 @@ asyncchecksuite "Name publisher":
     check (await failingPublisher.unpublish("catalog")).isErr
 
   test "republishAll extends the expiration with the same CID and seqnum":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let seqnum = 3'u64
 
     let published = (await publisher.publish("catalog", cid, Opt.some(seqnum))).tryGet()
@@ -277,7 +280,8 @@ asyncchecksuite "Name publisher":
     check read.envelope.publicKey == publicKey
 
   test "republishAll republishes every stored name record":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", otherCid)).isOk
@@ -294,7 +298,8 @@ asyncchecksuite "Name publisher":
     check release.data.expiration == currentTime + oneHour + NameRecordLifetime
 
   test "start republishes the stored name records right away after a restart":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let seqnum = 3'u64
 
     check (await publisher.publish("catalog", cid, Opt.some(seqnum))).isOk
@@ -313,7 +318,8 @@ asyncchecksuite "Name publisher":
     )
 
   test "republishAll keeps going when one name record fails":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", cid)).isOk
@@ -347,7 +353,8 @@ asyncchecksuite "Name publisher":
 
   test "republishAll skips the name records signed by another key":
     let
-      reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      reader =
+        await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
       otherKey = PrivateKey.example
       otherPublicKey = otherKey.getPublicKey().tryGet()
       otherPublisher = newPublisher(server, metaDs, clock, otherKey)
@@ -413,7 +420,8 @@ asyncchecksuite "Name publisher":
       currentTime + oneHour + NameRecordLifetime
 
   test "the loop republishes every 4 hours":
-    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader =
+      await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(3'u64))).isOk
 

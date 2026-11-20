@@ -12,8 +12,7 @@ type
     switch*: Switch
     disc*: Discovery
 
-  TestNodes* = ref object
-    ## The nodes a test starts, so that its teardown can stop them
+  TestNodes* = ref object ## The nodes a test starts, so that its teardown can stop them
     started: seq[TestNode]
 
 proc startNode*(
