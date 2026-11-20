@@ -755,7 +755,7 @@ proc new*(
     restServer = RestServerRef
       .new(
         storageNode.initRestApi(
-          config, repoStore, autonatService, autoRelayService, natMapper,
+          config, repoStore, namePublisher, autonatService, autoRelayService, natMapper,
           config.apiCorsAllowedOrigin,
         ),
         initTAddress(config.apiBindAddress.get(), config.apiPort),
