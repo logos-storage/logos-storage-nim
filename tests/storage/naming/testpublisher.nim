@@ -118,7 +118,7 @@ asyncchecksuite "Name publisher":
     let signed = (await publisher.publish("catalog", cid)).tryGet()
 
     check signed.envelope.publicKey == publicKey
-    check name(signed).tryGet() == name(publicKey, "catalog").tryGet()
+    check name(signed) == name(publicKey, "catalog").tryGet()
 
   test "the publisher advertises the name record under the name key":
     let

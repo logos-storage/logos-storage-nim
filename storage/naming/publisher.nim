@@ -202,15 +202,15 @@ proc republish(
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Signs a name record again with a new expiration and advertises it in the DHT.
   let
-    signed = self.mintNameRecord(nameRecord.label, nameRecord.cid, nameRecord.seqnum).valueOr:
+    signed = self.mintNameRecord(
+      nameRecord.label, nameRecord.cid, nameRecord.seqnum
+    ).valueOr:
       return err(error)
-    nameBytes = signed.name().valueOr:
-      return err(error)
-    nameKey = nameKey(nameBytes)
+    nameKey = nameKey(signed.name())
 
   await self.discovery.putValue(nameKey, signed.encode())
 
-proc republishAll*(self: NamePublisher) {.async: (raises: [CancelledError]).} =
+proc republishAll(self: NamePublisher) {.async: (raises: [CancelledError]).} =
   ## Advertises every stored name record in the DHT again with a new expiration.
   ## A failure on one name record is logged and doesn't stop the others.
   ##

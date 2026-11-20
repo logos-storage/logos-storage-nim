@@ -92,7 +92,8 @@ method select*(
   ## by default, see [DefaultRecordExpirationInterval]). This window is not the
   ## expiration of the name record.
   ##
-  ## When the DHT reads a name, `records` is a list of items from other peers.
+  ## When the DHT reads a name, `records` holds the name records of other peers
+  ## and the node's own copy.
   var
     newestIndex = -1
     newest: NameRecord

@@ -22,11 +22,7 @@ proc nameKeyString*(name: Name): string =
 
 proc nameKeyString*(signed: SignedNameRecord): string =
   ## The name key of a name record that the publisher built.
-  let name = signed.name().expect(
-      "The publisher built the name record from its own key and a checked label"
-    )
-
-  nameKeyString(name)
+  nameKeyString(signed.name())
 
 proc parseName*(nameKey: string): Result[Name, ref CatchableError] =
   ## The name of a name key string, the reverse of `nameKeyString`.

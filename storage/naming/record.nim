@@ -197,8 +197,10 @@ proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError
 
   ok(hash.finish().data)
 
-proc name*(signed: SignedNameRecord): Result[Name, ref CatchableError] =
-  name(signed.envelope.publicKey, signed.data.label)
+proc name*(signed: SignedNameRecord): Name =
+  name(signed.envelope.publicKey, signed.data.label).expect(
+    "A signed name record has a valid label and public key"
+  )
 
 proc sign*(
     record: NameRecord, privateKey: PrivateKey
@@ -243,10 +245,7 @@ proc validate*(
   if signed.data.expiration < now:
     return failure("The name record has expired")
 
-  let recordName = signed.name().valueOr:
-    return err(error)
-
-  if recordName != expected:
+  if signed.name() != expected:
     return failure("The name is not the hash of the public key and the label")
 
   ok(signed)
