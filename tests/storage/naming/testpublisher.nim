@@ -169,7 +169,7 @@ asyncchecksuite "Name publisher":
     check read.data.seqnum == 42'u64
     check read.data.cid == cid
 
-  test "keeps the name record stored when advertising it fails":
+  test "succeeds and keeps the name record stored when advertising it fails":
     # The publisher is a fresh node that lost its previous name record,
     # with seqnum 10.
     # Advertising fails because the DHT has a newer name record, but the name
@@ -185,7 +185,7 @@ asyncchecksuite "Name publisher":
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
     check (await server.disc.putValue(nameKeyFromLabel("catalog"), newerBytes)).isOk
-    check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isErr
+    check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isOk
 
     let stored = (await publisher.getNameRecords()).tryGet()
 

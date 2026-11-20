@@ -137,7 +137,7 @@ proc publish*(
   ## Publishes a name record for the label. The seqnum is the current time
   ## unless it is given. It can't be lower than the stored one, and it can only
   ## be equal to it for the same CID. The name record is persisted, then
-  ## advertised in the DHT.
+  ## advertised in the DHT. A failure to advertise is only logged.
   let
     nameBytes = self.name(label).valueOr:
       return err(error)
@@ -175,8 +175,9 @@ proc publish*(
 
   let advertised = await self.discovery.putValue(nameKey, bytes)
 
+  # The name record is stored, so the next republish advertises it again.
   if advertised.isErr:
-    return err(advertised.error)
+    warn "Cannot advertise the name record", label, error = advertised.error.msg
 
   ok(signed)
 
