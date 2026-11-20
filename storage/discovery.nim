@@ -23,9 +23,6 @@ import pkg/questionable
 import pkg/questionable/results
 
 import ./rng as storage_rng
-import ./clock
-import ./systemclock
-import ./naming/validator
 import ./utils/mixidentity
 import ./errors
 import ./logutils
@@ -266,7 +263,8 @@ proc new*(
     dhtMixProxies: openArray[SignedPeerRecord] = [],
     isServer = true,
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
-    clock: Clock = SystemClock.new(),
+    validator: EntryValidator = DefaultEntryValidator(),
+    selector: EntrySelector = DefaultEntrySelector(),
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -281,8 +279,8 @@ proc new*(
     config = KadDHTConfig.new(
       addressPolicy = addressPolicy,
       quorum = ValueQuorum,
-      validator = NameRecordValidator(clock: clock),
-      selector = NameRecordSelector(),
+      validator = validator,
+      selector = selector,
     ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,

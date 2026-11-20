@@ -1,0 +1,16 @@
+import pkg/chronos
+import pkg/libp2p
+
+import storage/clock
+import storage/naming/validator
+import ../helpers/testnodes
+
+export testnodes
+
+proc startNode*(
+    nodes: TestNodes, clock: Clock, isServer: bool, bootstrap: seq[TestNode] = @[]
+): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
+  ## Starts a node whose DHT keeps only the valid name records
+  return await nodes.startNode(
+    isServer, bootstrap, NameRecordValidator(clock: clock), NameRecordSelector()
+  )

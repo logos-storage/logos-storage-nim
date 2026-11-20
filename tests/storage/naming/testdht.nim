@@ -1,4 +1,3 @@
-import std/sequtils
 import std/tables
 
 import pkg/chronos
@@ -11,14 +10,11 @@ import ../../checktest
 import ../helpers
 import ../helpers/mockclock
 import ../examples
+import ./namenodes
 import ../../../storage/discovery
 import ../../../storage/naming/record
 import ../../../storage/naming/publisher
 import ../../../storage/naming/dht
-
-type TestNode = object
-  switch: Switch
-  disc: Discovery
 
 const
   # 10:00:00 UTC on 11 November 2026
@@ -26,7 +22,6 @@ const
 
 asyncchecksuite "Name resolver":
   var
-    nodes: seq[TestNode]
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
@@ -34,6 +29,7 @@ asyncchecksuite "Name resolver":
     reader: TestNode
 
   let
+    nodes = TestNodes()
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     cid = Cid.example
@@ -45,30 +41,7 @@ asyncchecksuite "Name resolver":
 
     publishers = @[]
 
-    for node in nodes:
-      await node.switch.stop()
-
-    nodes = @[]
-
-  proc startNode(
-      clock: Clock, isServer: bool, bootstrap: seq[TestNode] = @[]
-  ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
-    let
-      switch = newStandardSwitch()
-      bootstrapPeers =
-        bootstrap.mapIt((it.switch.peerInfo.peerId, it.switch.peerInfo.addrs))
-      disc = Discovery.new(
-        switch, bootstrapNodes = bootstrapPeers, isServer = isServer, clock = clock
-      )
-
-    switch.mount(disc.kad)
-
-    await switch.start()
-
-    let node = TestNode(switch: switch, disc: disc)
-    nodes.add(node)
-
-    node
+    await nodes.stop()
 
   proc newPublisher(node: TestNode): NamePublisher =
     let publisher = NamePublisher.new(
@@ -81,10 +54,10 @@ asyncchecksuite "Name resolver":
   setup:
     clock = MockClock.new(currentTime)
 
-    server = await startNode(clock, isServer = true)
+    server = await nodes.startNode(clock, isServer = true)
     publisher = newPublisher(server)
 
-    reader = await startNode(clock, isServer = false, bootstrap = @[server])
+    reader = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
 
   test "resolves a name published by another node":
     check (await publisher.publish("catalog", cid)).isOk
@@ -130,7 +103,6 @@ asyncchecksuite "Name resolver":
 
 asyncchecksuite "Name refresh":
   var
-    nodes: seq[TestNode]
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
@@ -138,6 +110,7 @@ asyncchecksuite "Name refresh":
     refresher: TestNode
 
   let
+    nodes = TestNodes()
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     cid = Cid.example
@@ -148,30 +121,7 @@ asyncchecksuite "Name refresh":
 
     publishers = @[]
 
-    for node in nodes:
-      await node.switch.stop()
-
-    nodes = @[]
-
-  proc startNode(
-      clock: Clock, isServer: bool, bootstrap: seq[TestNode] = @[]
-  ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
-    let
-      switch = newStandardSwitch()
-      bootstrapPeers =
-        bootstrap.mapIt((it.switch.peerInfo.peerId, it.switch.peerInfo.addrs))
-      disc = Discovery.new(
-        switch, bootstrapNodes = bootstrapPeers, isServer = isServer, clock = clock
-      )
-
-    switch.mount(disc.kad)
-
-    await switch.start()
-
-    let node = TestNode(switch: switch, disc: disc)
-    nodes.add(node)
-
-    node
+    await nodes.stop()
 
   proc newPublisher(node: TestNode): NamePublisher =
     let publisher = NamePublisher.new(
@@ -186,7 +136,7 @@ asyncchecksuite "Name refresh":
   proc startLateNode(): Future[TestNode] {.
       async: (raises: [CancelledError, LPError, AsyncExceptionError])
   .} =
-    let late = await startNode(clock, isServer = true, bootstrap = @[server])
+    let late = await nodes.startNode(clock, isServer = true, bootstrap = @[server])
 
     check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
@@ -195,10 +145,10 @@ asyncchecksuite "Name refresh":
   setup:
     clock = MockClock.new(currentTime)
 
-    server = await startNode(clock, isServer = true)
+    server = await nodes.startNode(clock, isServer = true)
     publisher = newPublisher(server)
 
-    refresher = await startNode(clock, isServer = false, bootstrap = @[server])
+    refresher = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
 
   test "a node that joins after the publish gets the same name record after a refresh":
     check (await publisher.publish("catalog", cid)).isOk
@@ -236,6 +186,61 @@ asyncchecksuite "Name refresh":
     let unknownName = name(publicKey, "unknown").tryGet()
 
     check (await refresh(refresher.disc, unknownName)).isErr
+
+asyncchecksuite "Name records in the DHT":
+  var clock: MockClock
+
+  let
+    nodes = TestNodes()
+    privateKey = PrivateKey.example
+
+  teardown:
+    await nodes.stop()
+
+  proc newKey(label: string): seq[byte] =
+    nameKey(name(privateKey.getPublicKey().tryGet(), label).tryGet())
+
+  proc newValue(label: string, seqnum: uint64): seq[byte] =
+    let record = NameRecord(
+      version: NameRecordVersion,
+      label: label,
+      cid: Cid.example,
+      seqnum: seqnum,
+      expiration: currentTime + 3600,
+    )
+
+    sign(record, privateKey).tryGet().encode()
+
+  setup:
+    clock = MockClock.new(currentTime)
+
+  test "a put with an older seqnum doesn't replace the value":
+    let
+      serverA = await nodes.startNode(clock, isServer = true)
+      serverB = await nodes.startNode(clock, isServer = true, bootstrap = @[serverA])
+      bootstrapNodes = @[serverA, serverB]
+      writer = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      key = newKey("older-put")
+      value = newValue("older-put", 2)
+      olderValue = newValue("older-put", 1)
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
+
+    check (await writer.disc.putValue(key, value)).isOk
+    check (await writer.disc.putValue(key, olderValue)).isErr
+
+    let got = await reader.disc.getValue(key)
+    check got.isOk
+    check got.tryGet == value
+
+  test "putValue refuses a name record stored under the name of another label":
+    let
+      writer = await nodes.startNode(clock, isServer = false)
+      key = newKey("catalog")
+
+    check (await writer.disc.putValue(key, newValue("release", 1))).isErr
 
 checksuite "Name key":
   let

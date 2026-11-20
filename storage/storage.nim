@@ -43,6 +43,7 @@ import ./utils/mixidentity
 import ./discovery
 import ./systemclock
 import ./naming/publisher
+import ./naming/validator
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -506,7 +507,8 @@ proc new*(
       dhtMixProxies = config.dhtMixProxies,
       isServer = config.nat.hasExtIp or config.autonatServer,
       addressPolicy = kadAddressPolicy,
-      clock = clock,
+      validator = NameRecordValidator(clock: clock),
+      selector = NameRecordSelector(),
     )
 
     repoData =
