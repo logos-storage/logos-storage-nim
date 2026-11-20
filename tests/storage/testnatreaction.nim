@@ -148,6 +148,20 @@ asyncchecksuite "NAT reaction - port mapping":
     check not autoRelay.isRunning
     check disc.isServerMode()
 
+  test "Reachable without a dialback address stops relay and enables DHT server mode":
+    let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
+    autorelayservice.setup(autoRelay, sw)
+    await mapper.handleNatStatus(
+      NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
+    )
+    check autoRelay.isRunning
+    check not disc.isServerMode()
+
+    # AddressManager reachability notifications no longer carry a dialback address.
+    await mapper.handleNatStatus(Reachable, Opt.none(MultiAddress), disc, sw, autoRelay)
+    check not autoRelay.isRunning
+    check disc.isServerMode()
+
   test "handleNatStatus does nothing after the mapper is stopped":
     let dialBack = MultiAddress.init("/ip4/1.2.3.4/tcp/8080").expect("valid")
     let mapper =
