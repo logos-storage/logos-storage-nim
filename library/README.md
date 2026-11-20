@@ -169,19 +169,19 @@ Via stream: `download_stream` opens the session when none exists and reads to th
 
 ## Names
 
-A name points to a CID, and its publisher can change that CID. The node signs its names with its own private key. Its peer ID holds the matching public key.
+The name API lets you point a DHT key, represented as a CID, to a dataset CID. The node signs its names with its own private key. Its peer ID has the matching public key.
 
 - A `nameKey` is the DHT key of a name, encoded as a CID string.
 - A `label` is a UTF-8 string of 1 to 256 bytes.
-- A `peerId` is the peer ID of the publisher. It must hold the public key, as the peer IDs of Storage nodes do. The name of a `peerId` and a `label` is the name that this peer publishes for this label.
+- A `peerId` is the peer ID of the publisher.
 
-`name_publish` signs a name record for the `label` and the `cid`, stores it and advertises it in the DHT. The node advertises it again every 4 hours and after a restart. The name record expires after 8 hours.
+`name_publish` signs a name record for the `label` and the `cid`, persists it and advertises it in the DHT. The node advertises it again every 4 hours and after a restart. The name record expires after 8 hours.
 
 - `seqnum` is the sequence number of the name record. When it is 0, the node takes the current Unix time in seconds.
 - The call fails when `seqnum` is lower than the one of the stored name record.
 - The call fails when `seqnum` is equal to the one of the stored name record and `cid` is another CID.
 
-`name_unpublish` deletes the stored name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
+`name_unpublish` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
 
 `name_refresh` reads the name record of the `nameKey` in the DHT and advertises it again, unchanged. Any node can refresh any name. The call fails when the DHT has no name record for the `nameKey`.
 
