@@ -14,16 +14,18 @@ session available to other operations. Server shutdown stops the shared service.
 
 ## Configuration and compatibility
 
-Each configured proxy signed peer record must contain a `/mix` address carrying
+Each configured proxy signed peer record must contain a `/mix-transport` address carrying
 its Mix public information. The embedded peer identity must match the record's
 peer ID. An ordinary TCP address alone is insufficient. The client obtains the
 proxy's Mix public information from its advertised address. Discovered proxy
 records are checked for the same address and matching identity. The proxy need not appear in the client's
 relay pool, but both nodes still require usable Mix routing information.
 
-Run an updated Storage node with Mix enabled, or the updated `mix_relay_dht`
+Run an updated Storage node with `--dht-proxy-server`, or the updated `mix_relay_dht`
 tool with its DHT proxy enabled. Both start MixTransport and mount the proxy
-protocol. The tool's generated signed peer records include its Mix advertisement;
+protocol. A dedicated Storage proxy advertises its Mix address and proxy service.
+Adding `--mix-enabled` also enables Mix downloads and, on a public node, relay advertisement.
+The tool's generated signed peer records include its Mix advertisement;
 redistribute the updated record to clients. Relay-only mode does not serve lookups.
 
 The stream protocol uses `/storage/dht-proxy/2.0.0`. Protobuf field numbers and
@@ -36,7 +38,7 @@ replace their configured records before switching clients.
 
 A stream carries one length-prefixed `FindProviders(CID)` request and one
 length-prefixed response. The client closes the stream after reading the reply.
-The proxy waits for that close so the client can consume buffered response data.
+On MixTransport streams, the proxy waits for that close so the client can consume buffered response data.
 Requests are limited to 4 KiB and responses to 256 KiB,
 independently of Mix packet size. The proxy returns the largest prefix of provider
 records that fits the response limit. If even the first record cannot fit, the
