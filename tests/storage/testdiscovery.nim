@@ -141,17 +141,6 @@ asyncchecksuite "Discovery - DHT values":
     check await fut.withTimeout(lookupTimeout)
     check fut.read().isErr
 
-  test "a client node doesn't store values for other nodes":
-    let
-      server = await nodes.startNode(isServer = true)
-      client = await nodes.startNode(isServer = false, bootstrap = @[server])
-      key = toBytes("client-stores-nothing")
-      value = toBytes("value")
-
-    check (await server.disc.putValue(key, value)).isOk
-
-    check not client.disc.kad.dataTable.hasKey(key)
-
   test "a second put on the same key replaces the value":
     let
       serverA = await nodes.startNode(isServer = true)

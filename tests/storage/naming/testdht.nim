@@ -36,7 +36,6 @@ proc newRecord(seqnum: uint64, expiration: int64, label = "catalog"): NameRecord
 
 asyncchecksuite "Name resolver":
   var
-    publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
     publisher: NamePublisher
@@ -50,26 +49,15 @@ asyncchecksuite "Name resolver":
     otherCid = Cid.example
 
   teardown:
-    for startedPublisher in publishers:
-      await startedPublisher.stop()
-
-    publishers = @[]
-
     await nodes.stop()
-
-  proc newPublisher(node: TestNode): NamePublisher =
-    let publisher = NamePublisher.new(
-      node.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
-    )
-    publishers.add(publisher)
-
-    publisher
 
   setup:
     clock = MockClock.new(currentTime)
 
     server = await nodes.startNode(clock, isServer = true)
-    publisher = newPublisher(server)
+    publisher = NamePublisher.new(
+      server.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
+    )
 
     reader = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
 
@@ -117,7 +105,6 @@ asyncchecksuite "Name resolver":
 
 asyncchecksuite "Name refresh":
   var
-    publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
     publisher: NamePublisher
@@ -130,20 +117,7 @@ asyncchecksuite "Name refresh":
     cid = Cid.example
 
   teardown:
-    for startedPublisher in publishers:
-      await startedPublisher.stop()
-
-    publishers = @[]
-
     await nodes.stop()
-
-  proc newPublisher(node: TestNode): NamePublisher =
-    let publisher = NamePublisher.new(
-      node.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
-    )
-    publishers.add(publisher)
-
-    publisher
 
   # Starts a server node after the publish, then waits until the server of the
   # publisher knows it.
@@ -160,7 +134,9 @@ asyncchecksuite "Name refresh":
     clock = MockClock.new(currentTime)
 
     server = await nodes.startNode(clock, isServer = true)
-    publisher = newPublisher(server)
+    publisher = NamePublisher.new(
+      server.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
+    )
 
     refresher = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
 
