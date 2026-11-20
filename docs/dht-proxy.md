@@ -35,7 +35,9 @@ replace their configured records before switching clients.
 ## Limits and failures
 
 A stream carries one length-prefixed `FindProviders(CID)` request and one
-length-prefixed response. Requests are limited to 4 KiB and responses to 256 KiB,
+length-prefixed response. The client closes the stream after reading the reply.
+The proxy waits for that close so the client can consume buffered response data.
+Requests are limited to 4 KiB and responses to 256 KiB,
 independently of Mix packet size. The proxy returns the largest prefix of provider
 records that fits the response limit. If even the first record cannot fit, the
 proxy returns `ErrResponseTooLarge`. An empty result returns `NotFound`.

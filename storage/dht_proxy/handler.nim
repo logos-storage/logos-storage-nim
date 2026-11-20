@@ -51,6 +51,15 @@ proc handleFindProviders(
 
   LookupResponse(code: LookupCode.Ok, providers: packed)
 
+proc sendResponse(
+    conn: Connection, response: LookupResponse
+) {.async: (raises: [CancelledError, LPStreamError]).} =
+  await conn.writeLp(response.encode())
+  # MixTransport may still have reply bytes buffered at the client. The client
+  # closes the stream after reading the response. The exchange deadline bounds
+  # the wait if the client disappears.
+  await conn.join()
+
 proc handleLookupRequest(
     self: DhtProxyProtocol, conn: Connection
 ) {.async: (raises: [CancelledError]).} =
@@ -58,7 +67,7 @@ proc handleLookupRequest(
     if self.inFlight >= self.maxInFlight:
       debug "DHT proxy at capacity, replying ErrTooBusy",
         inFlight = self.inFlight, max = self.maxInFlight
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrTooBusy).encode())
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrTooBusy))
       return
 
     inc self.inFlight
@@ -74,7 +83,7 @@ proc handleLookupRequest(
 
     let req = LookupRequest.decode(reqBytes).valueOr:
       warn "Failed to decode lookup request"
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrDecodeFailed).encode())
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrDecodeFailed))
       return
 
     let resp =
@@ -82,7 +91,7 @@ proc handleLookupRequest(
       of FindProviders:
         await self.handleFindProviders(req.queryBytes)
 
-    await conn.writeLp(resp.encode())
+    await conn.sendResponse(resp)
   except CancelledError as exc:
     raise exc
   except LPStreamError as exc:

@@ -88,25 +88,27 @@ import pkg/storage/dht_proxy/[handler, protocol]
 
 type ProxyDiscovery = ref object of Discovery
   providers: seq[PeerRecord]
-  delay: Duration
+  lookupStarted: AsyncEvent
   directCalls: int
 
 method findDirect(
     self: ProxyDiscovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
   inc self.directCalls
-  if self.delay > 0.seconds:
-    await sleepAsync(self.delay)
+  if not self.lookupStarted.isNil:
+    self.lookupStarted.fire()
+    await newAsyncEvent().wait() # held until the client cancels or times out
   return success(self.providers)
 
 asyncchecksuite "DHT proxy over MixTransport":
   test "multi-packet replies, session reuse, timeout, cancellation and no fallback":
     let
       rng = newRng()
-      infos = MixNodeInfo.generateRandomMany(5, rng)
+      listenAddr = MultiAddress.init("/ip4/127.0.0.1/tcp/0").tryGet()
       backend = ProxyDiscovery()
       cid = Cid.example
     var
+      infos = MixNodeInfo.generateRandomMany(5, rng)
       switches: seq[Switch]
       mixes: seq[MixProtocol]
       transports: seq[MixTransport]
@@ -117,7 +119,7 @@ asyncchecksuite "DHT proxy over MixTransport":
             .new()
             .withRng(rng)
             .withPrivateKey(PrivateKey(scheme: Secp256k1, skkey: info.libp2pPrivKey))
-            .withAddress(info.multiAddr)
+            .withAddress(listenAddr)
             .withTcpTransport()
             .withMplex()
             .withNoise()
@@ -127,14 +129,33 @@ asyncchecksuite "DHT proxy over MixTransport":
             switch,
             delayStrategy = Opt.some(DelayStrategy(NoSamplingDelayStrategy.new(rng))),
           )
-        mix.nodePool.add(infos.includeAllExcept(info))
         switch.mount(mix)
         switches.add(switch)
         mixes.add(mix)
-      switches[^1].mount(DhtProxyProtocol.new(backend, maxInFlight = 1))
+      let
+        protocol = DhtProxyProtocol.new(backend, maxInFlight = 1)
+        serve: LPProtoHandler = protocol.handler
+        exchangeFinished = newAsyncEvent()
+
+      protocol.handler = proc(
+          conn: Connection, codec: string
+      ) {.async: (raises: [CancelledError]).} =
+        defer:
+          exchangeFinished.fire()
+        await serve(conn, codec)
+
+      proc waitForExchange() {.async.} =
+        await exchangeFinished.wait().wait(10.seconds)
+        exchangeFinished.clear()
+
+      switches[^1].mount(protocol)
       for index in 0 ..< switches.len:
         await switches[index].start()
-        await mixes[index].start()
+        infos[index].multiAddr = switches[index].peerInfo.listenAddrs[0]
+        mixes[index].setLocalMultiAddr(infos[index].multiAddr).tryGet()
+      for index, mix in mixes:
+        mix.nodePool.add(infos.includeAllExcept(infos[index]))
+        await mix.start()
       for index in [0, 4]:
         let transport = newMixTransport(mixes[index])
         (await transport.start()).tryGet()
@@ -152,12 +173,17 @@ asyncchecksuite "DHT proxy over MixTransport":
         encoded.add(provider.encode())
       check LookupResponse(code: LookupCode.Ok, providers: encoded).encode().len > 4096
       let found = await lookupProviders(mixes[0], transport, proxy, cid, 20.seconds)
+      if found.isFailure:
+        checkpoint found.error.msg
       check found.isSuccess
-      check found.get().len == 100
+      if found.isSuccess:
+        check found.get().len == 100
+      await waitForExchange()
       backend.providers = @[]
       let empty = await lookupProviders(mixes[0], transport, proxy, cid, 20.seconds)
       check empty.isSuccess
       check empty.get().len == 0
+      await waitForExchange()
 
       let malformed = (await transport.dial(proxy, DhtProxyCodec)).tryGet()
       await malformed.writeLp(@[255'u8])
@@ -165,23 +191,29 @@ asyncchecksuite "DHT proxy over MixTransport":
         LookupResponse.decode(await malformed.readLp(MaxLookupResponseBytes)).tryGet()
       check malformedResponse.code == LookupCode.ErrDecodeFailed
       await malformed.close()
+      await waitForExchange()
 
-      backend.delay = 5.seconds
+      backend.lookupStarted = newAsyncEvent()
       let timedOut =
         await lookupProviders(mixes[0], transport, proxy, cid, 200.milliseconds)
       check timedOut.isFailure
       check "timed out" in timedOut.error.msg
-      let cancelled = lookupProviders(mixes[0], transport, proxy, cid, 20.seconds)
-      await sleepAsync(100.milliseconds)
-      let busy = await lookupProviders(mixes[0], transport, proxy, cid, 2.seconds)
+      await waitForExchange()
+      backend.lookupStarted.clear()
+      let cancelled = lookupProviders(mixes[0], transport, proxy, cid)
+      await backend.lookupStarted.wait().wait(10.seconds)
+      let busy = await lookupProviders(mixes[0], transport, proxy, cid)
       check busy.isFailure
       check "ErrTooBusy" in busy.error.msg
+      await waitForExchange()
       await cancelled.cancelAndWait()
       check cancelled.cancelled
-      backend.delay = 0.seconds
+      await waitForExchange()
+      backend.lookupStarted = nil
       let afterCancel =
         await lookupProviders(mixes[0], transport, proxy, cid, 20.seconds)
       check afterCancel.isSuccess
+      await waitForExchange()
 
       let clientDiscovery =
         ProxyDiscovery(mixProto: mixes[0], mixPeerTransport: transport)
