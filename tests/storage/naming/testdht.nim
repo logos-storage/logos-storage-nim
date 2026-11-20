@@ -235,7 +235,8 @@ asyncchecksuite "Name records in the DHT":
       bootstrapNodes = @[serverA, serverB]
       writer =
         await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-      reader =
+      # It never get the newer value
+      olderWriter =
         await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
       key = newKey("older-put")
       value = newValue("older-put", 2)
@@ -245,11 +246,11 @@ asyncchecksuite "Name records in the DHT":
     check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
-    check (await writer.disc.putValue(key, olderValue)).isErr
+    check (await olderWriter.disc.putValue(key, olderValue)).isOk
 
-    let got = await reader.disc.getValue(key)
-    check got.isOk
-    check got.tryGet == value
+    check olderWriter.disc.kad.dataTable.get(key).get().value == olderValue
+    check serverA.disc.kad.dataTable.get(key).get().value == value
+    check serverB.disc.kad.dataTable.get(key).get().value == value
 
   test "putValue refuses a name record stored under the name of another label":
     let
