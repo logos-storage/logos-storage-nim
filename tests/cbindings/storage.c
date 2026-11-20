@@ -1127,6 +1127,186 @@ int check_get_metrics(StorageCtx *storage_ctx)
     return RET_OK;
 }
 
+static int get_peer_id(StorageCtx *storage_ctx, char **res)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_peer_id(storage_ctx, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, res);
+}
+
+static int name_publish(StorageCtx *storage_ctx, const char *label, const char *cid, uint64_t seqnum, char **name)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_publish(storage_ctx, label, cid, seqnum, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, name);
+}
+
+static int name_unpublish(StorageCtx *storage_ctx, const char *label)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_unpublish(storage_ctx, label, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, NULL);
+}
+
+static int name_refresh(StorageCtx *storage_ctx, const char *name)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_refresh(storage_ctx, name, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, NULL);
+}
+
+static int name_resolve(StorageCtx *storage_ctx, const char *name, char **res)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_resolve(storage_ctx, name, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, res);
+}
+
+static int name_resolve_key(StorageCtx *storage_ctx, const char *peer_id, const char *label, char **res)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_resolve_key(storage_ctx, peer_id, label, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, res);
+}
+
+int check_name_resolve(StorageCtx *storage_ctx, const char *cid)
+{
+    char *name = NULL;
+    char *res = NULL;
+
+    if (name_publish(storage_ctx, "resolve", cid, 5, &name) != RET_OK)
+    {
+        fprintf(stderr, "publish failed: %s\n", name ? name : "(null)");
+        free(name);
+        return RET_ERR;
+    }
+
+    int ret = name_resolve(storage_ctx, name, &res);
+
+    if (res == NULL || strcmp(res, cid) != 0)
+    {
+        fprintf(stderr, "resolved CID mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(name);
+    free(res);
+
+    return ret;
+}
+
+int check_name_unpublish(StorageCtx *storage_ctx, const char *cid)
+{
+    char *res = NULL;
+
+    if (name_publish(storage_ctx, "unpublish", cid, 0, &res) != RET_OK)
+    {
+        fprintf(stderr, "publish failed: %s\n", res ? res : "(null)");
+        free(res);
+        return RET_ERR;
+    }
+
+    free(res);
+
+    if (name_unpublish(storage_ctx, "unpublish") != RET_OK)
+    {
+        fprintf(stderr, "unpublish failed\n");
+        return RET_ERR;
+    }
+
+    return RET_OK;
+}
+
+int check_name_refresh(StorageCtx *storage_ctx, const char *cid)
+{
+    char *name = NULL;
+
+    if (name_publish(storage_ctx, "refresh", cid, 1, &name) != RET_OK)
+    {
+        fprintf(stderr, "publish failed: %s\n", name ? name : "(null)");
+        free(name);
+        return RET_ERR;
+    }
+
+    int ret = name_refresh(storage_ctx, name);
+
+    free(name);
+
+    return ret;
+}
+
+int check_name_resolve_key(StorageCtx *storage_ctx, const char *cid)
+{
+    char *peer_id = NULL;
+    char *res = NULL;
+
+    if (get_peer_id(storage_ctx, &peer_id) != RET_OK)
+    {
+        free(peer_id);
+        return RET_ERR;
+    }
+
+    if (name_publish(storage_ctx, "resolve-key", cid, 1, &res) != RET_OK)
+    {
+        fprintf(stderr, "publish failed: %s\n", res ? res : "(null)");
+        free(peer_id);
+        free(res);
+        return RET_ERR;
+    }
+
+    free(res);
+    res = NULL;
+
+    int ret = name_resolve_key(storage_ctx, peer_id, "resolve-key", &res);
+
+    if (res == NULL || strcmp(res, cid) != 0)
+    {
+        fprintf(stderr, "resolved CID mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(peer_id);
+    free(res);
+
+    return ret;
+}
+
 static int read_whole_file(const char *filepath, char **res)
 {
     FILE *file = fopen(filepath, "rb");
@@ -1280,6 +1460,10 @@ int main(void)
     RUN_TEST(check_exists(storage_ctx, cid, true));
     RUN_TEST(check_advertise(storage_ctx, cid, false));
     RUN_TEST(check_advertise(storage_ctx, cid, true));
+    RUN_TEST(check_name_resolve(storage_ctx, cid));
+    RUN_TEST(check_name_unpublish(storage_ctx, cid));
+    RUN_TEST(check_name_refresh(storage_ctx, cid));
+    RUN_TEST(check_name_resolve_key(storage_ctx, cid));
     RUN_TEST(check_delete(storage_ctx, cid));
     RUN_TEST(check_exists(storage_ctx, cid, false));
 

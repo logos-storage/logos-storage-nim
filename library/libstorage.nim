@@ -8,6 +8,7 @@ import ./storage_api/info_api
 import ./storage_api/debug_api
 import ./storage_api/p2p_api
 import ./storage_api/data_api
+import ./storage_api/naming_api
 
 {.warning[UnusedImport]: off.}
 
