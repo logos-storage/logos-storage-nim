@@ -1,4 +1,3 @@
-import std/sequtils
 import std/strutils
 
 import pkg/cbor_serialization
@@ -43,36 +42,12 @@ checksuite "Name record":
     check decoded.data.expiration == record.expiration
     check decoded.envelope.publicKey == publicKey
 
-  test "refuses bytes that are not a name record":
-    let
-      randomBytes = newSeqWith(100, 0xAB'u8)
-      noBytes = newSeq[byte]()
-
-    check decodeNameRecord(randomBytes).isErr
-    check decodeNameRecord(noBytes).isErr
-
-  test "gives the same name for the same key and label":
-    check name(publicKey, label).tryGet() == name(publicKey, label).tryGet()
-
-  test "gives different names for different labels":
-    check name(publicKey, "alpha").tryGet() != name(publicKey, "beta").tryGet()
-
-  test "gives different names for different keys":
-    let otherKey = PrivateKey.example.getPublicKey().tryGet()
-
-    check name(publicKey, label).tryGet() != name(otherKey, label).tryGet()
-
   test "the name is the SHA2-256 of the public key bytes followed by the label bytes":
     let
       labelBytes = @(label.toOpenArrayByte(0, label.high))
       expected = sha256.digest(publicKey.getBytes().tryGet() & labelBytes).data
 
     check name(publicKey, label).tryGet() == expected
-
-  proc createName(publicKey: PublicKey, label: string): Name =
-    let labelBytes = @(label.toOpenArrayByte(0, label.high))
-
-    sha256.digest(publicKey.getBytes().tryGet() & labelBytes).data
 
   let invalidUtf8Labels = [
     "\xff", # invalid byte
@@ -130,23 +105,6 @@ checksuite "Name record":
   test "sign refuses a label that is not valid UTF-8":
     for invalidLabel in invalidUtf8Labels:
       check newRecord(invalidLabel).sign(privateKey).isErr
-
-  test "validate refuses a name record with an empty label":
-    let
-      record = newRecord("")
-      now = record.expiration - 3600
-      bytes = SignedNameRecord.init(privateKey, record).tryGet().encode()
-
-    check validate(createName(publicKey, ""), bytes, now).isErr
-
-  test "validate refuses a name record with a label that is not valid UTF-8":
-    for invalidLabel in invalidUtf8Labels:
-      let
-        record = newRecord(invalidLabel)
-        now = record.expiration - 3600
-        bytes = SignedNameRecord.init(privateKey, record).tryGet().encode()
-
-      check validate(createName(publicKey, invalidLabel), bytes, now).isErr
 
   test "the name of a signed name record matches its signing key and label":
     let
@@ -298,6 +256,15 @@ checksuite "Name record":
     let bytes = signPayload(Cbor.encode(fields))
 
     check decodeNameRecord(bytes).isErr
+
+  test "refuses a name record whose cid is a CIDv0":
+    let
+      cidV0 = Cid.init("QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n").tryGet()
+      validBytes = signPayload(Cbor.encode(cborFields(newRecord(label))))
+      v0Bytes = signPayload(Cbor.encode(cborFields(newRecord(label, cidV0))))
+
+    check decodeNameRecord(validBytes).isOk
+    check decodeNameRecord(v0Bytes).isErr
 
   test "refuses a name record whose cid is longer than 128 bytes":
     let

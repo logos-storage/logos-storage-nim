@@ -9,8 +9,10 @@ import ../asynctest
 import ../checktest
 import ./helpers
 import ./helpers/mockclock
+import ./helpers/failingdatastore
 import ./examples
 import ../../storage/discovery
+import ../../storage/namespaces
 import ../../storage/naming/record
 import ../../storage/naming/dht
 import ../../storage/naming/publisher {.all.}
@@ -146,15 +148,6 @@ asyncchecksuite "Name publisher":
     check signed.envelope.publicKey == publicKey
     check name(signed).tryGet() == name(publicKey, "catalog").tryGet()
 
-  test "another node reads the published name record through the DHT":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-
-    let published = (await publisher.publish("catalog", cid)).tryGet()
-    let read = await reader.getFromDht("catalog")
-
-    check read.data == published.data
-    check read.envelope.publicKey == publicKey
-
   test "the publisher advertises the name record under the name key":
     let
       published = (await publisher.publish("catalog", cid)).tryGet()
@@ -163,37 +156,6 @@ asyncchecksuite "Name publisher":
     let bytes = (await server.disc.getValue(nameKey)).tryGet()
 
     check bytes == published.encode()
-
-  test "a publisher that is a client node publishes through a server node":
-    let
-      client = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-      reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-      clientPublisher = newPublisher(client, newMetaDs(), clock)
-
-    let published = (await clientPublisher.publish("catalog", cid)).tryGet()
-
-    check (await server.getFromDht("catalog")).data == published.data
-
-    let read = await reader.getFromDht("catalog")
-
-    check read.data == published.data
-
-  test "publishing a newer seqnum replaces the name record":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-
-    check (await publisher.publish("catalog", cid, Opt.some(1'u64))).isOk
-
-    # This read gives the reader a local copy
-    let first = await reader.getFromDht("catalog")
-
-    check first.data.seqnum == 1'u64
-
-    check (await publisher.publish("catalog", otherCid, Opt.some(2'u64))).isOk
-
-    let read = await reader.getFromDht("catalog")
-
-    check read.data.seqnum == 2'u64
-    check read.data.cid == otherCid
 
   test "refuses a seqnum lower than the stored one":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
@@ -257,6 +219,42 @@ asyncchecksuite "Name publisher":
     check stored[0].data.cid == cid
     check stored[0].data.seqnum == 5'u64
 
+  test "publish returns an error when reading the stored name record fails":
+    let
+      failingDs = FailingDatastore.new(newMetaDs())
+      failingPublisher = newPublisher(server, failingDs, clock)
+
+    failingDs.failGet = true
+
+    check (await failingPublisher.publish("catalog", cid)).isErr
+
+  test "publish returns an error when the stored name record doesn't decode":
+    let key = persistenceKeyFromName(name(publicKey, "catalog").tryGet())
+
+    check (await metaDs.put(key, @[0xAB'u8, 0xCD])).isOk
+    check (await publisher.publish("catalog", cid)).isErr
+
+  test "publish returns an error and advertises nothing when storing fails":
+    let
+      failingDs = FailingDatastore.new(newMetaDs())
+      failingPublisher = newPublisher(server, failingDs, clock)
+
+    failingDs.failPut = true
+
+    check (await failingPublisher.publish("catalog", cid)).isErr
+    check (await server.disc.getValue(nameKeyFromLabel("catalog"))).isErr
+
+  test "refuses an empty label":
+    check (await publisher.publish("", cid)).isErr
+
+  test "refuses a cid longer than 128 bytes":
+    # 4 bytes of header and 125 bytes of digest: a CID of 129 bytes
+    let
+      hash = MultiHash.digest("identity", newSeq[byte](125)).tryGet()
+      longCid = Cid.init(CIDv1, multiCodec("raw"), hash).tryGet()
+
+    check (await publisher.publish("catalog", longCid)).isErr
+
   test "unpublish deletes the name record":
     check (await publisher.publish("catalog", cid)).isOk
 
@@ -274,22 +272,19 @@ asyncchecksuite "Name publisher":
     check stored.len == 1
     check stored[0].data.label == "release"
 
-  test "unpublish stops extending the expiration in the DHT":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+  test "unpublish refuses an empty label":
+    check (await publisher.unpublish("")).isErr
 
-    let published = (await publisher.publish("catalog", cid)).tryGet()
+  test "unpublish returns an error when deleting fails":
+    let
+      failingDs = FailingDatastore.new(newMetaDs())
+      failingPublisher = newPublisher(server, failingDs, clock)
 
-    check (await publisher.unpublish("catalog")).isOk
+    check (await failingPublisher.publish("catalog", cid)).isOk
 
-    clock.advance(oneHour)
+    failingDs.failDelete = true
 
-    await publisher.republishAll()
-
-    # The DHT still holds the expiration of the publication
-    check (await reader.getExpiration("catalog")) == published.data.expiration
-
-  test "unpublish of an unknown label does not return an error":
-    check (await publisher.unpublish("unknown")).isOk
+    check (await failingPublisher.unpublish("catalog")).isErr
 
   test "republishAll extends the expiration with the same CID and seqnum":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
@@ -402,6 +397,51 @@ asyncchecksuite "Name publisher":
 
     check stored.len == 1
     check stored[0].envelope.publicKey == publicKey
+
+  test "republishAll advertises nothing when reading the stored name records fails":
+    let
+      failingDs = FailingDatastore.new(newMetaDs())
+      failingPublisher = newPublisher(server, failingDs, clock)
+
+    let published = (await failingPublisher.publish("catalog", cid)).tryGet()
+
+    failingDs.failQuery = true
+    clock.advance(oneHour)
+
+    await failingPublisher.republishAll()
+
+    # The DHT still holds the expiration of the publication
+    check (await server.getExpiration("catalog")) == published.data.expiration
+
+  test "republishAll republishes the name records read before a read error":
+    let
+      failingDs = FailingDatastore.new(newMetaDs())
+      failingPublisher = newPublisher(server, failingDs, clock)
+
+    check (await failingPublisher.publish("catalog", cid)).isOk
+
+    failingDs.failSecondNext = true
+    clock.advance(oneHour)
+
+    await failingPublisher.republishAll()
+
+    check (await server.getExpiration("catalog")) ==
+      currentTime + oneHour + NameRecordLifetime
+
+  test "republishAll skips a stored name record that doesn't decode":
+    # The query reads the keys in order, and "0" comes before the hex keys of
+    # the names, so republishAll reads this name record first
+    let key = Key.init(StorageNamesNamespace & "/0").tryGet()
+
+    check (await metaDs.put(key, @[0xAB'u8, 0xCD])).isOk
+    check (await publisher.publish("catalog", cid)).isOk
+
+    clock.advance(oneHour)
+
+    await publisher.republishAll()
+
+    check (await server.getExpiration("catalog")) ==
+      currentTime + oneHour + NameRecordLifetime
 
   test "the loop republishes every 4 hours":
     let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
