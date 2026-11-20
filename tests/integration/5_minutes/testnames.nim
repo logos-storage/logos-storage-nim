@@ -29,6 +29,14 @@ twonodessuite "Names":
       .withApiCorsOrigin(0, "*").some
   )
 
+  let noSchemeConfig = NodeConfigs(
+    clients: StorageConfigs
+      .init(nodes = 2)
+      .withExtIp(1)
+      .withAutonatServer(0)
+      .withApiCorsOrigin(0, "localhost:3000").some
+  )
+
   proc unpublishedNameKey(): string =
     let hash = MultiHash.digest("sha2-256", "never published".toBytes).get
     $Cid.init(CIDv1, multiCodec("storage-name"), hash).get
@@ -173,6 +181,27 @@ twonodessuite "Names":
 
     let response = await client2.publishNameRaw(
       @{"label": "catalog", "cid": $cid}, headers = @[("Origin", "null")]
+    )
+
+    check response.status == 403
+
+  test "publish accepts an http Origin when --api-cors-origin has no scheme",
+    noSchemeConfig:
+    let cid = (await client1.upload("catalog contents")).get
+
+    let response = await client1.publishNameRaw(
+      @{"label": "catalog", "cid": $cid},
+      headers = @[("Origin", "http://localhost:3000")],
+    )
+
+    check response.status == 200
+
+  test "publish refuses another Origin when --api-cors-origin has no scheme",
+    noSchemeConfig:
+    let cid = (await client1.upload("catalog contents")).get
+
+    let response = await client1.publishNameRaw(
+      @{"label": "catalog", "cid": $cid}, headers = @[("Origin", "http://evil.example")]
     )
 
     check response.status == 403

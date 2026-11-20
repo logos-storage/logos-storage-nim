@@ -754,7 +754,20 @@ proc isOriginAllowed(request: HttpRequestRef, allowedOrigin: Option[string]): bo
   without corsOrigin =? allowedOrigin:
     return false
 
-  return corsOrigin == "*" or origins[0] == corsOrigin
+  if corsOrigin == "*":
+    return true
+
+  # The same rule as the CORS check of presto
+  if corsOrigin.startsWith("http://") or corsOrigin.startsWith("https://"):
+    return origins[0] == corsOrigin
+
+  if origins[0].startsWith("http://"):
+    return origins[0][7 ..^ 1] == corsOrigin
+
+  if origins[0].startsWith("https://"):
+    return origins[0][8 ..^ 1] == corsOrigin
+
+  return false
 
 proc initNamesApi(
     node: StorageNodeRef, namePublisher: NamePublisher, router: var RestRouter
@@ -866,8 +879,11 @@ proc initNamesApi(
     let publicKey = parsePublicKey(peerId.get()).valueOr:
       return RestApiResponse.error(Http400, error.msg, headers = headers)
 
-    let cid = (await node.discovery.resolve(publicKey, label.get())).valueOr:
+    let nameBytes = name(publicKey, label.get()).valueOr:
       return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    let cid = (await node.discovery.resolve(nameBytes)).valueOr:
+      return RestApiResponse.error(Http500, error.msg, headers = headers)
 
     if cid.isNone:
       return RestApiResponse.error(
