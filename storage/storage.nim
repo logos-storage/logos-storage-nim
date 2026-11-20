@@ -43,7 +43,7 @@ import ./utils/mixidentity
 import ./discovery
 import ./systemclock
 import ./naming/publisher
-import ./naming/validator
+from ./naming/dht import NameRecordValidator, NameRecordSelector
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces

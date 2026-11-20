@@ -2,7 +2,7 @@ import pkg/chronos
 import pkg/libp2p
 
 import storage/clock
-import storage/naming/validator
+import storage/naming/dht
 import ../helpers/testnodes
 
 export testnodes
