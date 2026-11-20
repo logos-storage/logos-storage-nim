@@ -438,6 +438,23 @@ proc routingTable*(
     peers: peers,
   )
 
+proc newServiceDiscovery(
+    switch: Switch,
+    bootstrapNodes: openArray[(PeerId, seq[MultiAddress])],
+    addressPolicy: PeerAddressPolicy,
+    isServer: bool,
+): ServiceDiscovery =
+  # Instantiate here so the DHT key hash is in scope for the service tables.
+  ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = @bootstrapNodes,
+    config = KadDHTConfig.new(
+      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
+    ),
+    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
+    client = not isServer,
+  )
+
 proc new*(
     T: type Discovery,
     switch: Switch,
@@ -471,14 +488,7 @@ proc new*(
     isServer = isServer,
   )
 
-  self.serviceDiscovery = ServiceDiscovery.new(
-    switch,
-    bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(
-      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
-    ),
-    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
-    client = not isServer,
-  )
+  self.serviceDiscovery =
+    newServiceDiscovery(switch, bootstrapNodes, addressPolicy, isServer)
 
   self

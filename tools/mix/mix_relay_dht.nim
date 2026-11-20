@@ -568,7 +568,7 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
 
   let mixProto = MixProtocol.new(nodeInfo, switch)
 
-  let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
+  let mixAddr = mixProto.localMixPubInfo.flatMap(toMixAddress).valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)
   switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
 

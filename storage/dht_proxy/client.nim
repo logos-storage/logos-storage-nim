@@ -70,7 +70,9 @@ proc isReady(mixProto: MixProtocol): bool =
   ## the announce no longer carries a usable address.
   ## The Mix lookup cannot be performed until Autonat provides a Reachable
   ## address or a Relay address.
-  return $mixProto.localMixPubInfo.multiAddr != $mixUnsetMultiAddr()
+  let info = mixProto.localMixPubInfo.valueOr:
+    return false
+  info.multiAddr != mixUnsetMultiAddr()
 
 proc exchange(
     transport: PeerTransport, proxy: PeerRecord, request: LookupRequest

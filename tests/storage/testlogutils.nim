@@ -210,5 +210,5 @@ checksuite "Test logging output":
       MultiAddress.init("/ip4/127.0.0.2/tcp/1").tryGet,
     ]
     log ma
-    check logged("ma", "\"@[/ip4/127.0.0.1/tcp/0, /ip4/127.0.0.2/tcp/1]\"")
-    check loggedJson("ma", "[\"/ip4/127.0.0.1/tcp/0\",\"/ip4/127.0.0.2/tcp/1\"]")
+    check logged("ma", "\"[/ip4/127.0.0.1/tcp/0, /ip4/127.0.0.2/tcp/1]\"")
+    check loggedJson("ma", "\"[/ip4/127.0.0.1/tcp/0, /ip4/127.0.0.2/tcp/1]\"")

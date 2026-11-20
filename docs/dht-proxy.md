@@ -1,7 +1,7 @@
 # DHT provider lookups through MixTransport
 
-With `--mix-enabled=true`, a client asks one of its configured
-`--dht-mix-proxy` peers to find providers. The proxy is the final Mix hop and
+With `--mix-enabled=true`, a client asks a proxy from its configured
+`--dht-mix-proxy` records or its discovered proxy services to find providers. The proxy is the final Mix hop and
 terminates a reliable MixTransport stream. The proxy runs the direct DHT lookup
 on behalf of the client and returns provider peer records on that same stream.
 MixTransport segments the response across Mix packets and supplies reply SURBs.
@@ -17,8 +17,8 @@ session available to other operations. Server shutdown stops the shared service.
 Each configured proxy signed peer record must contain a `/mix` address carrying
 its Mix public information. The embedded peer identity must match the record's
 peer ID. An ordinary TCP address alone is insufficient. The client obtains the
-proxy's Mix public information directly from this configured record; dynamic
-proxy discovery remains separate work. The proxy need not appear in the client's
+proxy's Mix public information from its advertised address. Discovered proxy
+records are checked for the same address and matching identity. The proxy need not appear in the client's
 relay pool, but both nodes still require usable Mix routing information.
 
 Run an updated Storage node with Mix enabled, or the updated `mix_relay_dht`
@@ -42,7 +42,7 @@ proxy returns `ErrResponseTooLarge`. An empty result returns `NotFound`.
 
 The client requires a usable local Mix address and a started transport. Missing
 Mix information, unavailable proxies, unsupported codecs, and remote error
-statuses fail the attempt. Discovery tries the remaining configured proxies in
+statuses fail the attempt. Discovery tries the remaining proxy candidates in
 random order. A successful `NotFound` response completes the lookup with an empty
 result. Exhausting the candidates returns an error without direct fallback.
 

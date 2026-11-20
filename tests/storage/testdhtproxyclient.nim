@@ -45,8 +45,8 @@ asyncchecksuite "DHT proxy - lookupProviders":
 
   test "fails when the local Mix address is not updated yet":
     let proxy = PeerRecord.init(
-      mixProto.localMixPubInfo.peerId,
-      @[mixProto.localMixPubInfo.toMixAddress().tryGet()],
+      mixProto.localMixPubInfo.tryGet().peerId,
+      @[mixProto.localMixPubInfo.tryGet().toMixAddress().tryGet()],
     )
 
     let res = await lookupProviders(mixProto, transport, proxy, cid)
@@ -57,8 +57,8 @@ asyncchecksuite "DHT proxy - lookupProviders":
   test "the lookup starts when the local Mix address is updated":
     mixProto.setLocalMultiAddr(tcpAddr).expect("Mix-encodable address")
     let proxy = PeerRecord.init(
-      mixProto.localMixPubInfo.peerId,
-      @[mixProto.localMixPubInfo.toMixAddress().tryGet()],
+      mixProto.localMixPubInfo.tryGet().peerId,
+      @[mixProto.localMixPubInfo.tryGet().toMixAddress().tryGet()],
     )
 
     let res = await lookupProviders(mixProto, transport, proxy, cid)
@@ -68,7 +68,7 @@ asyncchecksuite "DHT proxy - lookupProviders":
 
   test "rejects a proxy Mix address belonging to another peer":
     let proxy = PeerRecord.init(
-      PeerId.example, @[mixProto.localMixPubInfo.toMixAddress().tryGet()]
+      PeerId.example, @[mixProto.localMixPubInfo.tryGet().toMixAddress().tryGet()]
     )
     let res = await lookupProviders(mixProto, transport, proxy, cid)
     check res.isFailure
@@ -142,7 +142,8 @@ asyncchecksuite "DHT proxy over MixTransport":
       let
         transport = MixPeerTransport.new(transports[0])
         proxy = PeerRecord.init(
-          infos[^1].peerId, @[mixes[^1].localMixPubInfo.toMixAddress().tryGet()]
+          infos[^1].peerId,
+          @[mixes[^1].localMixPubInfo.tryGet().toMixAddress().tryGet()],
         )
       for i in 0 ..< 100:
         backend.providers.add(PeerRecord.init(PeerId.example, @[infos[1].multiAddr]))
