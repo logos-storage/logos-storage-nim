@@ -62,9 +62,9 @@ const
   MaxServiceProviders = 32
 
 type
-  ServiceProvider = object
-    record: PeerRecord
-    lastSeen: Moment
+  ServiceProvider* = object
+    record*: PeerRecord
+    lastSeen*: Moment
 
   Discovery* = ref object of RootObj
     kad*: KadDHT # libp2p Kademlia DHT
@@ -135,6 +135,12 @@ proc providersFor(d: Discovery, serviceId: string): var Table[PeerId, ServicePro
 
 proc serviceProvidersOf(d: Discovery, serviceId: string): seq[PeerRecord] =
   toSeq(d.providersFor(serviceId).values).mapIt(it.record)
+
+proc getServiceProviders*(d: Discovery): Table[string, seq[ServiceProvider]] =
+  var providers: Table[string, seq[ServiceProvider]]
+  for serviceId, table in d.serviceProviders:
+    providers[serviceId] = toSeq(table.values)
+  providers
 
 proc withDiscovered(
     d: Discovery, staticProviders: seq[PeerRecord], serviceId: string
