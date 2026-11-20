@@ -112,7 +112,7 @@ checksuite "Name record":
       bytes = newRecord(label).sign(privateKey).tryGet().encode()
       decoded = decodeNameRecord(bytes).tryGet()
 
-    check decoded.name().tryGet() == name(publicKey, label).tryGet()
+    check decoded.name() == name(publicKey, label).tryGet()
 
   test "the signed envelope of a name record has the payload type 0xCD05":
     let signed = newRecord(label).sign(privateKey).tryGet()
