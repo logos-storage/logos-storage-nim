@@ -804,7 +804,6 @@ paths:
         - in: path
           name: label
           required: true
-          description: "Percent-encoded."
           schema:
             $ref: "#/components/schemas/Label"
       responses:
