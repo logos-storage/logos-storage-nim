@@ -180,6 +180,7 @@ The name API lets you point a DHT key, represented as a CID, to a dataset CID. T
 - `seqnum` is the sequence number of the name record. When it is 0, the node takes the current Unix time in seconds.
 - The call fails when `seqnum` is lower than the one of the stored name record.
 - The call fails when `seqnum` is equal to the one of the stored name record and `cid` is another CID. So two calls with `seqnum` 0 and two CIDs in the same second: the second one fails.
+- The call succeeds when the name record is persisted, even if the DHT doesn't take it. The next republish advertises it again.
 
 `name_unpublish` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
 
