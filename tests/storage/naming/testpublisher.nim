@@ -1,5 +1,3 @@
-import std/sequtils
-
 import pkg/chronos
 import pkg/libp2p except setup
 import pkg/datastore
@@ -11,15 +9,12 @@ import ../helpers
 import ../helpers/mockclock
 import ../helpers/failingdatastore
 import ../examples
+import ./namenodes
 import ../../../storage/discovery
 import ../../../storage/namespaces
 import ../../../storage/naming/record
 import ../../../storage/naming/dht
 import ../../../storage/naming/publisher {.all.}
-
-type TestNode = object
-  switch: Switch
-  disc: Discovery
 
 const
   # 10:00:00 UTC on 11 November 2026
@@ -28,7 +23,6 @@ const
 
 asyncchecksuite "Name publisher":
   var
-    nodes: seq[TestNode]
     publishers: seq[NamePublisher]
     clock: MockClock
     server: TestNode
@@ -37,6 +31,7 @@ asyncchecksuite "Name publisher":
     publisher: NamePublisher
 
   let
+    nodes = TestNodes()
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     cid = Cid.example
@@ -48,30 +43,7 @@ asyncchecksuite "Name publisher":
 
     publishers = @[]
 
-    for node in nodes:
-      await node.switch.stop()
-
-    nodes = @[]
-
-  proc startNode(
-      clock: Clock, isServer: bool, bootstrap: seq[TestNode] = @[]
-  ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
-    let
-      switch = newStandardSwitch()
-      bootstrapPeers =
-        bootstrap.mapIt((it.switch.peerInfo.peerId, it.switch.peerInfo.addrs))
-      disc = Discovery.new(
-        switch, bootstrapNodes = bootstrapPeers, isServer = isServer, clock = clock
-      )
-
-    switch.mount(disc.kad)
-
-    await switch.start()
-
-    let node = TestNode(switch: switch, disc: disc)
-    nodes.add(node)
-
-    node
+    await nodes.stop()
 
   proc newMetaDs(): Datastore =
     SQLiteDatastore.new(Memory).tryGet()
@@ -115,7 +87,7 @@ asyncchecksuite "Name publisher":
   setup:
     clock = MockClock.new(currentTime)
 
-    server = await startNode(clock, isServer = true)
+    server = await nodes.startNode(clock, isServer = true)
     bootstrapNodes = @[server]
     metaDs = newMetaDs()
     publisher = newPublisher(server, metaDs, clock)
@@ -158,7 +130,7 @@ asyncchecksuite "Name publisher":
     check bytes == published.encode()
 
   test "refuses a seqnum lower than the stored one":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(10'u64))).isOk
 
@@ -181,7 +153,7 @@ asyncchecksuite "Name publisher":
     check again.tryGet().data.seqnum == 10'u64
 
   test "refuses a different CID for an existing seqnum":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(42'u64))).isOk
 
@@ -287,7 +259,7 @@ asyncchecksuite "Name publisher":
     check (await failingPublisher.unpublish("catalog")).isErr
 
   test "republishAll extends the expiration with the same CID and seqnum":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let seqnum = 3'u64
 
     let published = (await publisher.publish("catalog", cid, Opt.some(seqnum))).tryGet()
@@ -305,7 +277,7 @@ asyncchecksuite "Name publisher":
     check read.envelope.publicKey == publicKey
 
   test "republishAll republishes every stored name record":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", otherCid)).isOk
@@ -322,7 +294,7 @@ asyncchecksuite "Name publisher":
     check release.data.expiration == currentTime + oneHour + NameRecordLifetime
 
   test "start republishes the stored name records right away after a restart":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
     let seqnum = 3'u64
 
     check (await publisher.publish("catalog", cid, Opt.some(seqnum))).isOk
@@ -341,7 +313,7 @@ asyncchecksuite "Name publisher":
     )
 
   test "republishAll keeps going when one name record fails":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", cid)).isOk
@@ -375,7 +347,7 @@ asyncchecksuite "Name publisher":
 
   test "republishAll skips the name records signed by another key":
     let
-      reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+      reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
       otherKey = PrivateKey.example
       otherPublicKey = otherKey.getPublicKey().tryGet()
       otherPublisher = newPublisher(server, metaDs, clock, otherKey)
@@ -441,7 +413,7 @@ asyncchecksuite "Name publisher":
       currentTime + oneHour + NameRecordLifetime
 
   test "the loop republishes every 4 hours":
-    let reader = await startNode(clock, isServer = false, bootstrap = bootstrapNodes)
+    let reader = await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
 
     check (await publisher.publish("catalog", cid, Opt.some(3'u64))).isOk
 

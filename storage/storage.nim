@@ -44,6 +44,7 @@ import ./utils/mixidentity
 import ./discovery
 import ./systemclock
 import ./naming/publisher
+import ./naming/validator
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -525,7 +526,8 @@ proc new*(
         dhtProxyServer = config.dhtProxyServer,
       ),
       serviceLookupInterval = config.natScheduleInterval,
-      clock = clock,
+      validator = NameRecordValidator(clock: clock),
+      selector = NameRecordSelector(),
     )
 
     repoData =
