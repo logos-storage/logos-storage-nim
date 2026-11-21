@@ -1,5 +1,4 @@
 import std/sequtils
-import std/tables
 import pkg/chronos
 import pkg/libp2p except setup
 import pkg/libp2p/multiaddress
