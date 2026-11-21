@@ -616,6 +616,44 @@ suite "DownloadManager - Peer Management":
     check peerAfter.get.availability.kind == bakComplete
 
 suite "DownloadManager - Retry Management":
+  test "Only admitted availability overlapping the retry range wakes the worker":
+    let
+      dm = DownloadManager.new()
+      md = testManifestDesc(Cid.example, 65536, 100)
+      download = dm.startDownload(DownloadDesc(md: md, count: 100))
+      peer = PeerId.example
+      banned = PeerId.example
+      retry = download.handleBatchRetry(4, 2, 30.seconds)
+
+    download.getSwarm().banPeer(banned)
+    download.updatePeerAvailability(banned, BlockAvailability.complete())
+    download.updatePeerAvailability(
+      peer, BlockAvailability.fromRanges(@[IndexRange(start: 6, count: 2)])
+    )
+    await sleepAsync(5.milliseconds)
+    check not retry.finished
+
+    # Partial overlap is enough for the scheduler to select this peer.
+    download.updatePeerAvailability(
+      peer, BlockAvailability.fromRanges(@[IndexRange(start: 5, count: 1)])
+    )
+    check await retry.withTimeout(1.seconds)
+
+  test "A batch retry clears the presence waiter on timeout and cancellation":
+    let
+      dm = DownloadManager.new()
+      md = testManifestDesc(Cid.example, 65536, 100)
+      download = dm.startDownload(DownloadDesc(md: md, count: 100))
+
+    await download.handleBatchRetry(0, 2, 1.milliseconds)
+    let retry = download.handleBatchRetry(2, 2, 30.seconds)
+    await retry.cancelAndWait()
+    check retry.cancelled
+
+    let next = download.handleBatchRetry(4, 2, 30.seconds)
+    download.updatePeerAvailability(PeerId.example, BlockAvailability.complete())
+    check await next.withTimeout(1.seconds)
+
   test "Should decrement block retries":
     let
       dm = DownloadManager.new(retries = 5)

@@ -62,6 +62,9 @@ type
     pendingBatches*: Table[uint64, PendingBatch] # batch start -> pending info
     exhaustedBlocks*: HashSet[BlockAddress]
       # blocks that exhausted retries - failed permanently
+    # One worker per download can be waiting for a requeued batch.
+    waitingRange: tuple[start, count: uint64]
+    rangeAvailable: AsyncEvent
     maxBlockRetries*: int
     retryInterval*: Duration
     cancelled*: bool
@@ -366,16 +369,23 @@ proc updatePeerAvailability*(
       else:
         BlockAvailability.unknown()
     kept = known.merge(availability).keepOverlapping(download.ctx.neededRange())
+  if kept.kind == bakUnknown:
+    if peer.isNone:
+      discard swarm.addPeer(peerId, kept)
+    return
+
   if peer.isSome:
-    if kept.kind != bakUnknown:
-      swarm.updatePeerAvailability(peerId, kept)
-    return
-
-  if swarm.addPeer(peerId, kept) or kept.kind == bakUnknown:
-    return
-
-  if not swarm.replaceIdlePeer(peerId, kept, download.ctx.neededRange()):
+    swarm.updatePeerAvailability(peerId, kept)
+  elif not swarm.addPeer(peerId, kept) and
+      not swarm.replaceIdlePeer(peerId, kept, download.ctx.neededRange()):
     trace "Peer availability dropped, not admitted to swarm", peer = peerId
+    return
+
+  if not download.rangeAvailable.isNil and
+      availability.hasAnyInRange(
+        download.waitingRange.start, download.waitingRange.count
+      ) and kept.hasAnyInRange(download.waitingRange.start, download.waitingRange.count):
+    download.rangeAvailable.fire()
 
 proc handleBatchRetry*(
     download: ActiveDownload, start: uint64, count: uint64, waitTime: Duration
@@ -389,4 +399,10 @@ proc handleBatchRetry*(
     download.failExhaustedBlocks(exhausted)
 
   download.requeueBatch(start, count, front = false)
-  await sleepAsync(waitTime)
+  download.waitingRange = (start, count)
+  download.rangeAvailable = newAsyncEvent()
+  try:
+    if await download.rangeAvailable.wait().withTimeout(waitTime):
+      trace "Woke batch on peer availability", start, count
+  finally:
+    download.rangeAvailable = nil
