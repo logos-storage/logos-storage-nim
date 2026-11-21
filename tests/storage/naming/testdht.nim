@@ -25,11 +25,13 @@ const
   # 14:00:00 UTC on 12 November 2026
   twoOClock = 1794492000'i64
 
-proc newRecord(seqnum: uint64, expiration: int64, label = "catalog"): NameRecord =
+proc newRecord(
+    seqnum: uint64, expiration: int64, label = "catalog", cid = Cid.example
+): NameRecord =
   NameRecord(
     version: NameRecordVersion,
     label: label,
-    cid: Cid.example,
+    cid: cid,
     seqnum: seqnum,
     expiration: expiration,
   )
@@ -241,9 +243,12 @@ checksuite "Name record selector":
     publicKey = privateKey.getPublicKey().tryGet()
     key = @(name(publicKey, "catalog").tryGet())
     selector = NameRecordSelector()
+    cid = Cid.example
+    otherCid = Cid.example
 
-  proc signedBytes(seqnum: uint64, expiration: int64): seq[byte] =
-    let signed = SignedNameRecord.init(privateKey, newRecord(seqnum, expiration))
+  proc signedBytes(seqnum: uint64, expiration: int64, recordCid = cid): seq[byte] =
+    let signed =
+      SignedNameRecord.init(privateKey, newRecord(seqnum, expiration, cid = recordCid))
 
     signed.tryGet().encode()
 
@@ -263,6 +268,16 @@ checksuite "Name record selector":
       second = EntryRecord(value: signedBytes(42'u64, tenOClock))
 
     check selector.select(key, @[first, second]).tryGet() == 0
+
+  test "keeps the last name record when both have the same seqnum and another CID":
+    let
+      expiresLater = EntryRecord(value: signedBytes(42'u64, twoOClock, otherCid))
+      expiresEarlier = EntryRecord(value: signedBytes(42'u64, tenOClock))
+
+    # When the DHT stores a name record, the list is [received, stored]: the
+    # stored one stays, even when the received one expires later.
+    check selector.select(key, @[expiresLater, expiresEarlier]).tryGet() == 1
+    check selector.select(key, @[expiresEarlier, expiresLater]).tryGet() == 1
 
   test "skips a name record that doesn't decode":
     let

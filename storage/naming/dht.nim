@@ -92,6 +92,9 @@ method select*(
   ## by default, see [DefaultRecordExpirationInterval]). This window is not the
   ## expiration of the name record.
   ##
+  ## When name records have the same seqnum and another CID, the last one in the
+  ## list is selected. When the DHT stores a name record, the stored one stays.
+  ##
   ## When the DHT reads a name, `records` holds the name records of other peers
   ## and the node's own copy.
   var
@@ -102,7 +105,11 @@ method select*(
     let signed = decodeNameRecord(entry.value).valueOr:
       continue
 
-    if newestIndex < 0 or signed.data.isNewer(newest):
+    let conflicts =
+      newestIndex >= 0 and signed.data.seqnum == newest.seqnum and
+      signed.data.cid != newest.cid
+
+    if newestIndex < 0 or conflicts or signed.data.isNewer(newest):
       newestIndex = i
       newest = signed.data
 
