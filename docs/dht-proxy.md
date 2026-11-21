@@ -9,8 +9,10 @@ There is no separate connection from a Mix exit to the proxy and no destination-
 callback for the DHT proxy protocol.
 
 Storage shares its MixTransport service between provider downloads and proxy
-lookups. Each lookup opens its own stream; closing that stream leaves the shared
-session available to other operations. Server shutdown stops the shared service.
+lookups. The client opens a lookup stream on first use of a proxy and reuses it
+for subsequent lookups to that peer. A request ID lets the proxy return the
+providers for a later lookup while an earlier DHT search is still running.
+Requests on the same stream are linkable at the proxy.
 
 ## Configuration and compatibility
 
@@ -28,32 +30,52 @@ Adding `--mix-enabled` also enables Mix downloads and, on a public node, relay a
 The tool's generated signed peer records include its Mix advertisement;
 redistribute the updated record to clients. Relay-only mode does not serve lookups.
 
-The stream protocol uses `/storage/dht-proxy/2.0.0`. Protobuf field numbers and
-status values are unchanged. Version 1 proxies are incompatible with the new
-transport topology and response limits. Clients do not retry the legacy protocol
-or make a direct DHT query when a Mix lookup fails. Deploy updated proxies and
-replace their configured records before switching clients.
+The codec remains `/storage/dht-proxy/2.0.0`. The multiplexed schema adds a
+required field to requests and replies. Upgrade both endpoints together,
+including clients that learn their proxies through service discovery.
+
+## Wire format
+
+Each direction carries length-prefixed protobuf messages. The unsigned varint
+prefix gives the message length in bytes. Writers finish each message before
+starting the next. A reply can span several Mix packets.
+
+| Field | Request | Response |
+| --- | --- | --- |
+| 1 | Required query type (`FindProviders = 0`) | Required status |
+| 2 | Required binary CID | Repeated encoded provider peer records |
+| 3 | Required unsigned 64-bit request ID | Required request ID echoed from the request |
+
+IDs increase from 1 on each client stream. Two calls for the same CID have
+distinct IDs. The client dispatches each complete reply by ID. An idle stream
+can be closed and reopened on the next lookup. Losing a stream fails the calls
+still waiting on it.
 
 ## Limits and failures
 
-A stream carries one length-prefixed `FindProviders(CID)` request and one
-length-prefixed response. The client closes the stream after reading the reply.
-On MixTransport streams, the proxy waits for that close so the client can consume buffered response data.
-Requests are limited to 4 KiB and responses to 256 KiB,
-independently of Mix packet size. The proxy returns the largest prefix of provider
-records that fits the response limit. If even the first record cannot fit, the
-proxy returns `ErrResponseTooLarge`. An empty result returns `NotFound`.
+Requests are limited to 4 KiB and responses to 256 KiB, excluding the length
+prefix. The proxy returns the longest prefix of whole provider records that
+fits with the status and request ID. It returns `ErrResponseTooLarge` if the
+first record exceeds the budget and `NotFound` if the search found no providers.
 
-The client requires a usable local Mix address and a started transport. Missing
-Mix information, unavailable proxies, unsupported codecs, and remote error
-statuses fail the attempt. Discovery tries the remaining proxy candidates in
-random order. A successful `NotFound` response completes the lookup with an empty
-result. Exhausting the candidates returns an error without direct fallback.
+A client needs a usable local Mix address and a started transport. Discovery
+tries eligible proxies in random order within the lookup deadline. A successful
+`NotFound` completes the lookup with an empty result. If every attempt fails,
+the client returns an error.
 
-Each proxy attempt has a 90-second deadline covering session establishment,
-stream opening, and the request/response exchange. Timeout or cancellation cancels
-the exchange and closes its stream. The proxy limits concurrent exchanges to
-100 by default (`--dht-proxy-max-inflight` in Storage), reads the request within
-five seconds, and bounds the full exchange to 90 seconds. Requests beyond capacity
-receive `ErrTooBusy`. These limits bound application messages and work; MixTransport
-also applies its own stream and session limits.
+The proxy limits concurrent lookups across clients to 100 by default
+(`--dht-proxy-max-inflight` in Storage). A valid request over lookup capacity
+receives `ErrTooBusy` with its request ID. An idle stream takes no lookup slot.
+
+The client allows up to 32 pending callers per stream. Its 90-second lookup
+deadline includes dialing, waiting to write and waiting for a reply. Cancelling
+a caller after the complete request has been sent detaches that caller. A
+partial write closes the stream because later messages need an intact length
+prefix and body.
+
+Each proxy accepts up to 128 open streams and up to four concurrent lookups per
+stream. A worker retains its slot through the reply write. An incomplete request
+has five seconds to arrive after its first byte. The idle timeout is 90 seconds
+after outstanding work finishes. The proxy closes a stream on a zero, repeated,
+decreasing or unreadable ID. A malformed request with a recoverable ID receives
+a correlated decode error.

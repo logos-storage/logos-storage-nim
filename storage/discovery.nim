@@ -82,6 +82,7 @@ type
     staticDhtMixProxies*: seq[PeerRecord]
     staticAutonatServers: seq[PeerRecord]
     staticCircuitRelayServers: seq[PeerRecord]
+    proxyClient: ProxyClient
     mixPeerTransport*: PeerTransport
 
   RoutingPeer* = object
@@ -150,6 +151,9 @@ proc withDiscovered(
 proc dhtMixProxies*(d: Discovery): seq[PeerRecord] =
   d.withDiscovered(d.staticDhtMixProxies, DhtProxyServiceId)
 
+proc closeProxyStreams*(d: Discovery) {.async: (raises: []).} =
+  await d.proxyClient.close()
+
 proc autonatServers*(d: Discovery): seq[PeerRecord] =
   ## Returns the list of Autonat servers.
   ## The nodes are expected to be directly reachable.
@@ -164,11 +168,21 @@ method findViaMix*(
     d: Discovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.base, async: (raises: [CancelledError]).} =
   var candidates = d.dhtMixProxies
+  if d.proxyClient.isNil:
+    d.proxyClient = ProxyClient()
+  d.proxyClient.retainProxies(candidates)
+  let deadline = Moment.now() + DefaultLookupTimeout
   shuffle(candidates)
 
   for proxy in candidates:
-    let res =
-      await dht_proxy_client.lookupProviders(d.mixProto, d.mixPeerTransport, proxy, cid)
+    let remaining = deadline - Moment.now()
+    if remaining <= ZeroDuration:
+      break
+    if not d.dhtMixProxies.anyIt(it.peerId == proxy.peerId):
+      continue
+    let res = await d.proxyClient.lookupProviders(
+      d.mixProto, d.mixPeerTransport, proxy, cid, remaining
+    )
     if res.isErr:
       warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
       continue
@@ -374,6 +388,8 @@ proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
       d.providersFor(serviceId).del(evicted)
     d.providersFor(serviceId)[peerId] = ServiceProvider(record: record, lastSeen: now)
 
+  d.proxyClient.retainProxies(d.dhtMixProxies)
+
 proc findServiceProviders*(
     d: Discovery, serviceId: string
 ): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
@@ -397,6 +413,8 @@ proc findServiceProviders*(
 
 proc removeServiceProvider*(d: Discovery, serviceId: string, peerId: PeerId) =
   d.providersFor(serviceId).del(peerId)
+  if serviceId == DhtProxyServiceId:
+    d.proxyClient.retainProxies(d.dhtMixProxies)
 
 proc findMixRelays*(
     d: Discovery
