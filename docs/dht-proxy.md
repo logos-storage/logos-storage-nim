@@ -67,14 +67,16 @@ The proxy limits concurrent lookups across clients to 100 by default
 (`--dht-proxy-max-inflight` in Storage). A valid request over lookup capacity
 receives `ErrTooBusy` with its request ID. An idle stream takes no lookup slot.
 
-The client allows up to 32 pending callers per stream. Its 90-second lookup
+The client accepts up to 32 callers per stream. Four can await replies at once.
+Additional callers wait for a slot within their lookup deadline. The 90-second lookup
 deadline includes dialing, waiting to write and waiting for a reply. Cancelling
 a caller after the complete request has been sent detaches that caller. A
 partial write closes the stream because later messages need an intact length
 prefix and body.
 
 Each proxy accepts up to 128 open streams and up to four concurrent lookups per
-stream. A worker retains its slot through the reply write. An incomplete request
+stream. A new stream has five seconds to send its first byte. A worker retains
+its slot through the reply write. An incomplete request
 has five seconds to arrive after its first byte. The idle timeout is 90 seconds
 after outstanding work finishes. The proxy closes a stream on a zero, repeated,
 decreasing or unreadable ID. A malformed request with a recoverable ID receives

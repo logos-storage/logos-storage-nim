@@ -154,7 +154,7 @@ asyncchecksuite "DHT proxy over MixTransport":
         switches.add(switch)
         mixes.add(mix)
       let
-        protocol = DhtProxyProtocol.new(backend, maxInFlight = 2)
+        protocol = DhtProxyProtocol.new(backend, maxInFlight = MaxLookupsPerStream)
         serve: LPProtoHandler = protocol.handler
         exchangeFinished = newAsyncEvent()
       var opens = 0
@@ -231,27 +231,47 @@ asyncchecksuite "DHT proxy over MixTransport":
       require empty.isSuccess
       check empty.get.len == 0
 
+      backend.release.clear()
+      backend.hold = MaxLookupsPerStream
+      var held: seq[Future[?!seq[PeerRecord]]]
+      for i in 0 ..< MaxLookupsPerStream:
+        backend.started.clear()
+        held.add(client.lookupProviders(mixes[0], transport, proxy, cid))
+        await backend.started.wait().wait(10.seconds)
+      # A different client can still receive the proxy-wide capacity error.
+      let busy = await lookupProviders(mixes[0], transport, proxy, cid, 10.seconds)
+      require busy.isFailure
+      check "ErrTooBusy" in busy.error.msg
+      await waitForExchange()
+      let queued = client.lookupProviders(mixes[0], transport, proxy, cid)
+      let timedOut =
+        await client.lookupProviders(mixes[0], transport, proxy, cid, 1.seconds)
+      require timedOut.isFailure
+      check "timed out" in timedOut.error.msg
+      check not queued.finished
+      backend.release.fire()
+      for call in held:
+        check (await call).isSuccess
+      check (await queued).isSuccess
+      check opens == 3
+
       backend.started.clear()
       backend.release.clear()
       backend.hold = 2
       let abandoned = client.lookupProviders(mixes[0], transport, proxy, cid)
       await backend.started.wait().wait(10.seconds)
       backend.started.clear()
-      let timedOut = client.lookupProviders(mixes[0], transport, proxy, cid, 1.seconds)
+      let expires = client.lookupProviders(mixes[0], transport, proxy, cid, 1.seconds)
       await backend.started.wait().wait(10.seconds)
-      let busy =
-        await client.lookupProviders(mixes[0], transport, proxy, cid, 10.seconds)
-      require busy.isFailure
-      check "ErrTooBusy" in busy.error.msg
       await abandoned.cancelAndWait()
       check abandoned.cancelled
-      let timeout = await timedOut
+      let timeout = await expires
       require timeout.isFailure
       check "timed out" in timeout.error.msg
       backend.release.fire()
       let afterCancel = await client.lookupProviders(mixes[0], transport, proxy, cid)
       check afterCancel.isSuccess
-      check opens == 2
+      check opens == 3
 
       backend.started.clear()
       backend.release.clear()
@@ -261,12 +281,12 @@ asyncchecksuite "DHT proxy over MixTransport":
       client.retainProxies(@[])
       let replacement = await client.lookupProviders(mixes[0], transport, proxy, cid)
       check replacement.isSuccess
-      check opens == 3
+      check opens == 4
       backend.release.fire()
       check (await draining).isSuccess
       await waitForExchange()
       check (await client.lookupProviders(mixes[0], transport, proxy, cid)).isSuccess
-      check opens == 3
+      check opens == 4
 
       backend.started.clear()
       backend.release.clear()
@@ -280,7 +300,7 @@ asyncchecksuite "DHT proxy over MixTransport":
       check (await interruptedA.wait(10.seconds)).isFailure
       check (await interruptedB.wait(10.seconds)).isFailure
       check (await client.lookupProviders(mixes[0], transport, proxy, cid)).isSuccess
-      check opens == 4
+      check opens == 5
 
       let clientDiscovery =
         ProxyDiscovery(mixProto: mixes[0], mixPeerTransport: transport)
@@ -370,6 +390,28 @@ proc frame(id: uint64): seq[byte] =
   result.add(payload)
 
 asyncchecksuite "DHT proxy admission":
+  test "a new stream must start its first request within the request read timeout":
+    proc lookup(
+        req: LookupRequest
+    ): Future[LookupResponse] {.async: (raises: [CancelledError]).} =
+      return LookupResponse(code: LookupCode.NotFound)
+
+    let serve = newProxyHandler(1, lookup)
+    let idle = newSlowStream()
+    let active = newSlowStream()
+    active.writable.fire()
+    let established = serve(active, DhtProxyCodec)
+    let unopened = serve(idle, DhtProxyCodec)
+    try:
+      await active.pushData(frame(1))
+      await unopened.wait(DhtProxyRequestReadTimeout + 2.seconds)
+      check idle.closed
+      await active.pushData(frame(2))
+      check eventually active.replies.len == 2
+    finally:
+      await unopened.cancelAndWait()
+      await established.cancelAndWait()
+
   test "a stalled writer bounds buffered work and retains its global reservations":
     let
       slow = newSlowStream()
