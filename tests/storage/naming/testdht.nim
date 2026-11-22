@@ -105,18 +105,6 @@ asyncchecksuite "Name resolver":
   test "returns an error for an empty label":
     check (await reader.disc.resolve(publicKey, "")).isErr
 
-  test "returns an error when the DHT doesn't answer before the timeout":
-    check (await publisher.publish("catalog", cid)).isOk
-
-    server.stopAnsweringDht()
-
-    # Kademlia stops waiting for a peer after 5 seconds, and then finds no name
-    # record. The timeout must stop the resolve before.
-    let resolved =
-      await reader.disc.resolve(publicKey, "catalog", timeout = 200.milliseconds)
-
-    check resolved.isErr
-
 asyncchecksuite "Name refresh":
   var
     clock: MockClock

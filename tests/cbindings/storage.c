@@ -1144,7 +1144,7 @@ static int name_publish(StorageCtx *storage_ctx, const char *label, const char *
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_name_publish(storage_ctx, label, cid, seqnum, 0, on_str_reply, r) != RET_OK)
+    if (storage_ctx_name_publish(storage_ctx, label, cid, seqnum, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1183,7 +1183,7 @@ static int name_resolve(StorageCtx *storage_ctx, const char *name, char **res)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_name_resolve(storage_ctx, name, 0, on_str_reply, r) != RET_OK)
+    if (storage_ctx_name_resolve(storage_ctx, name, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1196,7 +1196,7 @@ static int name_resolve_key(StorageCtx *storage_ctx, const char *peer_id, const 
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_name_resolve_key(storage_ctx, peer_id, label, 0, on_str_reply, r) != RET_OK)
+    if (storage_ctx_name_resolve_key(storage_ctx, peer_id, label, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;

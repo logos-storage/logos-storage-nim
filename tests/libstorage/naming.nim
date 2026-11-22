@@ -37,7 +37,7 @@ asyncchecksuite "Libstorage - names":
     removeDir(dataDir)
 
   test "publish refuses a cid that is not a CID":
-    let res = await storage_name_publish(node, "catalog", "not-a-cid", 1, 0)
+    let res = await storage_name_publish(node, "catalog", "not-a-cid", 1)
 
     check res.isErr
 
@@ -53,7 +53,7 @@ asyncchecksuite "Libstorage - names":
       check "Label is shorter" in res.error
 
   test "resolve refuses a name that is not a CID":
-    let res = await storage_name_resolve(node, "not-a-cid", 0)
+    let res = await storage_name_resolve(node, "not-a-cid")
 
     check res.isErr
 
@@ -69,7 +69,7 @@ asyncchecksuite "Libstorage - names":
       check "invalid name" in res.error
 
   test "resolve_key refuses a peer ID that is not valid":
-    let res = await storage_name_resolve_key(node, "not-a-peer-id", "catalog", 0)
+    let res = await storage_name_resolve_key(node, "not-a-peer-id", "catalog")
 
     check res.isErr
 

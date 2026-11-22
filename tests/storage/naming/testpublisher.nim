@@ -193,26 +193,6 @@ asyncchecksuite "Name publisher":
     check stored[0].data.cid == cid
     check stored[0].data.seqnum == 5'u64
 
-  test "succeeds and keeps the name record stored when the DHT doesn't answer before the timeout":
-    let
-      writer =
-        await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-      writerPublisher = newPublisher(writer, newMetaDs(), clock)
-
-    server.stopAnsweringDht()
-
-    # Without the timeout, the put waits for Kademlia, which stops waiting for a
-    # peer after 5 seconds.
-    let published = writerPublisher.publish("catalog", cid, timeout = 200.milliseconds)
-
-    check await published.withTimeout(2.seconds)
-    check published.read().isOk
-
-    let stored = (await writerPublisher.getNameRecords()).tryGet()
-
-    check stored.len == 1
-    check stored[0].data.cid == cid
-
   test "publish returns an error when reading the stored name record fails":
     let
       failingDs = FailingDatastore.new(newMetaDs())

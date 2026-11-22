@@ -130,19 +130,14 @@ proc mintNameRecord(
   sign(nameRecord, self.privateKey)
 
 proc publish*(
-    self: NamePublisher,
-    label: string,
-    cid: Cid,
-    seqnum = Opt.none(uint64),
-    timeout = PutValueTimeout,
+    self: NamePublisher, label: string, cid: Cid, seqnum = Opt.none(uint64)
 ): Future[Result[SignedNameRecord, ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
   ## Publishes a name record for the label. The seqnum is the current time
   ## unless it is given. It can't be lower than the stored one, and it can only
   ## be equal to it for the same CID. The name record is persisted, then
-  ## advertised in the DHT. A failure to advertise is only logged. The timeout
-  ## limits only the advertise.
+  ## advertised in the DHT. A failure to advertise is only logged.
   let
     nameBytes = self.name(label).valueOr:
       return err(error)
@@ -178,7 +173,7 @@ proc publish*(
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
-  let advertised = await self.discovery.putValue(nameKey, bytes, timeout)
+  let advertised = await self.discovery.putValue(nameKey, bytes)
 
   # The name record is stored, so the next republish advertises it again.
   if advertised.isErr:
