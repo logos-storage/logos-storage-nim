@@ -17,10 +17,7 @@ logScope:
 
 proc toTimeout(timeoutMs: uint64, default: Duration): Duration =
   ## A timeoutMs of 0 means the default.
-  if timeoutMs == 0:
-    default
-  else:
-    timeoutMs.int64.milliseconds
+  if timeoutMs == 0: default else: timeoutMs.int64.milliseconds
 
 proc storage_name_publish(
     self: Storage, label: string, cid: string, seqnum: uint64, timeoutMs: uint64
@@ -38,9 +35,7 @@ proc storage_name_publish(
 
   try:
     let timeout = toTimeout(timeoutMs, PutValueTimeout)
-    let signed = (
-      await self.namePublisher.publish(label, parsed, sequence, timeout)
-    ).valueOr:
+    let signed = (await self.namePublisher.publish(label, parsed, sequence, timeout)).valueOr:
       return err("Failed to publish the name: " & error.msg)
 
     return ok(nameKeyString(signed))
