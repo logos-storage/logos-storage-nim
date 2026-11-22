@@ -48,9 +48,9 @@ logScope:
 
 const
   ProvideTimeout = 1.minutes
-  LookupTimeout = 1.minutes
+  LookupTimeout* = 1.minutes
   ServiceLookupTimeout = 1.minutes
-  PutValueTimeout = 1.minutes
+  PutValueTimeout* = 1.minutes
   ValueQuorum = 5
 
   StorageServiceId* = "/logos-storage/1.0.0"
@@ -231,12 +231,12 @@ method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
   d.kad.providerManager.providedKeys.provided.clear()
 
 proc putValue*(
-    d: Discovery, key: seq[byte], value: seq[byte]
+    d: Discovery, key: seq[byte], value: seq[byte], timeout = PutValueTimeout
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   ## Store a value under a key on the closest server nodes
   ##
   try:
-    let res = await d.kad.putValue(key, value).wait(PutValueTimeout)
+    let res = await d.kad.putValue(key, value).wait(timeout)
 
     if res.isErr:
       return failure("Error putting value: " & res.error)
@@ -248,12 +248,12 @@ proc putValue*(
     return failure("Error putting value: " & exc.msg)
 
 proc getValue*(
-    d: Discovery, key: seq[byte]
+    d: Discovery, key: seq[byte], timeout = LookupTimeout
 ): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
   ## Read the value stored under a key
   ##
   try:
-    let res = await d.kad.getValue(key).wait(LookupTimeout)
+    let res = await d.kad.getValue(key).wait(timeout)
 
     if res.isErr:
       return failure("Error getting value: " & res.error)

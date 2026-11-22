@@ -10,12 +10,20 @@ import ../../storage/utils/nameutils
 
 from ../../storage/storage import StorageServer, node, namePublisher
 from ../../storage/node import discovery
+from ../../storage/discovery import LookupTimeout, PutValueTimeout
 
 logScope:
   topics = "libstorage naming"
 
+proc toTimeout(timeoutMs: uint64, default: Duration): Duration =
+  ## A timeoutMs of 0 means the default.
+  if timeoutMs == 0:
+    default
+  else:
+    timeoutMs.int64.milliseconds
+
 proc storage_name_publish(
-    self: Storage, label: string, cid: string, seqnum: uint64
+    self: Storage, label: string, cid: string, seqnum: uint64, timeoutMs: uint64
 ): Future[Result[string, string]] {.ffi.} =
   ## Publishes a name record for the label and returns the name key.
   ## A seqnum of 0 means the current time.
@@ -29,7 +37,10 @@ proc storage_name_publish(
       Opt.some(seqnum)
 
   try:
-    let signed = (await self.namePublisher.publish(label, parsed, sequence)).valueOr:
+    let timeout = toTimeout(timeoutMs, PutValueTimeout)
+    let signed = (
+      await self.namePublisher.publish(label, parsed, sequence, timeout)
+    ).valueOr:
       return err("Failed to publish the name: " & error.msg)
 
     return ok(nameKeyString(signed))
@@ -64,7 +75,7 @@ proc storage_name_refresh(
   return ok("")
 
 proc storage_name_resolve(
-    self: Storage, nameKey: string
+    self: Storage, nameKey: string, timeoutMs: uint64
 ): Future[Result[string, string]] {.ffi.} =
   ## Returns the CID of the name key, or an empty string when the DHT has no
   ## name record.
@@ -72,7 +83,8 @@ proc storage_name_resolve(
     return err("Failed to resolve the name: " & error.msg)
 
   try:
-    let cid = (await self.node.discovery.resolve(name)).valueOr:
+    let timeout = toTimeout(timeoutMs, LookupTimeout)
+    let cid = (await self.node.discovery.resolve(name, timeout)).valueOr:
       return err("Failed to resolve the name: " & error.msg)
 
     if cid.isNone:
@@ -83,7 +95,7 @@ proc storage_name_resolve(
     return err("Failed to resolve the name: operation cancelled.")
 
 proc storage_name_resolve_key(
-    self: Storage, peerId: string, label: string
+    self: Storage, peerId: string, label: string, timeoutMs: uint64
 ): Future[Result[string, string]] {.ffi.} =
   ## Returns the CID of the name that the peer publishes for the label, or an
   ## empty string when the DHT has no name record.
@@ -91,7 +103,8 @@ proc storage_name_resolve_key(
     return err("Failed to resolve the name: " & error.msg)
 
   try:
-    let cid = (await self.node.discovery.resolve(publicKey, label)).valueOr:
+    let timeout = toTimeout(timeoutMs, LookupTimeout)
+    let cid = (await self.node.discovery.resolve(publicKey, label, timeout)).valueOr:
       return err("Failed to resolve the name: " & error.msg)
 
     if cid.isNone:

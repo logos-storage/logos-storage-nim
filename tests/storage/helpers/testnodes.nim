@@ -3,6 +3,7 @@ import std/sequtils
 import pkg/chronos
 import pkg/libp2p
 import pkg/libp2p/protocols/kademlia
+import pkg/libp2p/protocols/protocol
 import storage/discovery
 
 import ./switchutils
@@ -42,6 +43,13 @@ proc startNode*(
   nodes.started.add(node)
 
   node
+
+proc stopAnsweringDht*(node: TestNode) =
+  ## The DHT of the node keeps the requests it gets, and never answers them
+  node.disc.kad.handler = proc(
+      stream: Stream, proto: string
+  ): Future[void] {.async: (raises: [CancelledError]).} =
+    await stream.closeEvent.wait()
 
 proc stop*(nodes: TestNodes) {.async: (raises: [CancelledError]).} =
   for node in nodes.started:
