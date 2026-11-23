@@ -49,7 +49,6 @@ import ./storagetypes
 import ./logutils
 import ./nat
 import ./utils/natutils
-import ./utils/trackedfutures
 import ./mix
 import ./serviceproviders
 
@@ -74,7 +73,7 @@ type
     natMapper*: Option[NatPortMapper]
     serviceProviders: Option[ServiceProviders]
     holePunchHandler: Option[connmanager.PeerEventHandler]
-    autonatDialFutures: TrackedFutures
+    bootstrapDials: Future[void].Raising([CancelledError])
     mixTransport: MixTransport
     isStarted: bool
 
@@ -262,11 +261,20 @@ proc start*(self: StorageServer) {.async.} =
     except CatchableError as e:
       warn "Cannot connect to AutoNAT server", error = e.msg
 
-  for record in self.storageNode.discovery.autonatServers():
-    self.autonatDialFutures.track(connectAutonatServer(record))
+  proc connectBootstrapPeers() {.async: (raises: [CancelledError]).} =
+    let dials =
+      self.storageNode.discovery.autonatServers().mapIt(connectAutonatServer(it))
+    try:
+      await allFutures(dials)
+    except CancelledError as exc:
+      await noCancel allFutures(dials.mapIt(it.cancelAndWait()))
+      raise exc
 
-  if self.serviceProviders.isSome:
-    self.serviceProviders.get.start()
+    # The provider check can force a second outbound dial to an unconnected peer.
+    if self.serviceProviders.isSome:
+      self.serviceProviders.get.start()
+
+  self.bootstrapDials = connectBootstrapPeers()
 
   # AutoNAT is not in switch.services because we want to start it
   # after starting the bootstrap connections for the first probe.
@@ -285,7 +293,7 @@ proc stop*(s: StorageServer) {.async.} =
 
   notice "Stopping Storage node"
 
-  await s.autonatDialFutures.cancelTracked()
+  await s.bootstrapDials.cancelAndWait()
 
   if s.natMapper.isSome:
     s.natMapper.get.stop()
@@ -752,6 +760,6 @@ proc new*(
       else:
         ServiceProviders.none,
     holePunchHandler: holePunchHandler,
-    autonatDialFutures: TrackedFutures(),
+    bootstrapDials: Future[void].Raising([CancelledError])(),
     mixTransport: nil,
   )

@@ -223,6 +223,7 @@ asyncchecksuite "NAT detection - dial request candidates":
       discard sw.addressManager.addObservation(observer, observed)
 
     let sw2 = newStandardSwitch()
+    sw2.mount(autonatv2Server.AutonatV2.new(sw2))
     await sw2.start()
     await sw.connect(sw2.peerInfo.peerId, sw2.peerInfo.addrs)
 
