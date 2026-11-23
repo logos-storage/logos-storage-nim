@@ -52,6 +52,10 @@ const
   ServiceLookupTimeout = 1.minutes
   PutValueTimeout = 1.minutes
   ValueQuorum = 5
+  # Seconds. The libp2p defaults, that a test build can shorten, for example
+  # with -d:storage_kad_record_retention=3600
+  KadRecordRetention {.intdefine: "storage_kad_record_retention".} = 24 * 60 * 60
+  KadCleanupInterval {.intdefine: "storage_kad_cleanup_interval".} = 60 * 60
 
   StorageServiceId* = "/logos-storage/1.0.0"
   AutonatServiceId* = $AutonatV2Codec.DialRequest
@@ -504,6 +508,8 @@ proc new*(
     config = KadDHTConfig.new(
       addressPolicy = addressPolicy,
       quorum = ValueQuorum,
+      recordExpirationInterval = chronos.seconds(KadRecordRetention),
+      cleanupDataEntriesInterval = chronos.seconds(KadCleanupInterval),
       validator = validator,
       selector = selector,
     ),

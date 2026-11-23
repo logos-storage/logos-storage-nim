@@ -28,8 +28,10 @@ logScope:
   topics = "storage naming"
 
 const
-  RepublishInterval* = 4 * 60 * 60 # seconds
-  NameRecordLifetime* = 8 * 60 * 60 # seconds
+  # Seconds. A test build can shorten them, for example with
+  # -d:storage_name_republish_interval=900
+  RepublishInterval* {.intdefine: "storage_name_republish_interval".} = 4 * 60 * 60
+  NameRecordLifetime* {.intdefine: "storage_name_record_lifetime".} = 8 * 60 * 60
 
 type NamePublisher* = ref object
   ## Publishes the names of the node to the DHT. The node keeps the name records
