@@ -78,7 +78,7 @@ proc lookupProviders*(
     )
 
   let localInfo = mixProto.localMixPubInfo.valueOr:
-    return failure("MixProtocol is not ready: " & error)
+    return failure("Failed to read local Mix public info: " & error)
   if localInfo.multiAddr == mixUnsetMultiAddr():
     return failure("MixProtocol is not ready, multiAddr=" & $localInfo.multiAddr)
 

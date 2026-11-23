@@ -346,14 +346,16 @@ type
 
     natObservedAddrMinCount* {.
       desc:
-        "Minimum number of distinct peers reporting an address in identify replies" &
-        " before it is used as the node's dialable address",
+        "Minimum number of distinct peers reporting the same observed IP or address" &
+        " for this node in Identify replies before AutoNAT probes it as a candidate",
       defaultValue: 1,
       name: "nat-observed-addr-min-count"
     .}: int
 
     natNumPeersToAsk* {.
-      desc: "Target number of outbound AutoNAT server connections for service discovery",
+      desc:
+        "Target number of outbound AutoNAT server connections to maintain." &
+        " Candidates include bootstrap peers and servers found through service discovery",
       defaultValue: 3,
       name: "nat-num-peers-to-ask"
     .}: int
