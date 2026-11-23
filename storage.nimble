@@ -28,7 +28,7 @@ requires "faststreams >= 0.5.0 & < 0.6.0"
 # The C bindings need fixes made after v0.3.1-rc.0, which have no tag yet.
 requires "ffi#16aab491d3aa6d604df0600fbdfe7190ba169577"
 requires "libbacktrace >= 0.2.0 & < 0.3.0"
-requires "libp2p >= 2.5.0"
+requires "libp2p >= 2.5.0 & < 2.6.0"
 requires "websock == 0.4.1"
 # Match the Mix revision pinned by the MixTransport release.
 requires "https://github.com/logos-storage/libp2p-mix-transport#v0.1.1"
