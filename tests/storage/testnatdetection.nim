@@ -213,6 +213,8 @@ asyncchecksuite "NAT detection - dial request candidates":
       ),
     )
     await autonat.start(sw) # registers the address mapper on peerInfo
+    defer:
+      await noCancel autonat.stop(sw)
 
     # observations before the manager trusts an addr in libp2p; the observed
     # port (4001) differs from our listen port on purpose (see dialable below)
@@ -225,6 +227,8 @@ asyncchecksuite "NAT detection - dial request candidates":
     let sw2 = newStandardSwitch()
     sw2.mount(autonatv2Server.AutonatV2.new(sw2))
     await sw2.start()
+    defer:
+      await noCancel sw2.stop()
     await sw.connect(sw2.peerInfo.peerId, sw2.peerInfo.addrs)
 
     # The dialable candidate keeps our real listen port and swaps in the
@@ -240,6 +244,3 @@ asyncchecksuite "NAT detection - dial request candidates":
 
     # Phase 2: the address mapper promotes it into peerInfo.
     check eventually(dialable in sw.peerInfo.addrs)
-
-    await autonat.stop(sw)
-    await sw2.stop()

@@ -276,15 +276,21 @@ proc start*(self: StorageServer) {.async.} =
 
   self.bootstrapDials = connectBootstrapPeers()
 
-  # AutoNAT is not in switch.services because we want to start it
-  # after starting the bootstrap connections for the first probe.
-  if self.autonatService.isSome:
-    await self.autonatService.get.start(self.storageNode.switch)
+  try:
+    # AutoNAT is not in switch.services because we want to start it
+    # after starting the bootstrap connections for the first probe.
+    if self.autonatService.isSome:
+      await self.autonatService.get.start(self.storageNode.switch)
 
-  if self.restServer != nil:
-    self.restServer.start()
+    if self.restServer != nil:
+      self.restServer.start()
 
-  self.isStarted = true
+    self.isStarted = true
+  finally:
+    if not self.isStarted:
+      await noCancel self.bootstrapDials.cancelAndWait()
+      if self.serviceProviders.isSome:
+        await noCancel self.serviceProviders.get.stop()
 
 proc stop*(s: StorageServer) {.async.} =
   if not s.isStarted:
