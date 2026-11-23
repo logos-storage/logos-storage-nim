@@ -1307,6 +1307,41 @@ int check_name_resolve_key(StorageCtx *storage_ctx, const char *cid)
     return ret;
 }
 
+int check_name_is_key(StorageCtx *storage_ctx, const char *cid)
+{
+    char *name = NULL;
+    char *res = NULL;
+
+    if (name_publish(storage_ctx, "is-key", cid, 1, &name) != RET_OK)
+    {
+        fprintf(stderr, "publish failed: %s\n", name ? name : "(null)");
+        free(name);
+        return RET_ERR;
+    }
+
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_name_is_key(storage_ctx, name, on_str_reply, r) != RET_OK)
+    {
+        free(name);
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    int ret = is_resp_ok(r, &res);
+
+    if (res == NULL || strcmp(res, "true") != 0)
+    {
+        fprintf(stderr, "is_key content mismatch, res:%s\n", res ? res : "(null)");
+        ret = RET_ERR;
+    }
+
+    free(name);
+    free(res);
+
+    return ret;
+}
+
 static int read_whole_file(const char *filepath, char **res)
 {
     FILE *file = fopen(filepath, "rb");
@@ -1464,6 +1499,7 @@ int main(void)
     RUN_TEST(check_name_unpublish(storage_ctx, cid));
     RUN_TEST(check_name_refresh(storage_ctx, cid));
     RUN_TEST(check_name_resolve_key(storage_ctx, cid));
+    RUN_TEST(check_name_is_key(storage_ctx, cid));
     RUN_TEST(check_delete(storage_ctx, cid));
     RUN_TEST(check_exists(storage_ctx, cid, false));
 

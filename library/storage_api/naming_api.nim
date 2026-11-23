@@ -82,6 +82,14 @@ proc storage_name_resolve(
   except CancelledError:
     return err("Failed to resolve the name: operation cancelled.")
 
+proc storage_name_is_key(
+    self: Storage, nameKey: string
+): Future[Result[string, string]] {.ffi.} =
+  ## Reports whether the string is a name key.
+  let isKey = parseName(nameKey).isOk
+
+  return ok($isKey)
+
 proc storage_name_resolve_key(
     self: Storage, peerId: string, label: string
 ): Future[Result[string, string]] {.ffi.} =
