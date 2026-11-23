@@ -29,7 +29,6 @@ requires "faststreams >= 0.5.0 & < 0.6.0"
 requires "ffi#16aab491d3aa6d604df0600fbdfe7190ba169577"
 requires "libbacktrace >= 0.2.0 & < 0.3.0"
 requires "libp2p >= 2.5.0 & < 2.6.0"
-requires "websock == 0.4.1"
 # Match the Mix revision pinned by the MixTransport release.
 requires "https://github.com/logos-storage/libp2p-mix-transport#v0.1.1"
 requires "https://github.com/logos-co/nim-libp2p-mix.git#7ebe3effb46bbdd1d3ef201e89e6f98c38d92b0e"
