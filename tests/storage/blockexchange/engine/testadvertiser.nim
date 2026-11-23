@@ -7,10 +7,8 @@ from pkg/libp2p/switch import Switch
 import pkg/libp2p/peerinfo
 import pkg/libp2p/routing_record
 import pkg/libp2p/protocols/connectivity/autonat/types
-import pkg/libp2p/protocols/connectivity/autonatv2/service except setup
-import pkg/libp2p/protocols/connectivity/autonatv2/client except setup
+import pkg/libp2p/protocols/connectivity/autonatv2/service
 
-import pkg/storage/rng
 import pkg/storage/blockexchange
 import pkg/storage/stores
 import pkg/storage/chunker
@@ -137,6 +135,8 @@ asyncchecksuite "Advertiser reachability":
     advertiser: Advertiser
     advertised: seq[Cid]
     peerInfo: PeerInfo
+    autonatSwitch: Switch
+    autonatService: AutonatV2Service
   let
     manifest = Manifest.new(
       treeCid = Cid.example, blockSize = 123.NBytes, datasetSize = 234.NBytes
@@ -148,29 +148,17 @@ asyncchecksuite "Advertiser reachability":
       .init("/ip4/1.2.3.4/tcp/4001/p2p/" & $PeerId.example & "/p2p-circuit")
       .expect("valid")
 
-  proc autonatWith(
-      reachability: NetworkReachability, sw: var Switch
-  ): AutonatV2Service =
-    let rng = Rng.instance().libp2pRng
-    sw = newStandardSwitch()
-    result = AutonatV2Service.new(rng, AutonatV2Client.new(rng))
-    service.setup(result, sw)
-
-    if reachability == NetworkReachability.Unknown:
-      return
-
-    sw.addressManager.add(publicAddr, AddrSource.Autonat)
-    sw.addressManager.update(
-      publicAddr,
-      if reachability == NetworkReachability.Reachable:
-        AddrState.Confirmed
-      else:
-        AddrState.Unreachable,
-    )
-
   proc autonatWith(reachability: NetworkReachability): AutonatV2Service =
-    var sw: Switch
-    autonatWith(reachability, sw)
+    if reachability != NetworkReachability.Unknown:
+      autonatSwitch.addressManager.add(publicAddr, AddrSource.Autonat)
+      autonatSwitch.addressManager.update(
+        publicAddr,
+        if reachability == NetworkReachability.Reachable:
+          AddrState.Confirmed
+        else:
+          AddrState.Unreachable,
+      )
+    autonatService
 
   proc startAdvertiser(
       addrs: seq[MultiAddress], autonat: Option[AutonatV2Service]
@@ -184,6 +172,9 @@ asyncchecksuite "Advertiser reachability":
     blockDiscovery = MockDiscovery.new()
     localStore = CacheStore.new()
     peerInfo = examplePeerInfo()
+    autonatSwitch = newStandardSwitch()
+    autonatService = AutonatV2Service.new(autonatSwitch.rng)
+    await autonatService.start(autonatSwitch)
 
     advertised = newSeq[Cid]()
     blockDiscovery.publishBlockProvideHandler = proc(
@@ -194,6 +185,7 @@ asyncchecksuite "Advertiser reachability":
   teardown:
     if not advertiser.isNil:
       await advertiser.stop()
+    await autonatService.stop(autonatSwitch)
 
   test "Should not advertise when AutoNAT reports NotReachable and there is no circuit":
     await startAdvertiser(
@@ -246,8 +238,7 @@ asyncchecksuite "Advertiser reachability":
     check eventually manifestBlk.cid in advertised
 
   test "Should advertise once AutoNAT flips to Reachable":
-    var autonatSwitch: Switch
-    let autonat = autonatWith(NetworkReachability.NotReachable, autonatSwitch)
+    let autonat = autonatWith(NetworkReachability.NotReachable)
     await startAdvertiser(@[publicAddr], some(autonat))
 
     (await localStore.putBlock(manifestBlk)).tryGet()

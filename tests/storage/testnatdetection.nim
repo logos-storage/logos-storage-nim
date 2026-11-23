@@ -9,12 +9,12 @@
 import std/options
 import pkg/chronos
 import pkg/libp2p except setup
-import pkg/libp2p/protocols/connectivity/autonatv2/service except setup
+import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/protocols/connectivity/autonatv2/client except setup
 import pkg/libp2p/protocols/connectivity/autonatv2/types as autonatv2Types
 import pkg/libp2p/protocols/connectivity/autonatv2/server as autonatv2Server
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
-import pkg/libp2p/services/autorelayservice except setup
+import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/address_manager
 
 import ./helpers
@@ -101,7 +101,6 @@ asyncchecksuite "NAT detection - simulated NAT":
       .build()
 
     relay = AutoRelayService.new(1, relayClient, nil, Rng.instance().libp2pRng)
-    autorelayservice.setup(relay, natNode)
     # nodes start in client mode until Reachable
     disc = Discovery.new(natNode, isServer = false)
 
@@ -113,7 +112,6 @@ asyncchecksuite "NAT detection - simulated NAT":
     # Setup AutoNAT v2 service with frequent reachability checks.
     let config = AutonatV2ServiceConfig.new(scheduleInterval = Opt.some(1.seconds))
     autonat = AutonatV2Service.new(natNode.rng, autonatClient, config)
-    service.setup(autonat, natNode)
 
     discard autonat.reachabilityObservers.add(
       proc(
@@ -214,7 +212,6 @@ asyncchecksuite "NAT detection - dial request candidates":
         scheduleInterval = Opt.some(50.milliseconds), enableDialableCandidates = true
       ),
     )
-    service.setup(autonat, sw)
     await autonat.start(sw) # registers the address mapper on peerInfo
 
     # observations before the manager trusts an addr in libp2p; the observed

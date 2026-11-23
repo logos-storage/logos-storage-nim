@@ -366,10 +366,10 @@ proc advertiseServices(
       services = services.mapIt(ServiceInfo(id: it)),
     )
     signed = SignedExtendedPeerRecord.build(switch.peerInfo.privateKey, record).valueOr:
-      raise newException(ValueError, "Cannot sign the advertisement: " & error)
+      raise newException(ValueError, "Cannot sign the advertisement: " & $error)
 
   disco.startAdvertising(ServiceInfo(id: StorageServiceId), Opt.some(signed.encode())).isOkOr:
-    raise newException(ValueError, "Cannot advertise services: " & error)
+    raise newException(ValueError, "Cannot advertise services: " & $error)
 
 proc runRelayOnly(
     conf: Conf,

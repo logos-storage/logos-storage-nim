@@ -484,7 +484,7 @@ proc parseCmdArg*(
 
   if res.isErr:
     raise newException(
-      ConfigurationError, "Invalid MultiAddress " & input & ": " & res.error()
+      ConfigurationError, "Invalid MultiAddress " & input & ": " & $res.error()
     )
 
   res.get()

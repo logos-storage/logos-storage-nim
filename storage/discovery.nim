@@ -272,7 +272,7 @@ proc advertisement(d: Discovery): Result[seq[byte], string] =
       services = services.mapIt(ServiceInfo(id: it)),
     )
     signed = SignedExtendedPeerRecord.build(d.switch.peerInfo.privateKey, record).valueOr:
-      return err("Cannot sign the advertisement: " & error)
+      return err("Cannot sign the advertisement: " & $error)
   ok(signed.encode())
 
 proc startAdvertisingServices*(d: Discovery) =
@@ -319,7 +319,7 @@ proc lookupServiceProviders(
   await d.serviceDiscovery.waitBootstrap()
 
   let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: StorageServiceId))).valueOr:
-    return err("Service lookup failed: " & error)
+    return err("Service lookup failed: " & $error)
 
   var providers: seq[Advertisement]
   for ad in ads:

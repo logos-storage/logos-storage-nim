@@ -3,7 +3,7 @@ import pkg/chronos
 import pkg/libp2p/[multiaddress, multihash, multicodec]
 import pkg/libp2p/protocols/connectivity/autonat/types
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
-import pkg/libp2p/services/autorelayservice except setup
+import pkg/libp2p/services/autorelayservice
 import pkg/results
 
 import ./helpers
@@ -80,7 +80,6 @@ asyncchecksuite "NAT reaction - port mapping":
     let mapper =
       MockNatPortMapper(mappedPorts: some((Port(9000), MappingProtocol.UPnP)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     # A mapping doesn't guarantee reachability, so the relay stays off until
@@ -91,7 +90,6 @@ asyncchecksuite "NAT reaction - port mapping":
   test "handleNatStatus starts autoRelay when NotReachable with no mapped ports":
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(
       NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
     )
@@ -111,7 +109,6 @@ asyncchecksuite "NAT reaction - port mapping":
       )
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check autoRelay.isRunning
@@ -131,7 +128,6 @@ asyncchecksuite "NAT reaction - port mapping":
       )
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check mapper.destroyed == @[cint(1)] # the dead mapping is torn down
@@ -142,7 +138,6 @@ asyncchecksuite "NAT reaction - port mapping":
     let dialBack = MultiAddress.init("/ip4/1.2.3.4/tcp/8080").expect("valid")
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(Reachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check not autoRelay.isRunning
@@ -150,7 +145,6 @@ asyncchecksuite "NAT reaction - port mapping":
 
   test "Reachable without a dialback address stops relay and enables DHT server mode":
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(
       NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
     )
@@ -168,7 +162,6 @@ asyncchecksuite "NAT reaction - port mapping":
       MockNatPortMapper(mappedPorts: some((Port(9000), MappingProtocol.UPnP)))
     mapper.stop()
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check not autoRelay.isRunning
@@ -180,7 +173,6 @@ asyncchecksuite "NAT reaction - port mapping":
       tcpResult: Result[MappingResult, string].err("tcp mapping failed")
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(
       NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
     )

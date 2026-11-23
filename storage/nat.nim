@@ -197,8 +197,11 @@ method handleNatStatus*(
     if not autoRelayService.isRunning:
       debug "No port mapping found let's start autorelay"
 
-      await autoRelayService.start(switch)
-      debug "AutoRelayService started"
+      try:
+        await autoRelayService.start(switch)
+        debug "AutoRelayService started"
+      except LPError as exc:
+        warn "Failed to start AutoRelayService", err = exc.msg
 
 proc reachabilityStr*(autonat: Option[AutonatV2Service]): string =
   if autonat.isSome:

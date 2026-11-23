@@ -465,7 +465,6 @@ proc new*(
       client.setup(switch)
       switch.mount(client)
       let service = AutonatV2Service.new(switch.rng, client, autonatConfig.get)
-      service.setup(switch)
       some(service)
     else:
       none(AutonatV2Service)
@@ -592,7 +591,6 @@ proc new*(
       rng = random.Rng.instance().libp2pRng,
     )
 
-    relayService.setup(switch)
     autoRelayService = some(relayService)
 
     proc refreshAutonatServers() {.async: (raises: [CancelledError]).} =
