@@ -24,9 +24,7 @@ import ./record
 
 export record
 
-const
-  NameHashCodec* = multiCodec("sha2-256")
-  NoNameRecordError = "No valid records found"
+const NameHashCodec* = multiCodec("sha2-256")
 
 type
   NameRecordValidator* = ref object of EntryValidator
@@ -119,7 +117,7 @@ method select*(
   ok(newestIndex)
 
 proc isNoNameRecordError*(error: ref CatchableError): bool =
-  error.msg.endsWith(NoNameRecordError)
+  error.msg.endsWith(NoValidRecords)
 
 proc resolve*(
     discovery: Discovery, name: Name
