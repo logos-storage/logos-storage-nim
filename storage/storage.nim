@@ -616,10 +616,7 @@ proc new*(
         switch,
         AutonatServiceId,
         discovery.autonatServers(),
-        config.natNumPeersToAsk -
-          countOutbound(
-            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
-          ),
+        config.natNumPeersToAsk - switch.countAutonatHelpers(),
       )
 
     proc refreshCircuitRelayServers() {.async: (raises: [CancelledError]).} =
@@ -638,9 +635,7 @@ proc new*(
       RequiredService.new(
         AutonatServiceId,
         proc(): bool =
-          countOutbound(
-            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
-          ) < config.natNumPeersToAsk,
+          switch.countAutonatHelpers() < config.natNumPeersToAsk,
         refreshAutonatServers,
       )
     )

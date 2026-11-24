@@ -3,6 +3,7 @@ import pkg/chronos
 import pkg/libp2p/[multiaddress, multihash, multicodec]
 import pkg/libp2p/protocols/connectivity/autonat/types
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
+from pkg/libp2p/protocols/connectivity/autonatv2/server import AutonatV2, new
 import pkg/libp2p/services/autorelayservice
 import pkg/results
 
@@ -365,22 +366,60 @@ asyncchecksuite "NAT - connecting to NAT servers":
     await fullSwitch.stop()
     await otherSwitch.stop()
 
-  test "a server connected inbound is not counted as outbound":
-    let switch = await inboundSwitch()
+asyncchecksuite "NAT - AutoNAT helper target":
+  var bootstrap, clientSwitch: Switch
+  var client: Discovery
 
-    check countOutbound(client.autonatServers(), switch.connectedPeers(Direction.Out)) ==
-      0
+  setup:
+    bootstrap = newStandardSwitch()
+    clientSwitch = newStandardSwitch()
 
-    await switch.stop()
+  teardown:
+    await clientSwitch.stop()
+    await bootstrap.stop()
 
-  test "a server connected outbound is counted as outbound":
-    discard
-      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
-    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
-    await clientSwitch.connect(
-      advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs
+  proc bootstrapClient() {.async.} =
+    await bootstrap.mountAndStart(Discovery.new(bootstrap))
+    client = Discovery.new(
+      clientSwitch,
+      bootstrapNodes = [(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)],
+      isServer = false,
     )
+    await clientSwitch.mountAndStart(client)
+    await clientSwitch.connect(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)
 
-    check countOutbound(
-      client.autonatServers(), clientSwitch.connectedPeers(Direction.Out)
-    ) == 1
+  test "a plain bootstrap leaves room for a separately advertised AutoNAT server":
+    await bootstrapClient()
+    check clientSwitch.countAutonatHelpers() == 0
+
+    let server = newStandardSwitch()
+    server.mount(AutonatV2.new(server))
+    let serverDiscovery = Discovery.new(
+      server,
+      bootstrapNodes = [(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)],
+      providedServices = [AutonatServiceId],
+    )
+    await server.mountAndStart(serverDiscovery)
+    defer:
+      await server.stop()
+    serverDiscovery.startAdvertisingServices()
+    let found = await client.waitForProvider(AutonatServiceId, server.peerInfo.peerId)
+    check found.anyIt(it.peerId == server.peerInfo.peerId)
+    await connectMissing(
+      client,
+      clientSwitch,
+      AutonatServiceId,
+      client.autonatServers(),
+      1 - clientSwitch.countAutonatHelpers(),
+    )
+    check eventually(clientSwitch.countAutonatHelpers() == 1)
+
+  test "a capable bootstrap counts without a service advertisement":
+    bootstrap.mount(AutonatV2.new(bootstrap))
+    await bootstrapClient()
+    check eventually(clientSwitch.countAutonatHelpers() == 1)
+
+    await bootstrap.connect(
+      clientSwitch.peerInfo.peerId, clientSwitch.peerInfo.addrs, reuseConnection = false
+    )
+    check eventually(clientSwitch.countAutonatHelpers() == 0)

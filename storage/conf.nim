@@ -354,7 +354,7 @@ type
 
     natNumPeersToAsk* {.
       desc:
-        "Target number of outbound AutoNAT server connections to maintain." &
+        "Target number of connected peers eligible for AutoNAT callbacks." &
         " Candidates include bootstrap peers and servers found through service discovery",
       defaultValue: 3,
       name: "nat-num-peers-to-ask"

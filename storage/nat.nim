@@ -15,6 +15,7 @@ import pkg/chronos
 import pkg/chronicles
 import pkg/libp2p
 import pkg/libp2p/services/autorelayservice
+from pkg/libp2p/protocols/connectivity/autonatv2/utils import hasIncomingConn
 import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/protocols/connectivity/relay/relay as relayProtocol
 import pkg/libp2p/protocols/connectivity/dcutr/client as dcutrClientModule
@@ -227,8 +228,12 @@ proc peerConnections*(switch: Switch): JsonNode =
     entry["direct"] = newJBool(muxers.anyIt(not isRelayed(it.connection)))
     result.add(entry)
 
-proc countOutbound*(servers: seq[PeerRecord], outbound: seq[PeerId]): int =
-  servers.countIt(it.peerId in outbound)
+proc countAutonatHelpers*(switch: Switch): int =
+  # Match peer selection in libp2p's AutonatV2Verifier.
+  switch.connectedPeers(Direction.Out).countIt(
+    AutonatServiceId in switch.peerStore[ProtoBook][it] and
+      not switch.hasIncomingConn(it)
+  )
 
 proc relayPeers*(relayAddresses: seq[MultiAddress]): HashSet[PeerId] =
   for address in relayAddresses:
