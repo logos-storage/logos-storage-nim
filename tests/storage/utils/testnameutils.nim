@@ -55,4 +55,4 @@ suite "Nameutils":
     check res.isErr
 
     if res.isErr:
-      check "no public key" in res.error.msg
+      check "doesn't have a public key" in res.error.msg

@@ -185,7 +185,7 @@ twonodessuite "Names":
 
     check response.status == 403
 
-  test "publish accepts an http Origin when --api-cors-origin has no scheme",
+  test "publish accepts an http Origin when --api-cors-origin doesn't have a scheme",
     noSchemeConfig:
     let cid = (await client1.upload("catalog contents")).get
 
@@ -196,7 +196,7 @@ twonodessuite "Names":
 
     check response.status == 200
 
-  test "publish refuses another Origin when --api-cors-origin has no scheme",
+  test "publish refuses another Origin when --api-cors-origin doesn't have a scheme",
     noSchemeConfig:
     let cid = (await client1.upload("catalog contents")).get
 
@@ -273,7 +273,7 @@ twonodessuite "Names":
 
     check response.status == 400
 
-  test "resolve returns 404 when the DHT has no name record for the name key",
+  test "resolve returns 404 when the DHT doesn't have a name record for the name key",
     namesConfig:
     let response = await client2.resolveNameRaw(unpublishedNameKey())
 
@@ -296,7 +296,7 @@ twonodessuite "Names":
 
     check refreshed.status == 204
 
-  test "refresh returns 404 when the DHT has no name record for the name key",
+  test "refresh returns 404 when the DHT doesn't have a name record for the name key",
     namesConfig:
     let response = await client2.refreshNameRaw(unpublishedNameKey())
 
@@ -314,7 +314,7 @@ twonodessuite "Names":
 
     check response.status == 400
 
-  test "resolve by peer ID returns 404 when the DHT has no name record for the label",
+  test "resolve by peer ID returns 404 when the DHT doesn't have a name record for the label",
     namesConfig:
     let peerId = await client1.peerIdOf()
     let response = await client2.resolveNameByKeyRaw(peerId, "never-published")

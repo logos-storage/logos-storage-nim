@@ -3,9 +3,9 @@
 ## Scenario
 
 Two nodes are each behind their own NAT, so both are Kad clients. The bootstrap
-is the only DHT server. A publishes a name while the bootstrap is stopped:
-publish succeeds, but no server holds the name record, so B can't resolve it.
-Once A restarts, it publishes its name records again and B resolves the name.
+is the only DHT server. A publishes a name while the bootstrap is stopped. The
+publish succeeds. The name record isn't on any server. B can't resolve the name.
+Once A restarts, it publishes its name records again. B then resolves the name.
 
 ## Topology
 

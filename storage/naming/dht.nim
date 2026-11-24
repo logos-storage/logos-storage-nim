@@ -56,7 +56,7 @@ proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
     hash = cid.mhash().valueOr:
-      return failure("The CID of the key has no valid multihash: " & $error)
+      return failure("The CID of the key doesn't have a valid multihash: " & $error)
 
   if cid.version != CIDv1 or cid.mcodec != multiCodec("storage-name"):
     return failure("The CID of the key is not a CIDv1 of a name")
@@ -112,7 +112,7 @@ method select*(
       newest = signed.data
 
   if newestIndex < 0:
-    return err("No valid name record to choose from")
+    return err("None of the name records to choose from is valid")
 
   ok(newestIndex)
 
@@ -122,8 +122,8 @@ proc isNoNameRecordError*(error: ref CatchableError): bool =
 proc resolve*(
     discovery: Discovery, name: Name
 ): Future[Result[Opt[Cid], ref CatchableError]] {.async: (raises: [CancelledError]).} =
-  ## Reads the name record of the name in the DHT and returns its CID. Returns no
-  ## CID when the DHT has no name record for the name.
+  ## Reads the name record of the name in the DHT and returns its CID. It doesn't
+  ## return a CID when the DHT doesn't have a name record for the name.
   ##
   ## The DHT validator has already checked the name record, so it is only
   ## decoded here: see [NameRecordValidator] and `getValue` in

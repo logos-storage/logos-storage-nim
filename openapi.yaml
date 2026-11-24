@@ -775,7 +775,7 @@ paths:
         "400":
           description: Invalid name key
         "404":
-          description: The DHT has no name record for the name key
+          description: The DHT doesn't have a name record for the name key
 
   "/names/{nameKey}/refresh":
     post:
@@ -796,7 +796,7 @@ paths:
         "403":
           description: The Origin header is refused
         "404":
-          description: The DHT has no name record for the name key
+          description: The DHT doesn't have a name record for the name key
 
   "/names/{peerId}/{label}":
     get:
@@ -825,4 +825,4 @@ paths:
         "400":
           description: Invalid peer ID or label
         "404":
-          description: The DHT has no name record for the name
+          description: The DHT doesn't have a name record for the name

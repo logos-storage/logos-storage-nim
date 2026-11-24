@@ -1,4 +1,4 @@
-# NAT name-repair scenario — see README.md. Run via testnamerepair.nim.
+# NAT name-repair scenario: see README.md. Run via testnamerepair.nim.
 name: nat-name-repair
 
 # Three NATed nodes, one behind each router (separate lans). All stay Kad

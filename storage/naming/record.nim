@@ -78,7 +78,7 @@ proc readField(
   let value = fields.getOrDefault(key)
 
   if value.isNil:
-    return failure("The name record has no `" & key & "` field")
+    return failure("The name record doesn't have a `" & key & "` field")
 
   if value.kind notin kinds:
     return failure("The `" & key & "` field of the name record has the wrong type")

@@ -42,6 +42,6 @@ proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
   var publicKey: PublicKey
 
   if not id.extractPublicKey(publicKey):
-    return failure("the peer ID has no public key")
+    return failure("the peer ID doesn't have a public key")
 
   return ok(publicKey)

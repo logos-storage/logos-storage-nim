@@ -66,8 +66,8 @@ proc storage_name_refresh(
 proc storage_name_resolve(
     self: Storage, nameKey: string
 ): Future[Result[string, string]] {.ffi.} =
-  ## Returns the CID of the name key, or an empty string when the DHT has no
-  ## name record.
+  ## Returns the CID of the name key, or an empty string when the DHT doesn't
+  ## have a name record.
   let name = parseName(nameKey).valueOr:
     return err("Failed to resolve the name: " & error.msg)
 
@@ -94,7 +94,7 @@ proc storage_name_resolve_key(
     self: Storage, peerId: string, label: string
 ): Future[Result[string, string]] {.ffi.} =
   ## Returns the CID of the name that the peer publishes for the label, or an
-  ## empty string when the DHT has no name record.
+  ## empty string when the DHT doesn't have a name record.
   let publicKey = parsePublicKey(peerId).valueOr:
     return err("Failed to resolve the name: " & error.msg)
 

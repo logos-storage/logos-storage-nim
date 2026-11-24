@@ -840,7 +840,9 @@ proc initNamesApi(
 
     if cid.isNone:
       return RestApiResponse.error(
-        Http404, "The DHT has no name record for the name key", headers = headers
+        Http404,
+        "The DHT doesn't have a name record for the name key",
+        headers = headers,
       )
 
     return RestApiResponse.response(
@@ -863,7 +865,9 @@ proc initNamesApi(
     (await node.discovery.refresh(name)).isOkOr:
       if error.isNoNameRecordError:
         return RestApiResponse.error(
-          Http404, "The DHT has no name record for the name key", headers = headers
+          Http404,
+          "The DHT doesn't have a name record for the name key",
+          headers = headers,
         )
 
       return RestApiResponse.error(Http500, error.msg, headers = headers)
@@ -891,7 +895,7 @@ proc initNamesApi(
 
     if cid.isNone:
       return RestApiResponse.error(
-        Http404, "The DHT has no name record for the name", headers = headers
+        Http404, "The DHT doesn't have a name record for the name", headers = headers
       )
 
     return RestApiResponse.response(

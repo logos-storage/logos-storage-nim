@@ -1,4 +1,4 @@
-## A name published while no DHT server is up. See README.md.
+## A name published while the DHT server is down. See README.md.
 
 import std/[json, os, times]
 import pkg/chronos

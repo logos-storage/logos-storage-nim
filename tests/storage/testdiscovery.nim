@@ -131,7 +131,7 @@ asyncchecksuite "Discovery - DHT values":
     check got.isOk
     check got.tryGet == value
 
-  test "a put that no peer stores fails":
+  test "a put that isn't stored on any peer fails":
     let node = await nodes.startNode(isServer = true)
 
     check (await node.disc.putValue(toBytes("no-peer"), toBytes("value"))).isErr

@@ -243,8 +243,8 @@ method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
 proc putValue*(
     d: Discovery, key: seq[byte], value: seq[byte]
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
-  ## Store a value under a key on the closest server nodes. Fails when no peer
-  ## stores it.
+  ## Store a value under a key on the closest server nodes. Fails when the value
+  ## isn't stored on any peer.
   ##
   let recordKey = RecordKey.fromBytes(key).valueOr:
     return failure("Error putting value: " & $error)
@@ -256,7 +256,7 @@ proc putValue*(
       return failure("Error putting value: " & $res.error)
 
     if res.get() == 0:
-      return failure("Error putting value: no peer stored it")
+      return failure("Error putting value: the value isn't stored on any peer")
 
     return success()
   except CancelledError as exc:

@@ -1,4 +1,4 @@
-# NAT name-no-server scenario — see README.md. Run via testnamenoserver.nim.
+# NAT name-no-server scenario: see README.md. Run via testnamenoserver.nim.
 name: nat-name-no-server
 
 # Two NATed nodes, one behind each router (separate lans). Both stay Kad

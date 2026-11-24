@@ -94,7 +94,7 @@ asyncchecksuite "Name resolver":
 
     check newest.get() == otherCid
 
-  test "returns no CID when the DHT has no name record for the name":
+  test "doesn't return a CID when the DHT doesn't have a name record for the name":
     let unknownName = name(publicKey, "unknown").tryGet()
 
     let resolved = await reader.disc.resolve(unknownName)
@@ -161,7 +161,7 @@ asyncchecksuite "Name refresh":
     check late.disc.kad.dataTable.hasKey(recordKey)
     check late.disc.kad.dataTable[recordKey].value.toBytes() == published
 
-  test "returns an error and advertises nothing when the name record has expired":
+  test "returns an error and doesn't advertise anything when the name record has expired":
     check (await publisher.publish("catalog", cid)).isOk
 
     let
@@ -175,7 +175,7 @@ asyncchecksuite "Name refresh":
     check (await refresh(refresher.disc, catalogName)).isErr
     check not late.disc.kad.dataTable.hasKey(recordKey)
 
-  test "returns an error when the DHT has no name record for the name":
+  test "returns an error when the DHT doesn't have a name record for the name":
     let unknownName = name(publicKey, "unknown").tryGet()
 
     check (await refresh(refresher.disc, unknownName)).isErr
@@ -214,7 +214,7 @@ asyncchecksuite "Name records in the DHT":
       bootstrapNodes = @[serverA, serverB]
       writer =
         await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
-      # It never get the newer value
+      # It never gets the newer value
       olderWriter =
         await nodes.startNode(clock, isServer = false, bootstrap = bootstrapNodes)
       key = newKey("older-put")
@@ -295,7 +295,7 @@ checksuite "Name record selector":
     check selector.select(key, @[undecodable, valid]).tryGet() == 1
     check selector.select(key, @[older, undecodable, valid]).tryGet() == 2
 
-  test "fails when no name record decodes":
+  test "fails when none of the name records decodes":
     let undecodable = EntryRecord(value: Value.init(@[1'u8, 2, 3]))
 
     check selector.select(key, @[undecodable, undecodable]).isErr

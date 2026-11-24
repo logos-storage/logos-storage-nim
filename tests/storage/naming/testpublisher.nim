@@ -213,7 +213,7 @@ asyncchecksuite "Name publisher":
     check (await metaDs.put(key, @[0xAB'u8, 0xCD])).isOk
     check (await publisher.publish("catalog", cid)).isErr
 
-  test "publish returns an error and advertises nothing when storing fails":
+  test "publish returns an error and doesn't advertise anything when storing fails":
     let
       failingDs = FailingDatastore.new(newMetaDs())
       failingPublisher = newPublisher(server, failingDs, clock)
@@ -384,7 +384,7 @@ asyncchecksuite "Name publisher":
     check stored.len == 1
     check stored[0].envelope.publicKey == publicKey
 
-  test "republishAll advertises nothing when reading the stored name records fails":
+  test "republishAll doesn't advertise anything when reading the stored name records fails":
     let
       failingDs = FailingDatastore.new(newMetaDs())
       failingPublisher = newPublisher(server, failingDs, clock)

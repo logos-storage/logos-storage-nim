@@ -99,10 +99,9 @@ asyncchecksuite "NAT name repair":
 
     check bootstrapInfo{"table"}{"nodes"}.getElems.len == 0
 
-    # B answers from its local copy, and its lookup puts the name record back
-    # on the bootstrap, which had no valid name record. B's 200 proves nothing:
-    # C, which never resolved the name, getting the CID is the proof of the
-    # repair.
+    # B answers from its local copy. Its lookup puts the name record back on the
+    # bootstrap, which doesn't have a valid name record. B's 200 doesn't prove the
+    # repair. The proof is C: it never resolved the name, and it gets the CID.
     check eventuallySafe(
       block:
         var repaired = false

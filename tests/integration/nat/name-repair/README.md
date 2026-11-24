@@ -4,9 +4,9 @@
 
 Three nodes are each behind their own NAT, so all are Kad clients. The bootstrap
 is the only DHT server. A publishes a name, then stops. B resolves the name and
-keeps a local copy. The bootstrap restarts and loses the name record. When B
-resolves again, it puts the name record back on the bootstrap, and C, which
-never resolved the name before, gets the CID.
+keeps a local copy. The bootstrap restarts and loses the name record. B resolves
+the name again. Its lookup puts the name record back on the bootstrap. C has
+never resolved the name before. C gets the CID.
 
 ## Topology
 
