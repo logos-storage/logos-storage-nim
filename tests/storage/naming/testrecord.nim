@@ -4,8 +4,8 @@ import std/strutils
 import pkg/cbor_serialization
 import pkg/cbor_serialization/value_ops
 import pkg/libp2p
-import pkg/libp2p/protobuf/minprotobuf
 import pkg/nimcrypto/sha2
+import pkg/protobuf_serialization
 import pkg/questionable/results
 
 import pkg/unittest2
@@ -13,6 +13,13 @@ import pkg/unittest2
 import ../../checktest
 import ../examples
 import ../../../storage/naming/record
+
+type ProtobufNameRecord {.proto2.} = object
+  version {.fieldNumber: 1, required, pint.}: uint64
+  label {.fieldNumber: 2, required.}: string
+  cid {.fieldNumber: 3, required.}: seq[byte]
+  seqnum {.fieldNumber: 4, required, pint.}: uint64
+  expiration {.fieldNumber: 5, required, pint.}: uint64
 
 checksuite "Name record":
   let
@@ -207,17 +214,19 @@ checksuite "Name record":
     check decodeNameRecord(bytes).isErr
 
   test "refuses a name record whose payload is protobuf":
-    let record = newRecord(label)
-
-    var pb = initProtoBuffer()
-    pb.write(1, record.version.uint64)
-    pb.write(2, record.label)
-    pb.write(3, record.cid.data.buffer)
-    pb.write(4, record.seqnum)
-    pb.write(5, record.expiration.uint64)
-    pb.finish()
-
-    let bytes = signPayload(pb.buffer)
+    let
+      record = newRecord(label)
+      payload = encode(
+        Protobuf,
+        ProtobufNameRecord(
+          version: record.version.uint64,
+          label: record.label,
+          cid: record.cid.data.buffer,
+          seqnum: record.seqnum,
+          expiration: record.expiration.uint64,
+        ),
+      )
+      bytes = signPayload(payload)
 
     check decodeNameRecord(bytes).isErr
 
