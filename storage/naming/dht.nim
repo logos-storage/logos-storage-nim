@@ -39,7 +39,7 @@ type
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
-proc nameKey*(name: Name): Key =
+proc nameKey*(name: Name): seq[byte] =
   ## The DHT key of the name.
   let
     hash = MultiHash.init(NameHashCodec, name).expect(
@@ -51,7 +51,7 @@ proc nameKey*(name: Name): Key =
 
   cid.data.buffer
 
-proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
+proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
   ## The name of a DHT key, the reverse of `nameKey`. Refuses a key with another
   ## CID version, codec or hash function.
   let
@@ -69,16 +69,16 @@ proc nameFromNameKey*(key: Key): Result[Name, ref CatchableError] =
   ok(Name.initCopyFrom(hash.digestBytes))
 
 method isValid*(
-    self: NameRecordValidator, key: Key, record: EntryRecord
+    self: NameRecordValidator, key: RecordKey, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
-  let name = nameFromNameKey(key).valueOr:
+  let name = nameFromNameKey(key.toBytes()).valueOr:
     return false
 
-  validate(name, record.value, self.clock.now()).isOk
+  validate(name, record.value.toBytes(), self.clock.now()).isOk
 
 method select*(
-    self: NameRecordSelector, key: Key, records: seq[EntryRecord]
-): Result[int, string] {.raises: [], gcsafe.} =
+    self: NameRecordSelector, key: RecordKey, records: seq[EntryRecord]
+): LPResult[int] {.raises: [], gcsafe.} =
   ## Returns the index of the newest name record. Name records that don't decode
   ## are skipped.
   ##
@@ -102,7 +102,7 @@ method select*(
     newest: NameRecord
 
   for i, entry in records:
-    let signed = decodeNameRecord(entry.value).valueOr:
+    let signed = decodeNameRecord(entry.value.toBytes()).valueOr:
       continue
 
     let conflicts =

@@ -148,31 +148,32 @@ asyncchecksuite "Name refresh":
     let
       catalogName = name(publicKey, "catalog").tryGet()
       key = nameKey(catalogName)
+      recordKey = RecordKey.fromBytes(key).tryGet()
 
     let
       published = (await server.disc.getValue(key)).tryGet()
       late = await startLateNode()
 
-    check not late.disc.kad.dataTable.hasKey(key)
+    check not late.disc.kad.dataTable.hasKey(recordKey)
 
     check (await refresh(refresher.disc, catalogName)).isOk
 
-    check late.disc.kad.dataTable.hasKey(key)
-    check late.disc.kad.dataTable[key].value == published
+    check late.disc.kad.dataTable.hasKey(recordKey)
+    check late.disc.kad.dataTable[recordKey].value.toBytes() == published
 
   test "returns an error and advertises nothing when the name record has expired":
     check (await publisher.publish("catalog", cid)).isOk
 
     let
       catalogName = name(publicKey, "catalog").tryGet()
-      key = nameKey(catalogName)
+      recordKey = RecordKey.fromBytes(nameKey(catalogName)).tryGet()
 
     let late = await startLateNode()
 
     clock.advance(NameRecordLifetime + 1)
 
     check (await refresh(refresher.disc, catalogName)).isErr
-    check not late.disc.kad.dataTable.hasKey(key)
+    check not late.disc.kad.dataTable.hasKey(recordKey)
 
   test "returns an error when the DHT has no name record for the name":
     let unknownName = name(publicKey, "unknown").tryGet()
@@ -226,9 +227,12 @@ asyncchecksuite "Name records in the DHT":
     check (await writer.disc.putValue(key, value)).isOk
     check (await olderWriter.disc.putValue(key, olderValue)).isOk
 
-    check olderWriter.disc.kad.dataTable.get(key).get().value == olderValue
-    check serverA.disc.kad.dataTable.get(key).get().value == value
-    check serverB.disc.kad.dataTable.get(key).get().value == value
+    let recordKey = RecordKey.fromBytes(key).tryGet()
+
+    check olderWriter.disc.kad.dataTable.get(recordKey).get().value.toBytes() ==
+      olderValue
+    check serverA.disc.kad.dataTable.get(recordKey).get().value.toBytes() == value
+    check serverB.disc.kad.dataTable.get(recordKey).get().value.toBytes() == value
 
   test "putValue refuses a name record stored under the name of another label":
     let
@@ -241,16 +245,16 @@ checksuite "Name record selector":
   let
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
-    key = @(name(publicKey, "catalog").tryGet())
+    key = RecordKey.fromBytes(@(name(publicKey, "catalog").tryGet())).tryGet()
     selector = NameRecordSelector()
     cid = Cid.example
     otherCid = Cid.example
 
-  proc signedBytes(seqnum: uint64, expiration: int64, recordCid = cid): seq[byte] =
+  proc signedBytes(seqnum: uint64, expiration: int64, recordCid = cid): Value =
     let signed =
       SignedNameRecord.init(privateKey, newRecord(seqnum, expiration, cid = recordCid))
 
-    signed.tryGet().encode()
+    Value.init(signed.tryGet().encode())
 
   test "selects the newest name record wherever it is in the list":
     let
@@ -281,7 +285,7 @@ checksuite "Name record selector":
 
   test "skips a name record that doesn't decode":
     let
-      undecodable = EntryRecord(value: @[1'u8, 2, 3])
+      undecodable = EntryRecord(value: Value.init(@[1'u8, 2, 3]))
       older = EntryRecord(value: signedBytes(41'u64, twoOClock))
       valid = EntryRecord(value: signedBytes(42'u64, tenOClock))
 
@@ -289,7 +293,7 @@ checksuite "Name record selector":
     check selector.select(key, @[older, undecodable, valid]).tryGet() == 2
 
   test "fails when no name record decodes":
-    let undecodable = EntryRecord(value: @[1'u8, 2, 3])
+    let undecodable = EntryRecord(value: Value.init(@[1'u8, 2, 3]))
 
     check selector.select(key, @[undecodable, undecodable]).isErr
 
@@ -298,19 +302,19 @@ checksuite "Name record validator":
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     catalogName = name(publicKey, "catalog").tryGet()
-    key = nameKey(catalogName)
+    key = RecordKey.fromBytes(nameKey(catalogName)).tryGet()
 
-  proc signedBytes(label = "catalog", expiration = currentTime + 3600): seq[byte] =
+  proc signedBytes(label = "catalog", expiration = currentTime + 3600): Value =
     let signed = SignedNameRecord.init(privateKey, newRecord(42'u64, expiration, label))
 
-    signed.tryGet().encode()
+    Value.init(signed.tryGet().encode())
 
-  proc cidKey(codec: MultiCodec, hashCodec: MultiCodec, digest: seq[byte]): seq[byte] =
+  proc cidKey(codec: MultiCodec, hashCodec: MultiCodec, digest: seq[byte]): RecordKey =
     let
       hash = MultiHash.init(hashCodec, digest).tryGet()
       cid = Cid.init(CIDv1, codec, hash).tryGet()
 
-    cid.data.buffer
+    RecordKey.fromBytes(cid.data.buffer).tryGet()
 
   test "accepts a valid name record under the name key":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
@@ -320,7 +324,9 @@ checksuite "Name record validator":
   test "refuses a key that is not a CID":
     let validator = NameRecordValidator(clock: MockClock.new(currentTime))
 
-    check not validator.isValid(key[0 ..< 5], EntryRecord(value: signedBytes()))
+    let shortKey = RecordKey.fromBytes(nameKey(catalogName)[0 ..< 5]).tryGet()
+
+    check not validator.isValid(shortKey, EntryRecord(value: signedBytes()))
 
   test "refuses a CIDv1 with the right digest and another codec":
     let

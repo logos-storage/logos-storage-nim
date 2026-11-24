@@ -223,6 +223,10 @@ proc sign*(
 
   ok(signed)
 
+proc `$`(error: ref CatchableError): string =
+  ## libp2p `SignedPayload.decode` prints the error of `NameRecord.decode`.
+  error.msg
+
 proc decodeNameRecord*(bytes: seq[byte]): Result[SignedNameRecord, ref CatchableError] =
   ## Decodes a signed name record and checks its signature. Fails if the bytes
   ## are not a name record or if the signature is not valid.

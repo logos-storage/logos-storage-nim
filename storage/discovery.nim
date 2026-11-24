@@ -245,11 +245,14 @@ proc putValue*(
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   ## Store a value under a key on the closest server nodes
   ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error putting value: " & $error)
+
   try:
-    let res = await d.kad.putValue(key, value).wait(PutValueTimeout)
+    let res = await d.kad.putValue(recordKey, Value.init(value)).wait(PutValueTimeout)
 
     if res.isErr:
-      return failure("Error putting value: " & res.error)
+      return failure("Error putting value: " & $res.error)
 
     return success()
   except CancelledError as exc:
@@ -262,13 +265,16 @@ proc getValue*(
 ): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
   ## Read the value stored under a key
   ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error getting value: " & $error)
+
   try:
-    let res = await d.kad.getValue(key).wait(LookupTimeout)
+    let res = await d.kad.getValue(recordKey).wait(LookupTimeout)
 
     if res.isErr:
-      return failure("Error getting value: " & res.error)
+      return failure("Error getting value: " & $res.error)
 
-    return success res.get().value
+    return success res.get().value.toBytes()
   except CancelledError as exc:
     raise exc
   except CatchableError as exc:
