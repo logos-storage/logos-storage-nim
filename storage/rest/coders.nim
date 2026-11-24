@@ -38,8 +38,9 @@ proc encodeString*(address: MultiAddress): Result[string, cstring] =
   ok($address)
 
 proc decodeString*(T: type MultiAddress, value: string): Result[MultiAddress, cstring] =
-  MultiAddress.init(value).mapErr do(e: string) -> cstring:
-    cstring(e)
+  let address = MultiAddress.init(value).valueOr:
+    return err(cstring"Invalid multiaddress")
+  ok(address)
 
 proc decodeString*(T: type SomeUnsignedInt, value: string): Result[T, cstring] =
   Base10.decode(T, value)

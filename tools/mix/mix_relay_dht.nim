@@ -366,10 +366,10 @@ proc advertiseServices(
       services = services.mapIt(ServiceInfo(id: it)),
     )
     signed = SignedExtendedPeerRecord.build(switch.peerInfo.privateKey, record).valueOr:
-      raise newException(ValueError, "Cannot sign the advertisement: " & error)
+      raise newException(ValueError, "Cannot sign the advertisement: " & $error)
 
   disco.startAdvertising(ServiceInfo(id: StorageServiceId), Opt.some(signed.encode())).isOkOr:
-    raise newException(ValueError, "Cannot advertise services: " & error)
+    raise newException(ValueError, "Cannot advertise services: " & $error)
 
 proc runRelayOnly(
     conf: Conf,
@@ -563,7 +563,7 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
       newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
   mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
 
-  let mixAddr = mixProto.localMixPubInfo.toMixAddress().valueOr:
+  let mixAddr = mixProto.localMixPubInfo.flatMap(toMixAddress).valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)
   switch.peerInfo.announcedAddrs = @[tcpAddr, mixAddr]
 
