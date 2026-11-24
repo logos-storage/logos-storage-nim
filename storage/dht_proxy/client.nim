@@ -64,14 +64,6 @@ proc requestLookup(
   except CatchableError as exc:
     return failure("Client error: " & exc.msg)
 
-proc isReady(mixProto: MixProtocol): bool =
-  ## Returns true if the MixProtocol is ready to be used for lookups.
-  ## mixUnsetMultiAddr() is set as a placeholder in the setup and updated whenever
-  ## the announce no longer carries a usable address.
-  ## The Mix lookup cannot be performed until Autonat provides a Reachable
-  ## address or a Relay address.
-  return $mixProto.localMixPubInfo.multiAddr != $mixUnsetMultiAddr()
-
 proc lookupProviders*(
     mixProto: MixProtocol, proxy: PeerRecord, cid: Cid
 ): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
@@ -85,10 +77,10 @@ proc lookupProviders*(
         "])"
     )
 
-  if not mixProto.isReady:
-    return failure(
-      "MixProtocol is not ready, multiAddr=" & $mixProto.localMixPubInfo.multiAddr
-    )
+  let localInfo = mixProto.localMixPubInfo.valueOr:
+    return failure("Failed to read local Mix public info: " & error)
+  if localInfo.multiAddr == mixUnsetMultiAddr():
+    return failure("MixProtocol is not ready, multiAddr=" & $localInfo.multiAddr)
 
   let
     destination = MixDestination.init(proxy.peerId, mixAddr)

@@ -77,6 +77,7 @@ type
     natMapper*: Option[NatPortMapper]
     serviceProviders: Option[ServiceProviders]
     holePunchHandler: Option[connmanager.PeerEventHandler]
+    bootstrapDials: Future[void].Raising([CancelledError])
     mixTransport: MixTransport
     isStarted: bool
 
@@ -245,7 +246,7 @@ proc start*(self: StorageServer) {.async.} =
   if self.config.mixEnabled and self.config.nat.hasExtIp:
     let
       mixProto = self.storageNode.discovery.mixProto
-      mixAddress = mixProto.localMixPubInfo.toMixAddress()
+      mixAddress = mixProto.localMixPubInfo.flatMap(toMixAddress)
     if mixAddress.isErr:
       error "Failed to derive mix address", err = mixAddress.error
     else:
@@ -256,39 +257,49 @@ proc start*(self: StorageServer) {.async.} =
   if self.config.nat.hasExtIp:
     self.storageNode.discovery.startAdvertisingServices()
 
-  # Connect to the Autonat servers (bootstrap nodes and discovered ones) in order to
-  # have connected peers for Autonat. The dials are run concurrently in case of
-  # a dead autonat server that could timeout.
-  proc connectAutonatServer(record: PeerRecord) {.async: (raises: [CancelledError]).} =
+  # Dial bootstrap and discovered AutoNAT servers without delaying startup.
+  proc connectAutonatServer(record: PeerRecord) {.async: (raises: []).} =
     try:
       await self.storageNode.switch.connect(
         record.peerId, record.addresses.mapIt(it.address)
       )
-    except CancelledError as exc:
-      raise exc
+    except CancelledError:
+      discard
     except CatchableError as e:
-      warn "Cannot connect to bootstrap node", error = e.msg
+      warn "Cannot connect to AutoNAT server", error = e.msg
 
-  # noCancel: cancelling allFutures does not cancel the
-  # connectAutonatServer futures.
-  await noCancel allFutures(
-    self.storageNode.discovery.autonatServers().mapIt(connectAutonatServer(it))
-  )
+  proc connectBootstrapPeers() {.async: (raises: [CancelledError]).} =
+    let dials =
+      self.storageNode.discovery.autonatServers().mapIt(connectAutonatServer(it))
+    try:
+      await allFutures(dials)
+    except CancelledError as exc:
+      await noCancel allFutures(dials.mapIt(it.cancelAndWait()))
+      raise exc
 
-  if self.serviceProviders.isSome:
-    self.serviceProviders.get.start()
+    # The provider check can force a second outbound dial to an unconnected peer.
+    if self.serviceProviders.isSome:
+      self.serviceProviders.get.start()
 
-  # AutoNAT is not in switch.services because we want to start it
-  # after the bootstrap connections to have connected peers for the first probe.
-  if self.autonatService.isSome:
-    await self.autonatService.get.start(self.storageNode.switch)
+  self.bootstrapDials = connectBootstrapPeers()
 
-  self.namePublisher.start()
+  try:
+    # AutoNAT is not in switch.services because we want to start it
+    # after starting the bootstrap connections for the first probe.
+    if self.autonatService.isSome:
+      await self.autonatService.get.start(self.storageNode.switch)
 
-  if self.restServer != nil:
-    self.restServer.start()
+    self.namePublisher.start()
 
-  self.isStarted = true
+    if self.restServer != nil:
+      self.restServer.start()
+
+    self.isStarted = true
+  finally:
+    if not self.isStarted:
+      await noCancel self.bootstrapDials.cancelAndWait()
+      if self.serviceProviders.isSome:
+        await noCancel self.serviceProviders.get.stop()
 
 proc stop*(s: StorageServer) {.async.} =
   if not s.isStarted:
@@ -296,6 +307,8 @@ proc stop*(s: StorageServer) {.async.} =
     return
 
   notice "Stopping Storage node"
+
+  await s.bootstrapDials.cancelAndWait()
 
   if s.natMapper.isSome:
     s.natMapper.get.stop()
@@ -444,25 +457,17 @@ proc new*(
     info "AutoNAT server enabled"
     switchBuilder = switchBuilder.withAutonatV2Server()
   elif not config.nat.hasExtIp:
-    info "AutoNAT client enabled",
-      scheduleInterval = config.natScheduleInterval,
-      numPeersToAsk = config.natNumPeersToAsk,
-      maxQueueSize = config.natMaxQueueSize,
-      minConfidence = config.natMinConfidence
+    info "AutoNAT client enabled", scheduleInterval = config.natScheduleInterval
     autonatConfig = some(
       AutonatV2ServiceConfig.new(
         scheduleInterval = Opt.some(config.natScheduleInterval),
-        askNewConnectedPeers = false,
-        numPeersToAsk = config.natNumPeersToAsk,
-        maxQueueSize = config.natMaxQueueSize,
-        minConfidence = config.natMinConfidence,
         enableDialableCandidates = true,
       )
     )
 
     let observedAddrMinCount = min(config.natObservedAddrMinCount, bootstrapNodes.len)
-    switchBuilder = switchBuilder.withObservedAddrManager(
-      ObservedAddrManager.new(minCount = observedAddrMinCount)
+    switchBuilder = switchBuilder.withAddressManager(
+      AddressManagerConfig(minCount: observedAddrMinCount)
     )
     # libp2p keeps the private address in peerInfo.addrs.
     # Since Autonat V2 uses the observed public address,
@@ -476,18 +481,15 @@ proc new*(
 
   var taskPool: Taskpool
 
-  # AutoNAT's first reachability probe fires immediately on start.
-  # Wired via withAutonatV2 it lands in switch.services and runs at switch.start,
-  # before bootstrap, on an empty peer set.
-  # We build and own it here so we can start it ourselves after bootstrap,
-  # with the bootstrap peers connected.
+  # Own AutoNAT so it starts after bootstrap dials have been scheduled.
+  # The AddressManager retries verification when peers are identified; startup
+  # does not need to wait for unreachable bootstrap nodes.
   let autonatService: Option[AutonatV2Service] =
     if autonatConfig.isSome:
       let client = AutonatV2Client.new(switch.rng)
       client.setup(switch)
       switch.mount(client)
       let service = AutonatV2Service.new(switch.rng, client, autonatConfig.get)
-      service.setup(switch)
       some(service)
     else:
       none(AutonatV2Service)
@@ -619,7 +621,6 @@ proc new*(
       rng = random.Rng.instance().libp2pRng,
     )
 
-    relayService.setup(switch)
     autoRelayService = some(relayService)
 
     proc refreshAutonatServers() {.async: (raises: [CancelledError]).} =
@@ -631,10 +632,7 @@ proc new*(
         switch,
         AutonatServiceId,
         discovery.autonatServers(),
-        config.natNumPeersToAsk -
-          countOutbound(
-            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
-          ),
+        config.natNumPeersToAsk - switch.countAutonatHelpers(),
       )
 
     proc refreshCircuitRelayServers() {.async: (raises: [CancelledError]).} =
@@ -653,9 +651,7 @@ proc new*(
       RequiredService.new(
         AutonatServiceId,
         proc(): bool =
-          countOutbound(
-            discovery.autonatServers(), switch.connectedPeers(Direction.Out)
-          ) < config.natNumPeersToAsk,
+          switch.countAutonatHelpers() < config.natNumPeersToAsk,
         refreshAutonatServers,
       )
     )
@@ -782,5 +778,6 @@ proc new*(
       else:
         ServiceProviders.none,
     holePunchHandler: holePunchHandler,
+    bootstrapDials: Future[void].Raising([CancelledError])(),
     mixTransport: nil,
   )

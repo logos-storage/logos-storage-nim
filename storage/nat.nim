@@ -15,6 +15,7 @@ import pkg/chronos
 import pkg/chronicles
 import pkg/libp2p
 import pkg/libp2p/services/autorelayservice
+from pkg/libp2p/protocols/connectivity/autonatv2/utils import hasIncomingConn
 import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/protocols/connectivity/relay/relay as relayProtocol
 import pkg/libp2p/protocols/connectivity/dcutr/client as dcutrClientModule
@@ -160,14 +161,11 @@ method handleNatStatus*(
   of Unknown:
     discard
   of Reachable:
-    if dialBackAddr.isSome:
-      if autoRelayService.isRunning:
-        await autoRelayService.stop(switch)
-        debug "AutoRelayService stopped"
+    if autoRelayService.isRunning:
+      await autoRelayService.stop(switch)
+      debug "AutoRelayService stopped"
 
-      await discovery.setServerMode(isServer = true)
-    else:
-      warn "Empty dialback address in AutoNat when node is Reachable"
+    await discovery.setServerMode(isServer = true)
   of NotReachable:
     await discovery.setServerMode(isServer = false)
 
@@ -200,8 +198,11 @@ method handleNatStatus*(
     if not autoRelayService.isRunning:
       debug "No port mapping found let's start autorelay"
 
-      await autoRelayService.start(switch)
-      debug "AutoRelayService started"
+      try:
+        await autoRelayService.start(switch)
+        debug "AutoRelayService started"
+      except LPError as exc:
+        warn "Failed to start AutoRelayService", err = exc.msg
 
 proc reachabilityStr*(autonat: Option[AutonatV2Service]): string =
   if autonat.isSome:
@@ -227,8 +228,12 @@ proc peerConnections*(switch: Switch): JsonNode =
     entry["direct"] = newJBool(muxers.anyIt(not isRelayed(it.connection)))
     result.add(entry)
 
-proc countOutbound*(servers: seq[PeerRecord], outbound: seq[PeerId]): int =
-  servers.countIt(it.peerId in outbound)
+proc countAutonatHelpers*(switch: Switch): int =
+  # Match peer selection in libp2p's AutonatV2Verifier.
+  switch.connectedPeers(Direction.Out).countIt(
+    AutonatServiceId in switch.peerStore[ProtoBook][it] and
+      not switch.hasIncomingConn(it)
+  )
 
 proc relayPeers*(relayAddresses: seq[MultiAddress]): HashSet[PeerId] =
   for address in relayAddresses:
@@ -339,9 +344,10 @@ proc holePunchIfRelayed*(
     await closeRelayConn(relayedConn)
     return
 
-  var natAddrs = switch.peerStore.getMostObservedProtosAndPorts()
+  var natAddrs = switch.addressManager.mostObservedProtosAndPorts()
   if natAddrs.len == 0:
-    natAddrs = switch.peerInfo.listenAddrs.mapIt(switch.peerStore.guessDialableAddr(it))
+    natAddrs =
+      switch.peerInfo.listenAddrs.mapIt(switch.addressManager.externalAddrFor(it))
   try:
     await DcutrClient.new().startSync(switch, peerId, natAddrs)
     await closeRelayConn(relayedConn)

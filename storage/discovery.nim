@@ -312,7 +312,7 @@ proc advertisement(d: Discovery): Result[seq[byte], string] =
       services = services.mapIt(ServiceInfo(id: it)),
     )
     signed = SignedExtendedPeerRecord.build(d.switch.peerInfo.privateKey, record).valueOr:
-      return err("Cannot sign the advertisement: " & error)
+      return err("Cannot sign the advertisement: " & $error)
   ok(signed.encode())
 
 proc startAdvertisingServices*(d: Discovery) =
@@ -359,7 +359,7 @@ proc lookupServiceProviders(
   await d.serviceDiscovery.waitBootstrap()
 
   let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: StorageServiceId))).valueOr:
-    return err("Service lookup failed: " & error)
+    return err("Service lookup failed: " & $error)
 
   var providers: seq[Advertisement]
   for ad in ads:
@@ -481,6 +481,23 @@ proc routingTable*(
     peers: peers,
   )
 
+proc newServiceDiscovery(
+    switch: Switch,
+    bootstrapNodes: openArray[(PeerId, seq[MultiAddress])],
+    addressPolicy: PeerAddressPolicy,
+    isServer: bool,
+): ServiceDiscovery =
+  # Instantiate here so the DHT key hash is in scope for the service tables.
+  ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = @bootstrapNodes,
+    config = KadDHTConfig.new(
+      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
+    ),
+    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
+    client = not isServer,
+  )
+
 proc new*(
     T: type Discovery,
     switch: Switch,
@@ -523,14 +540,7 @@ proc new*(
     isServer = isServer,
   )
 
-  self.serviceDiscovery = ServiceDiscovery.new(
-    switch,
-    bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(
-      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
-    ),
-    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
-    client = not isServer,
-  )
+  self.serviceDiscovery =
+    newServiceDiscovery(switch, bootstrapNodes, addressPolicy, isServer)
 
   self
