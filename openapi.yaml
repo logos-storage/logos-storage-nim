@@ -140,6 +140,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Connection"
+        serviceProviders:
+          type: object
+          description: Providers found by service discovery, by service id
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/Node"
 
     NatInfo:
       type: object

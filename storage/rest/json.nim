@@ -1,4 +1,6 @@
 import std/importutils
+import std/sequtils
+import std/tables
 from std/times import getTime, toUnix
 
 import pkg/chronos
@@ -74,6 +76,8 @@ type
     nat* {.serialize.}: NatDebugInfo
     # active peer connections
     connections* {.serialize.}: JsonNode
+    # discovered service providers, by service id
+    serviceProviders* {.serialize.}: JsonNode
 
 proc init*(_: type RestContentList, content: seq[RestContent]): RestContentList =
   RestContentList(content: content)
@@ -93,6 +97,12 @@ proc init*(_: type RestNode, peerRecord: PeerRecord): RestNode =
 proc init*(_: type RestNode, peer: RoutingPeer): RestNode =
   var node = RestNode.init(peer.record)
   let secondsSinceSeen = (Moment.now() - peer.lastSeen).seconds
+  node.lastSeen = some(getTime().toUnix() - secondsSinceSeen)
+  node
+
+proc init*(_: type RestNode, provider: ServiceProvider): RestNode =
+  var node = RestNode.init(provider.record)
+  let secondsSinceSeen = (Moment.now() - provider.lastSeen).seconds
   node.lastSeen = some(getTime().toUnix() - secondsSinceSeen)
   node
 
@@ -124,6 +134,10 @@ proc init*(
   # that I'm aware of.
   privateAccess(MixProtocol)
 
+  let serviceProviders = newJObject()
+  for serviceId, providers in node.discovery.getServiceProviders():
+    serviceProviders[serviceId] = %providers.mapIt(RestNode.init(it))
+
   DebugInfo(
     id: peerId,
     addrs: peerInfo.addrs,
@@ -150,4 +164,5 @@ proc init*(
       portMapping: portMappingStr(natMapper),
     ),
     connections: peerConnections(node.switch),
+    serviceProviders: serviceProviders,
   )
