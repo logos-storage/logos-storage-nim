@@ -304,13 +304,13 @@ proc resolveNameRaw*(
   return client.get(url)
 
 proc refreshNameRaw*(
-    client: StorageClient, nameKey: string
+    client: StorageClient, nameKey: string, headers: seq[HttpHeaderTuple] = @[]
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
   let url =
     client.baseurl & "/names/" & encodeUrl(nameKey, usePlus = false) & "/refresh"
-  return client.post(url)
+  return client.post(url, headers = headers)
 
 proc resolveNameByKeyRaw*(
     client: StorageClient, peerId: string, label: string

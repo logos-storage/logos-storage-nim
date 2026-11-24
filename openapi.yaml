@@ -793,6 +793,8 @@ paths:
           description: The name record is advertised again
         "400":
           description: Invalid name key
+        "403":
+          description: The Origin header is refused
         "404":
           description: The DHT has no name record for the name key
 

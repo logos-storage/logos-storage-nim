@@ -854,6 +854,9 @@ proc initNamesApi(
     ##
     var headers = buildCorsHeaders("POST", allowedOrigin)
 
+    if not request.isOriginAllowed(allowedOrigin):
+      return RestApiResponse.error(Http403, "The Origin is not allowed")
+
     let name = parseName(nameKey.get()).valueOr:
       return RestApiResponse.error(Http400, error.msg, headers = headers)
 

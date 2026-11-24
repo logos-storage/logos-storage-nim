@@ -302,6 +302,13 @@ twonodessuite "Names":
 
     check response.status == 404
 
+  test "refresh refuses another Origin", namesConfig:
+    let response = await client2.refreshNameRaw(
+      unpublishedNameKey(), headers = @[("Origin", "http://other.example")]
+    )
+
+    check response.status == 403
+
   test "refresh refuses a name key that is not a CID", namesConfig:
     let response = await client1.refreshNameRaw("not-a-cid")
 
