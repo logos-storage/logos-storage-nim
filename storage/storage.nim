@@ -44,7 +44,7 @@ import ./utils/mixidentity
 import ./discovery
 import ./systemclock
 import ./naming/publisher
-from ./naming/dht import NameRecordValidator, NameRecordSelector
+from ./naming/dht import NameRecordValidatorRef, NameRecordSelectorRef
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -68,7 +68,7 @@ type
     restServer: RestServerRef
     storageNode: StorageNodeRef
     repoStore: RepoStore
-    namePublisher: NamePublisher
+    namePublisher: NamePublisherRef
     maintenance: BlockMaintainer
     taskpool: Taskpool
     # Expose to make reachability accessible from rest api
@@ -92,7 +92,7 @@ func node*(self: StorageServer): StorageNodeRef =
 func repoStore*(self: StorageServer): RepoStore =
   return self.repoStore
 
-func namePublisher*(self: StorageServer): NamePublisher =
+func namePublisher*(self: StorageServer): NamePublisherRef =
   return self.namePublisher
 
 proc enableMix(
@@ -531,8 +531,8 @@ proc new*(
         dhtProxyServer = config.dhtProxyServer,
       ),
       serviceLookupInterval = config.natScheduleInterval,
-      validator = NameRecordValidator(clock: clock),
-      selector = NameRecordSelector(),
+      validator = NameRecordValidatorRef(clock: clock),
+      selector = NameRecordSelectorRef(),
     )
 
     repoData =
@@ -565,7 +565,8 @@ proc new*(
       blockTtl = config.blockTtl,
     )
 
-    namePublisher = NamePublisher.new(discovery, repoStore.metaDs.ds, privateKey, clock)
+    namePublisher =
+      NamePublisherRef.new(discovery, repoStore.metaDs.ds, privateKey, clock)
 
     maintenance = BlockMaintainer.new(
       repoStore,

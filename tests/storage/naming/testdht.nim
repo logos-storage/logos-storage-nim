@@ -40,7 +40,7 @@ asyncchecksuite "Name resolver":
   var
     clock: MockClock
     server: TestNode
-    publisher: NamePublisher
+    publisher: NamePublisherRef
     reader: TestNode
 
   let
@@ -57,7 +57,7 @@ asyncchecksuite "Name resolver":
     clock = MockClock.new(currentTime)
 
     server = await nodes.startNode(clock, isServer = true)
-    publisher = NamePublisher.new(
+    publisher = NamePublisherRef.new(
       server.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
     )
 
@@ -109,7 +109,7 @@ asyncchecksuite "Name refresh":
   var
     clock: MockClock
     server: TestNode
-    publisher: NamePublisher
+    publisher: NamePublisherRef
     refresher: TestNode
 
   let
@@ -136,7 +136,7 @@ asyncchecksuite "Name refresh":
     clock = MockClock.new(currentTime)
 
     server = await nodes.startNode(clock, isServer = true)
-    publisher = NamePublisher.new(
+    publisher = NamePublisherRef.new(
       server.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
     )
 
@@ -249,7 +249,7 @@ checksuite "Name record selector":
     privateKey = PrivateKey.example
     publicKey = privateKey.getPublicKey().tryGet()
     key = RecordKey.fromBytes(@(name(publicKey, "catalog").tryGet())).tryGet()
-    selector = NameRecordSelector()
+    selector = NameRecordSelectorRef()
     cid = Cid.example
     otherCid = Cid.example
 
@@ -320,12 +320,12 @@ checksuite "Name record validator":
     RecordKey.fromBytes(cid.data.buffer).tryGet()
 
   test "accepts a valid name record under the name key":
-    let validator = NameRecordValidator(clock: MockClock.new(currentTime))
+    let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
 
     check validator.isValid(key, EntryRecord(value: signedBytes()))
 
   test "refuses a key that is not a CID":
-    let validator = NameRecordValidator(clock: MockClock.new(currentTime))
+    let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
 
     let shortKey = RecordKey.fromBytes(nameKey(catalogName)[0 ..< 5]).tryGet()
 
@@ -333,28 +333,28 @@ checksuite "Name record validator":
 
   test "refuses a CIDv1 with the right digest and another codec":
     let
-      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
       otherKey = cidKey(multiCodec("raw"), multiCodec("sha2-256"), @catalogName)
 
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a CID with the right codec and another hash function":
     let
-      validator = NameRecordValidator(clock: MockClock.new(currentTime))
+      validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
       otherKey =
         cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
 
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
 
   test "refuses a valid name record stored under the name of another label":
-    let validator = NameRecordValidator(clock: MockClock.new(currentTime))
+    let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
 
     check not validator.isValid(key, EntryRecord(value: signedBytes(label = "release")))
 
   test "refuses a name record once the clock is past its expiration":
     let
       clock = MockClock.new(currentTime)
-      validator = NameRecordValidator(clock: clock)
+      validator = NameRecordValidatorRef(clock: clock)
       record = EntryRecord(value: signedBytes(expiration = currentTime + 3600))
 
     check validator.isValid(key, record)

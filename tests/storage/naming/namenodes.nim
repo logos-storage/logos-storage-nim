@@ -12,5 +12,5 @@ proc startNode*(
 ): Future[TestNode] {.async: (raises: [CancelledError, LPError]).} =
   ## Starts a node whose DHT keeps only the valid name records
   return await nodes.startNode(
-    isServer, bootstrap, NameRecordValidator(clock: clock), NameRecordSelector()
+    isServer, bootstrap, NameRecordValidatorRef(clock: clock), NameRecordSelectorRef()
   )

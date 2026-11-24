@@ -27,13 +27,13 @@ export record
 const NameHashCodec* = multiCodec("sha2-256")
 
 type
-  NameRecordValidator* = ref object of EntryValidator
+  NameRecordValidatorRef* = ref object of EntryValidator
     ## The libp2p KadDHT validator for name records. The DHT calls it on each
     ## name record it receives or reads, and drops those that don't pass the
     ## validation.
     clock*: Clock ## The current time, to refuse the expired name records
 
-  NameRecordSelector* = ref object of EntrySelector
+  NameRecordSelectorRef* = ref object of EntrySelector
     ## The libp2p KadDHT selector for name records. When the DHT has several
     ## name records for a name, it chooses the newest.
 
@@ -67,7 +67,7 @@ proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
   ok(Name.initCopyFrom(hash.digestBytes))
 
 method isValid*(
-    self: NameRecordValidator, key: RecordKey, record: EntryRecord
+    self: NameRecordValidatorRef, key: RecordKey, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
   let name = nameFromNameKey(key.toBytes()).valueOr:
     return false
@@ -75,7 +75,7 @@ method isValid*(
   validate(name, record.value.toBytes(), self.clock.now()).isOk
 
 method select*(
-    self: NameRecordSelector, key: RecordKey, records: seq[EntryRecord]
+    self: NameRecordSelectorRef, key: RecordKey, records: seq[EntryRecord]
 ): LPResult[int] {.raises: [], gcsafe.} =
   ## Returns the index of the newest name record. Name records that don't decode
   ## are skipped.
@@ -126,7 +126,7 @@ proc resolve*(
   ## return a CID when the DHT doesn't have a name record for the name.
   ##
   ## The DHT validator has already checked the name record, so it is only
-  ## decoded here: see [NameRecordValidator] and `getValue` in
+  ## decoded here: see [NameRecordValidatorRef] and `getValue` in
   ## libp2p/protocols/kademlia/get.nim.
   let bytes = (await discovery.getValue(nameKey(name))).valueOr:
     if error.isNoNameRecordError:
@@ -155,7 +155,7 @@ proc refresh*(
   ## it. It doesn't need the private key of the publisher.
   ##
   ## The DHT validator has already checked the name record, so an expired or
-  ## invalid one is never advertised: see [NameRecordValidator] and `getValue` in
+  ## invalid one is never advertised: see [NameRecordValidatorRef] and `getValue` in
   ## libp2p/protocols/kademlia/get.nim.
   let key = nameKey(name)
 

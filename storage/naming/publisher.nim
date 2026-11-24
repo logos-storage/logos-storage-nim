@@ -33,7 +33,7 @@ const
   RepublishInterval* {.intdefine: "storage_name_republish_interval".} = 4 * 60 * 60
   NameRecordLifetime* {.intdefine: "storage_name_record_lifetime".} = 8 * 60 * 60
 
-type NamePublisher* = ref object
+type NamePublisherRef* = ref object
   ## Publishes the names of the node to the DHT. The node keeps the name records
   ## it publishes in its metadata store. It republishes them when it starts and
   ## every 4 hours, with a new expiration.
@@ -44,13 +44,13 @@ type NamePublisher* = ref object
   loop: Future[void]
 
 proc new*(
-    T: type NamePublisher,
+    T: type NamePublisherRef,
     discovery: Discovery,
     metaDs: Datastore,
     privateKey: PrivateKey,
     clock: Clock,
-): NamePublisher =
-  NamePublisher(
+): NamePublisherRef =
+  NamePublisherRef(
     discovery: discovery, metaDs: metaDs, privateKey: privateKey, clock: clock
   )
 
@@ -60,14 +60,14 @@ proc persistenceKeyFromName(name: Name): Key =
     "The namespace is constant and the name is written in hex"
   )
 
-proc name(self: NamePublisher, label: string): Result[Name, ref CatchableError] =
+proc name(self: NamePublisherRef, label: string): Result[Name, ref CatchableError] =
   let publicKey = self.privateKey.getPublicKey().valueOr:
     return failure("Cannot get the public key: " & $error)
 
   name(publicKey, label)
 
 proc getNameRecord(
-    self: NamePublisher, key: Key
+    self: NamePublisherRef, key: Key
 ): Future[Result[Opt[SignedNameRecord], ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
@@ -83,7 +83,7 @@ proc getNameRecord(
   ok(Opt.some(signed))
 
 proc getNameRecords(
-    self: NamePublisher
+    self: NamePublisherRef
 ): Future[Result[seq[SignedNameRecord], ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
@@ -118,7 +118,7 @@ proc getNameRecords(
   ok(records)
 
 proc mintNameRecord(
-    self: NamePublisher, label: string, cid: Cid, seqnum: uint64
+    self: NamePublisherRef, label: string, cid: Cid, seqnum: uint64
 ): Result[SignedNameRecord, ref CatchableError] =
   ## Builds a name record that expires in `NameRecordLifetime` and signs it.
   let nameRecord = NameRecord(
@@ -132,7 +132,7 @@ proc mintNameRecord(
   sign(nameRecord, self.privateKey)
 
 proc publish*(
-    self: NamePublisher, label: string, cid: Cid, seqnum = Opt.none(uint64)
+    self: NamePublisherRef, label: string, cid: Cid, seqnum = Opt.none(uint64)
 ): Future[Result[SignedNameRecord, ref CatchableError]] {.
     async: (raises: [CancelledError])
 .} =
@@ -184,7 +184,7 @@ proc publish*(
   ok(signed)
 
 proc unpublish*(
-    self: NamePublisher, label: string
+    self: NamePublisherRef, label: string
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Deletes the stored name record.
   ## It stays in the DHT until it expires.
@@ -201,7 +201,7 @@ proc unpublish*(
   ok()
 
 proc republish(
-    self: NamePublisher, nameRecord: NameRecord
+    self: NamePublisherRef, nameRecord: NameRecord
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Signs a name record again with a new expiration and advertises it in the DHT.
   let
@@ -211,7 +211,7 @@ proc republish(
 
   await self.discovery.putValue(nameKey, signed.encode())
 
-proc republishAll(self: NamePublisher) {.async: (raises: [CancelledError]).} =
+proc republishAll(self: NamePublisherRef) {.async: (raises: [CancelledError]).} =
   ## Advertises every stored name record in the DHT again with a new expiration.
   ## A failure on one name record is logged and doesn't stop the others.
   ##
@@ -237,17 +237,17 @@ proc republishAll(self: NamePublisher) {.async: (raises: [CancelledError]).} =
       warn "Cannot republish a name record",
         label = signed.data.label, error = published.error.msg
 
-proc republishLoop(self: NamePublisher) {.async: (raises: [CancelledError]).} =
+proc republishLoop(self: NamePublisherRef) {.async: (raises: [CancelledError]).} =
   while true:
     await self.republishAll()
     await self.clock.waitUntil(self.clock.now() + RepublishInterval)
 
-proc start*(self: NamePublisher) =
+proc start*(self: NamePublisherRef) =
   ## Republishes the stored name records now, then every `RepublishInterval`.
   if self.loop.isNil:
     self.loop = self.republishLoop()
 
-proc stop*(self: NamePublisher) {.async: (raises: []).} =
+proc stop*(self: NamePublisherRef) {.async: (raises: []).} =
   if not self.loop.isNil:
     await self.loop.cancelAndWait()
     self.loop = nil

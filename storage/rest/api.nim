@@ -771,7 +771,7 @@ proc isOriginAllowed(request: HttpRequestRef, allowedOrigin: Option[string]): bo
   return false
 
 proc initNamesApi(
-    node: StorageNodeRef, namePublisher: NamePublisher, router: var RestRouter
+    node: StorageNodeRef, namePublisher: NamePublisherRef, router: var RestRouter
 ) =
   let allowedOrigin = router.allowedOrigin
 
@@ -906,7 +906,7 @@ proc initRestApi*(
     node: StorageNodeRef,
     conf: StorageConf,
     repoStore: RepoStore,
-    namePublisher: NamePublisher,
+    namePublisher: NamePublisherRef,
     autonat: Option[AutonatV2Service],
     autoRelay: Option[AutoRelayService],
     natMapper: Option[NatPortMapper],

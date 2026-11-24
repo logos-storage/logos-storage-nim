@@ -23,12 +23,12 @@ const
 
 asyncchecksuite "Name publisher":
   var
-    publishers: seq[NamePublisher]
+    publishers: seq[NamePublisherRef]
     clock: MockClock
     server: TestNode
     bootstrapNodes: seq[TestNode]
     metaDs: Datastore
-    publisher: NamePublisher
+    publisher: NamePublisherRef
 
   let
     nodes = TestNodes()
@@ -53,8 +53,8 @@ asyncchecksuite "Name publisher":
       metaDs: Datastore,
       clock: Clock,
       signingKey: PrivateKey = privateKey,
-  ): NamePublisher =
-    let publisher = NamePublisher.new(node.disc, metaDs, signingKey, clock)
+  ): NamePublisherRef =
+    let publisher = NamePublisherRef.new(node.disc, metaDs, signingKey, clock)
     publishers.add(publisher)
 
     publisher
