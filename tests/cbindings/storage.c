@@ -1140,6 +1140,19 @@ static int get_peer_id(StorageCtx *storage_ctx, char **res)
     return is_resp_ok(r, res);
 }
 
+static int get_spr(StorageCtx *storage_ctx, char **res)
+{
+    Resp *r = alloc_resp();
+
+    if (storage_ctx_spr(storage_ctx, on_str_reply, r) != RET_OK)
+    {
+        free_resp(r);
+        return RET_ERR;
+    }
+
+    return is_resp_ok(r, res);
+}
+
 static int name_publish(StorageCtx *storage_ctx, const char *label, const char *cid, uint64_t seqnum, char **name)
 {
     Resp *r = alloc_resp();
@@ -1253,9 +1266,13 @@ int check_name_unpublish(StorageCtx *storage_ctx, const char *cid)
     return RET_OK;
 }
 
+// A refresh needs a peer that stores the name record, so a second node,
+// bootstrapped on the first one, refreshes it.
 int check_name_refresh(StorageCtx *storage_ctx, const char *cid)
 {
     char *name = NULL;
+    char *spr = NULL;
+    char cfg[4096];
 
     if (name_publish(storage_ctx, "refresh", cid, 1, &name) != RET_OK)
     {
@@ -1264,9 +1281,52 @@ int check_name_refresh(StorageCtx *storage_ctx, const char *cid)
         return RET_ERR;
     }
 
-    int ret = name_refresh(storage_ctx, name);
+    if (get_spr(storage_ctx, &spr) != RET_OK)
+    {
+        fprintf(stderr, "spr failed: %s\n", spr ? spr : "(null)");
+        free(spr);
+        free(name);
+        return RET_ERR;
+    }
+
+    int len = snprintf(cfg, sizeof(cfg),
+                       "{\"log-level\":\"WARN\",\"data-dir\":\"./refresh-data-dir\","
+                       "\"nat\":\"extip:127.0.0.1\",\"bootstrap-node\":[\"%s\"]}",
+                       spr);
+
+    free(spr);
+
+    if (len < 0 || (size_t)len >= sizeof(cfg))
+    {
+        fprintf(stderr, "the config of the second node is too long\n");
+        free(name);
+        return RET_ERR;
+    }
+
+    StorageCtx *peer_ctx = create_ctx(cfg);
+
+    if (!peer_ctx)
+    {
+        free(name);
+        return RET_ERR;
+    }
+
+    if (start(peer_ctx) != RET_OK)
+    {
+        fprintf(stderr, "start of the second node failed\n");
+        storage_ctx_destroy(peer_ctx);
+        free(name);
+        return RET_ERR;
+    }
+
+    int ret = name_refresh(peer_ctx, name);
 
     free(name);
+
+    if (cleanup(peer_ctx) != RET_OK)
+    {
+        ret = RET_ERR;
+    }
 
     return ret;
 }

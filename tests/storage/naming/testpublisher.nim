@@ -184,6 +184,11 @@ asyncchecksuite "Name publisher":
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
 
+    # A put needs a peer that stores it
+    discard await nodes.startNode(clock, isServer = true, bootstrap = bootstrapNodes)
+
+    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
+
     check (await server.disc.putValue(nameKeyFromLabel("catalog"), newerBytes)).isOk
     check (await publisher.publish("catalog", cid, Opt.some(5'u64))).isOk
 
@@ -341,6 +346,11 @@ asyncchecksuite "Name publisher":
         expiration: currentTime + oneHour,
       )
       newerBytes = newer.sign(privateKey).tryGet().encode()
+
+    # A put needs a peer that stores it
+    discard await nodes.startNode(clock, isServer = true, bootstrap = bootstrapNodes)
+
+    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await server.disc.putValue(nameKeyFromLabel(failingLabel), newerBytes)).isOk
 

@@ -236,7 +236,8 @@ asyncchecksuite "Name records in the DHT":
 
   test "putValue refuses a name record stored under the name of another label":
     let
-      writer = await nodes.startNode(clock, isServer = false)
+      server = await nodes.startNode(clock, isServer = true)
+      writer = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
       key = newKey("catalog")
 
     check (await writer.disc.putValue(key, newValue("release", 1))).isErr
