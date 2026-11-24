@@ -288,6 +288,18 @@ proc initRandomWindows*(
 proc currentPresenceWindow*(self: Scheduler): tuple[start: uint64, count: uint64] =
   self.windowCursor.currentWindow()
 
+proc neededRange*(self: Scheduler): tuple[start: uint64, count: uint64] =
+  let (windowStart, windowCount) = self.windowCursor.currentWindow()
+  case self.windowCursor.policy
+  of spSequential:
+    let
+      neededEnd =
+        min(windowStart + windowCount + self.windowCursor.windowSize, self.totalBlocks)
+      start = min(self.completedWatermark, neededEnd)
+    (start, neededEnd - start)
+  of spRandomWindow:
+    (windowStart, windowCount)
+
 proc generateNextBatchInternal(self: Scheduler): Option[BlockBatch] {.inline.} =
   ## does NOT add to inFlight - we must do that
   let (windowStart, windowCount) = self.windowCursor.currentWindow()

@@ -1,9 +1,10 @@
-import std/[importutils, net]
+import std/[importutils, net, sequtils]
 import pkg/chronos
 import pkg/libp2p/[multiaddress, multihash, multicodec]
 import pkg/libp2p/protocols/connectivity/autonat/types
 import pkg/libp2p/protocols/connectivity/relay/client as relayClientModule
-import pkg/libp2p/services/autorelayservice except setup
+from pkg/libp2p/protocols/connectivity/autonatv2/server import AutonatV2, new
+import pkg/libp2p/services/autorelayservice
 import pkg/results
 
 import ./helpers
@@ -80,7 +81,6 @@ asyncchecksuite "NAT reaction - port mapping":
     let mapper =
       MockNatPortMapper(mappedPorts: some((Port(9000), MappingProtocol.UPnP)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     # A mapping doesn't guarantee reachability, so the relay stays off until
@@ -91,7 +91,6 @@ asyncchecksuite "NAT reaction - port mapping":
   test "handleNatStatus starts autoRelay when NotReachable with no mapped ports":
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(
       NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
     )
@@ -111,7 +110,6 @@ asyncchecksuite "NAT reaction - port mapping":
       )
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check autoRelay.isRunning
@@ -131,7 +129,6 @@ asyncchecksuite "NAT reaction - port mapping":
       )
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check mapper.destroyed == @[cint(1)] # the dead mapping is torn down
@@ -142,9 +139,21 @@ asyncchecksuite "NAT reaction - port mapping":
     let dialBack = MultiAddress.init("/ip4/1.2.3.4/tcp/8080").expect("valid")
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(Reachable, Opt.some(dialBack), disc, sw, autoRelay)
 
+    check not autoRelay.isRunning
+    check disc.isServerMode()
+
+  test "Reachable without a dialback address stops relay and enables DHT server mode":
+    let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
+    await mapper.handleNatStatus(
+      NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
+    )
+    check autoRelay.isRunning
+    check not disc.isServerMode()
+
+    # AddressManager reachability notifications no longer carry a dialback address.
+    await mapper.handleNatStatus(Reachable, Opt.none(MultiAddress), disc, sw, autoRelay)
     check not autoRelay.isRunning
     check disc.isServerMode()
 
@@ -154,7 +163,6 @@ asyncchecksuite "NAT reaction - port mapping":
       MockNatPortMapper(mappedPorts: some((Port(9000), MappingProtocol.UPnP)))
     mapper.stop()
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
 
     check not autoRelay.isRunning
@@ -166,7 +174,6 @@ asyncchecksuite "NAT reaction - port mapping":
       tcpResult: Result[MappingResult, string].err("tcp mapping failed")
     )
 
-    autorelayservice.setup(autoRelay, sw)
     await mapper.handleNatStatus(
       NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
     )
@@ -251,3 +258,168 @@ asyncchecksuite "NAT - mapNatPorts":
     mapper.start()
 
     check (await mapper.mapNatPorts()) == some((Port(9000), MappingProtocol.UPnP))
+
+proc mountAndStart(switch: Switch, discovery: Discovery) {.async.} =
+  switch.mount(discovery.kad)
+  switch.mount(discovery.serviceDiscovery)
+  await switch.start()
+
+proc waitForProvider(
+    discovery: Discovery, serviceId: string, provider: PeerId
+): Future[seq[PeerRecord]] {.async.} =
+  for _ in 0 ..< 50:
+    let found = (await discovery.findServiceProviders(serviceId)).tryGet()
+    if found.anyIt(it.peerId == provider):
+      return found
+    await sleepAsync(100.milliseconds)
+
+asyncchecksuite "NAT - connecting to NAT servers":
+  var
+    advertiserSwitch: Switch
+    clientSwitch: Switch
+    advertiser: Discovery
+    client: Discovery
+
+  setup:
+    advertiserSwitch = newStandardSwitch()
+    advertiser = Discovery.new(advertiserSwitch, providedServices = [AutonatServiceId])
+    await advertiserSwitch.mountAndStart(advertiser)
+    advertiser.startAdvertisingServices()
+
+    clientSwitch = newStandardSwitch()
+    client = Discovery.new(
+      clientSwitch,
+      bootstrapNodes =
+        [(advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs)],
+      isServer = false,
+    )
+    await clientSwitch.mountAndStart(client)
+
+  teardown:
+    await clientSwitch.stop()
+    await advertiserSwitch.stop()
+
+  proc connectedOutbound(switch: Switch): bool =
+    advertiserSwitch.peerInfo.peerId in switch.connectedPeers(Direction.Out)
+
+  proc inboundSwitch(): Future[Switch] {.async.} =
+    let switch = newStandardSwitch()
+    await switch.start()
+    await advertiserSwitch.connect(switch.peerInfo.peerId, switch.peerInfo.addrs)
+    check eventually(switch.isConnected(advertiserSwitch.peerInfo.peerId))
+    check not switch.connectedOutbound()
+    switch
+
+  test "connecting to service providers connects to the advertiser":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+
+    await connectMissing(
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 1
+    )
+
+    check clientSwitch.connectedOutbound()
+
+  test "connecting to service providers connects to none with a limit of zero":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    await clientSwitch.disconnect(advertiserSwitch.peerInfo.peerId)
+
+    await connectMissing(
+      client, clientSwitch, AutonatServiceId, client.autonatServers(), 0
+    )
+
+    check not clientSwitch.isConnected(advertiserSwitch.peerInfo.peerId)
+
+  test "connecting to service providers dials out to a server connected inbound":
+    let switch = await inboundSwitch()
+
+    await connectMissing(client, switch, AutonatServiceId, client.autonatServers(), 1)
+
+    check switch.connectedOutbound()
+
+    await switch.stop()
+
+  test "connecting to service providers connects when the connection slots are full":
+    discard
+      await client.waitForProvider(AutonatServiceId, advertiserSwitch.peerInfo.peerId)
+    let
+      fullSwitch = newStandardSwitch(maxConnections = 1)
+      otherSwitch = newStandardSwitch()
+    await fullSwitch.start()
+    await otherSwitch.start()
+    await fullSwitch.connect(otherSwitch.peerInfo.peerId, otherSwitch.peerInfo.addrs)
+
+    expect DialFailedError:
+      await fullSwitch.connect(
+        advertiserSwitch.peerInfo.peerId, advertiserSwitch.peerInfo.addrs
+      )
+
+    await connectMissing(
+      client, fullSwitch, AutonatServiceId, client.autonatServers(), 1
+    )
+
+    check fullSwitch.connectedOutbound()
+
+    await fullSwitch.stop()
+    await otherSwitch.stop()
+
+asyncchecksuite "NAT - AutoNAT helper target":
+  var bootstrap, clientSwitch: Switch
+  var client: Discovery
+
+  setup:
+    bootstrap = newStandardSwitch()
+    clientSwitch = newStandardSwitch()
+
+  teardown:
+    await clientSwitch.stop()
+    await bootstrap.stop()
+
+  proc bootstrapClient() {.async.} =
+    await bootstrap.mountAndStart(Discovery.new(bootstrap))
+    client = Discovery.new(
+      clientSwitch,
+      bootstrapNodes = [(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)],
+      isServer = false,
+    )
+    await clientSwitch.mountAndStart(client)
+    await clientSwitch.connect(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)
+
+  test "a plain bootstrap leaves room for a separately advertised AutoNAT server":
+    await bootstrapClient()
+    check clientSwitch.countAutonatHelpers() == 0
+
+    let server = newStandardSwitch()
+    server.mount(AutonatV2.new(server))
+    let serverDiscovery = Discovery.new(
+      server,
+      bootstrapNodes = [(bootstrap.peerInfo.peerId, bootstrap.peerInfo.addrs)],
+      providedServices = [AutonatServiceId],
+    )
+    await server.mountAndStart(serverDiscovery)
+    defer:
+      await server.stop()
+    serverDiscovery.startAdvertisingServices()
+    let found = await client.waitForProvider(AutonatServiceId, server.peerInfo.peerId)
+    check found.anyIt(it.peerId == server.peerInfo.peerId)
+    await connectMissing(
+      client,
+      clientSwitch,
+      AutonatServiceId,
+      client.autonatServers(),
+      1 - clientSwitch.countAutonatHelpers(),
+    )
+    check eventually(clientSwitch.countAutonatHelpers() == 1)
+
+  test "a capable bootstrap counts without a service advertisement":
+    bootstrap.mount(AutonatV2.new(bootstrap))
+    await bootstrapClient()
+    check eventually(clientSwitch.countAutonatHelpers() == 1)
+
+    await bootstrap.connect(
+      clientSwitch.peerInfo.peerId, clientSwitch.peerInfo.addrs, reuseConnection = false
+    )
+    check eventually(clientSwitch.countAutonatHelpers() == 0)

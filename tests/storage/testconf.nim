@@ -9,9 +9,7 @@ proc validConfig(): StorageConf =
   StorageConf(
     bootstrapNodes: @[SignedPeerRecord.example],
     nat: defaultNatConfig(),
-    natMaxQueueSize: 3,
-    natNumPeersToAsk: 5,
-    natMinConfidence: 0.7,
+    natNumPeersToAsk: 3,
     natObservedAddrMinCount: 1,
     natScheduleInterval: DefaultNatScheduleInterval,
     natMaxRelays: 2,
@@ -50,6 +48,19 @@ suite "Conf - validateAutonatConfig":
 
     check config.validateAutonatConfig().isOk
 
+  test "rejects dht proxy server without extip":
+    var config = validConfig()
+    config.dhtProxyServer = true
+
+    check config.validateAutonatConfig().isErr
+
+  test "accepts dht proxy server with extip":
+    var config = validConfig()
+    config.dhtProxyServer = true
+    config.nat = nat.NatConfig(hasExtIp: true, extIp: parseIpAddress("1.2.3.4"))
+
+    check config.validateAutonatConfig().isOk
+
   test "rejects a node without bootstrap node and without extip":
     var config = validConfig()
     config.bootstrapNodes = @[]
@@ -60,18 +71,6 @@ suite "Conf - validateAutonatConfig":
     var config = validConfig()
     config.bootstrapNodes = @[]
     config.nat = nat.NatConfig(hasExtIp: true, extIp: parseIpAddress("1.2.3.4"))
-
-    check config.validateAutonatConfig().isOk
-
-  test "rejects nat-max-queue-size below 1":
-    var config = validConfig()
-    config.natMaxQueueSize = 0
-
-    check config.validateAutonatConfig().isErr
-
-  test "accepts nat-max-queue-size of 1":
-    var config = validConfig()
-    config.natMaxQueueSize = 1
 
     check config.validateAutonatConfig().isOk
 
@@ -97,27 +96,6 @@ suite "Conf - validateAutonatConfig":
     var config = validConfig()
     config.natObservedAddrMinCount = 1
 
-    check config.validateAutonatConfig().isOk
-
-  test "rejects negative nat-min-confidence":
-    var config = validConfig()
-    config.natMinConfidence = -0.1
-
-    check config.validateAutonatConfig().isErr
-
-  test "rejects nat-min-confidence above 1":
-    var config = validConfig()
-    config.natMinConfidence = 1.1
-
-    check config.validateAutonatConfig().isErr
-
-  test "accepts nat-min-confidence bounds":
-    var config = validConfig()
-
-    config.natMinConfidence = 0.0
-    check config.validateAutonatConfig().isOk
-
-    config.natMinConfidence = 1.0
     check config.validateAutonatConfig().isOk
 
   test "rejects nat-schedule-interval of zero":

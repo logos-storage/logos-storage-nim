@@ -17,8 +17,15 @@ import pkg/chronos
 import pkg/libp2p
 import pkg/libp2p/routing_record
 import pkg/libp2p/wire
+import pkg/libp2p/extended_peer_record
 import pkg/libp2p/protocols/kademlia except PeerRecord
+import pkg/libp2p/protocols/service_discovery except PeerRecord
+from pkg/libp2p/protocols/connectivity/autonatv2/types import AutonatV2Codec
+from pkg/libp2p/protocols/connectivity/relay/utils import RelayV2HopCodec
 import pkg/libp2p_mix
+import pkg/libp2p_mix/mix_node
+from pkg/libp2p_mix/sphinx import PathLength
+import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
 
@@ -28,6 +35,7 @@ import ./errors
 import ./logutils
 import ./utils/spr
 import ./dht_proxy/client as dht_proxy_client
+import ./dht_proxy/protocol
 
 export routing_record
 
@@ -41,14 +49,38 @@ logScope:
 const
   ProvideTimeout = 1.minutes
   LookupTimeout = 1.minutes
+  ServiceLookupTimeout = 1.minutes
+
+  StorageServiceId* = "/logos-storage/1.0.0"
+  AutonatServiceId* = $AutonatV2Codec.DialRequest
+  CircuitRelayServiceId* = RelayV2HopCodec
+  MixServiceId* = MixProtocolID
+  DhtProxyServiceId* = DhtProxyCodec
+
+  MinMixRelays* = PathLength + 1
+  MaxMixRelays = 1024
+  MaxServiceProviders = 32
 
 type
+  ServiceProvider* = object
+    record*: PeerRecord
+    lastSeen*: Moment
+
   Discovery* = ref object of RootObj
     kad*: KadDHT # libp2p Kademlia DHT
+    serviceDiscovery*: ServiceDiscovery # libp2p Service discovery
+    providedServices: seq[string] # services this node provides
+    addressPolicy: PeerAddressPolicy
+    serviceLookupInterval: Duration
+    serviceProviders: Table[string, Table[PeerId, ServiceProvider]]
+    lastServiceLookup: Moment
     switch: Switch # local libp2p switch
     peerId: PeerId # the peer id of the local node
     mixProto*: MixProtocol
-    dhtMixProxies*: seq[SignedPeerRecord]
+    staticMixRelays*: HashSet[PeerId]
+    staticDhtMixProxies*: seq[PeerRecord]
+    staticAutonatServers: seq[PeerRecord]
+    staticCircuitRelayServers: seq[PeerRecord]
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -98,14 +130,47 @@ proc findPeer*(
 
   return PeerRecord.none
 
+proc providersFor(d: Discovery, serviceId: string): var Table[PeerId, ServiceProvider] =
+  d.serviceProviders.mgetOrPut(serviceId, initTable[PeerId, ServiceProvider]())
+
+proc serviceProvidersOf(d: Discovery, serviceId: string): seq[PeerRecord] =
+  toSeq(d.providersFor(serviceId).values).mapIt(it.record)
+
+proc getServiceProviders*(d: Discovery): Table[string, seq[ServiceProvider]] =
+  var providers: Table[string, seq[ServiceProvider]]
+  for serviceId, table in d.serviceProviders:
+    providers[serviceId] = toSeq(table.values)
+  providers
+
+proc withDiscovered(
+    d: Discovery, staticProviders: seq[PeerRecord], serviceId: string
+): seq[PeerRecord] =
+  var providers = staticProviders
+  for provider in d.serviceProvidersOf(serviceId):
+    if not providers.anyIt(it.peerId == provider.peerId):
+      providers.add(provider)
+  providers
+
+proc dhtMixProxies*(d: Discovery): seq[PeerRecord] =
+  d.withDiscovered(d.staticDhtMixProxies, DhtProxyServiceId)
+
+proc autonatServers*(d: Discovery): seq[PeerRecord] =
+  ## Returns the list of Autonat servers.
+  ## The nodes are expected to be directly reachable.
+  ## Returns the static AutoNAT servers and the discovered ones.
+  d.withDiscovered(d.staticAutonatServers, AutonatServiceId)
+
+proc circuitRelayServers*(d: Discovery): seq[PeerRecord] =
+  ## Returns the static circuit relay servers and the discovered ones.
+  d.withDiscovered(d.staticCircuitRelayServers, CircuitRelayServiceId)
+
 method findViaMix*(
     d: Discovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.base, async: (raises: [CancelledError]).} =
   var candidates = d.dhtMixProxies
   shuffle(candidates)
 
-  for record in candidates:
-    let proxy = record.data
+  for proxy in candidates:
     let res = await dht_proxy_client.lookupProviders(d.mixProto, proxy, cid)
     if res.isErr:
       warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
@@ -192,8 +257,164 @@ proc updateLocalMultiAddr*(d: Discovery) =
   else:
     info "Mix local address updated", address = mixAddr
 
+proc advertisement(d: Discovery): Result[seq[byte], string] =
+  let addrs = d.addressPolicy.dialableAddrs(
+    d.switch.peerInfo.addrs, d.switch.peerStore.allowUndialableAddrs
+  )
+  if addrs.len == 0:
+    return err("No dialable address to advertise")
+
+  let
+    services = @[StorageServiceId] & d.providedServices
+    record = ExtendedPeerRecord.init(
+      peerId = d.peerId,
+      addresses = addrs,
+      services = services.mapIt(ServiceInfo(id: it)),
+    )
+    signed = SignedExtendedPeerRecord.build(d.switch.peerInfo.privateKey, record).valueOr:
+      return err("Cannot sign the advertisement: " & $error)
+  ok(signed.encode())
+
+proc startAdvertisingServices*(d: Discovery) =
+  if d.providedServices.len == 0:
+    return
+
+  let advert = d.advertisement().valueOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
+    return
+
+  d.serviceDiscovery.startAdvertising(
+    ServiceInfo(id: StorageServiceId), Opt.some(advert)
+  ).isOkOr:
+    warn "Cannot advertise services", services = d.providedServices, err = error
+
+proc stopAdvertisingServices*(d: Discovery) {.async: (raises: []).} =
+  await noCancel d.serviceDiscovery.stopAdvertising(StorageServiceId)
+
 proc setServerMode*(d: Discovery, isServer: bool) {.async: (raises: []).} =
   discard await d.kad.changeMode(isServer)
+  if not await d.serviceDiscovery.changeMode(isServer):
+    return
+
+  if isServer:
+    d.startAdvertisingServices()
+  else:
+    await d.stopAdvertisingServices()
+
+func providedServices*(
+    autonatServer: bool, relayServer: bool, mixRelay = false, dhtProxyServer = false
+): seq[string] =
+  if autonatServer:
+    result.add(AutonatServiceId)
+  if relayServer:
+    result.add(CircuitRelayServiceId)
+  if mixRelay:
+    result.add(MixServiceId)
+  if dhtProxyServer:
+    result.add(DhtProxyServiceId)
+
+proc lookupServiceProviders(
+    d: Discovery
+): Future[Result[seq[Advertisement], string]] {.async: (raises: [CancelledError]).} =
+  await d.serviceDiscovery.waitBootstrap()
+
+  let ads = (await d.serviceDiscovery.lookup(ServiceInfo(id: StorageServiceId))).valueOr:
+    return err("Service lookup failed: " & $error)
+
+  var providers: seq[Advertisement]
+  for ad in ads:
+    if ad.data.peerId == d.peerId or providers.anyIt(it.data.peerId == ad.data.peerId):
+      continue
+    providers.add(ad)
+  ok(providers)
+
+func maxProviders(serviceId: string): int =
+  if serviceId == MixServiceId: MaxMixRelays else: MaxServiceProviders
+
+proc leastSeen(
+    d: Discovery, providers: Table[PeerId, ServiceProvider], now: Moment
+): Opt[PeerId] =
+  var
+    peer = Opt.none(PeerId)
+    oldest = now
+  for peerId, provider in providers:
+    if provider.lastSeen < oldest and not d.switch.isConnected(peerId):
+      peer = Opt.some(peerId)
+      oldest = provider.lastSeen
+  peer
+
+proc expireMixRelays(d: Discovery, now: Moment) =
+  let expiry = 2 * d.serviceDiscovery.discoConfig.advertExpiry
+  var expired: seq[PeerId]
+  for peerId, provider in d.providersFor(MixServiceId):
+    if now - provider.lastSeen > expiry:
+      expired.add(peerId)
+  for peerId in expired:
+    d.providersFor(MixServiceId).del(peerId)
+
+proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
+  let now = Moment.now()
+  var added: seq[(string, PeerId, PeerRecord)]
+
+  for ad in ads:
+    let record =
+      PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
+    for service in ad.data.services:
+      if service.id == StorageServiceId:
+        continue
+      if ad.data.peerId in d.providersFor(service.id):
+        d.providersFor(service.id)[ad.data.peerId] =
+          ServiceProvider(record: record, lastSeen: now)
+      else:
+        added.add((service.id, ad.data.peerId, record))
+
+  d.expireMixRelays(now)
+
+  for (serviceId, peerId, record) in added:
+    if d.providersFor(serviceId).len >= maxProviders(serviceId):
+      let evicted = d.leastSeen(d.providersFor(serviceId), now).valueOr:
+        continue
+      d.providersFor(serviceId).del(evicted)
+    d.providersFor(serviceId)[peerId] = ServiceProvider(record: record, lastSeen: now)
+
+proc findServiceProviders*(
+    d: Discovery, serviceId: string
+): Future[Result[seq[PeerRecord], string]] {.async: (raises: [CancelledError]).} =
+  if Moment.now() - d.lastServiceLookup < d.serviceLookupInterval:
+    let providers = d.serviceProvidersOf(serviceId)
+    if providers.len > 0:
+      return ok(providers)
+
+  let res =
+    try:
+      await d.lookupServiceProviders().wait(ServiceLookupTimeout)
+    except AsyncTimeoutError:
+      return err("Service lookup timed out after " & $ServiceLookupTimeout)
+
+  let ads = res.valueOr:
+    return err(error)
+
+  d.updateServiceProviders(ads)
+  d.lastServiceLookup = Moment.now()
+  ok(d.serviceProvidersOf(serviceId))
+
+proc removeServiceProvider*(d: Discovery, serviceId: string, peerId: PeerId) =
+  d.providersFor(serviceId).del(peerId)
+
+proc findMixRelays*(
+    d: Discovery
+): Future[Result[seq[MixPubInfo], string]] {.async: (raises: [CancelledError]).} =
+  let providers = (await d.findServiceProviders(MixServiceId)).valueOr:
+    return err(error)
+
+  var relays: seq[MixPubInfo]
+  for provider in providers:
+    for address in provider.addresses:
+      let relay = MixPubInfo.fromMixAddress(address.address, Opt.some(provider.peerId)).valueOr:
+        continue
+      relays.add(relay)
+      break
+  ok(relays)
 
 proc isServerMode*(d: Discovery): bool =
   d.kad.isServer
@@ -220,6 +441,23 @@ proc routingTable*(
     peers: peers,
   )
 
+proc newServiceDiscovery(
+    switch: Switch,
+    bootstrapNodes: openArray[(PeerId, seq[MultiAddress])],
+    addressPolicy: PeerAddressPolicy,
+    isServer: bool,
+): ServiceDiscovery =
+  # Instantiate here so the DHT key hash is in scope for the service tables.
+  ServiceDiscovery.new(
+    switch,
+    bootstrapNodes = @bootstrapNodes,
+    config = KadDHTConfig.new(
+      ExtEntryValidator(), ExtEntrySelector(), addressPolicy = addressPolicy
+    ),
+    rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
+    client = not isServer,
+  )
+
 proc new*(
     T: type Discovery,
     switch: Switch,
@@ -227,12 +465,22 @@ proc new*(
     dhtMixProxies: openArray[SignedPeerRecord] = [],
     isServer = true,
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
+    providedServices: openArray[string] = [],
+    serviceLookupInterval = ZeroDuration,
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
 
   var self = Discovery(
-    switch: switch, peerId: switch.peerInfo.peerId, dhtMixProxies: @dhtMixProxies
+    switch: switch,
+    peerId: switch.peerInfo.peerId,
+    staticDhtMixProxies: dhtMixProxies.mapIt(it.data),
+    staticAutonatServers: bootstrapNodes.mapIt(PeerRecord.init(it[0], it[1], seqNo = 0)),
+    staticCircuitRelayServers:
+      bootstrapNodes.mapIt(PeerRecord.init(it[0], it[1], seqNo = 0)),
+    providedServices: @providedServices,
+    addressPolicy: addressPolicy,
+    serviceLookupInterval: serviceLookupInterval,
   )
 
   self.kad = KadDHT.new(
@@ -242,5 +490,8 @@ proc new*(
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )
+
+  self.serviceDiscovery =
+    newServiceDiscovery(switch, bootstrapNodes, addressPolicy, isServer)
 
   self

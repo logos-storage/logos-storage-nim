@@ -132,8 +132,11 @@ proc addPeer*(swarm: Swarm, peerId: PeerId, availability: BlockAvailability): bo
   swarm.peers[peerId] = SwarmPeer.new(availability)
   true
 
-proc replaceUnknownPeer*(
-    swarm: Swarm, peerId: PeerId, availability: BlockAvailability
+proc replaceIdlePeer*(
+    swarm: Swarm,
+    peerId: PeerId,
+    availability: BlockAvailability,
+    needed: tuple[start: uint64, count: uint64],
 ): bool =
   if peerId in swarm.bannedPeers:
     return false
@@ -142,9 +145,12 @@ proc replaceUnknownPeer*(
     replaced = none(PeerId)
     oldestSeen: Moment
   for id, peer in swarm.peers:
-    if peer.availability.kind == bakUnknown and
-        (availability.kind != bakUnknown or peer.isStale) and
-        (replaced.isNone or peer.lastSeen < oldestSeen):
+    let replaceable =
+      if peer.availability.kind == bakUnknown:
+        availability.kind != bakUnknown or peer.isStale
+      else:
+        not peer.availability.hasAnyInRange(needed.start, needed.count)
+    if replaceable and (replaced.isNone or peer.lastSeen < oldestSeen):
       replaced = some(id)
       oldestSeen = peer.lastSeen
 

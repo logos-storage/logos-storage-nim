@@ -38,13 +38,13 @@ suite "Discovery - Mix local address":
     switch.peerInfo.addrs = @[directAddr]
     disc.updateLocalMultiAddr()
 
-    check $mixProto.localMixPubInfo.multiAddr == $directAddr
+    check $mixProto.localMixPubInfo.tryGet().multiAddr == $directAddr
 
   test "a relay circuit address sets the Mix local address":
     switch.peerInfo.addrs = @[circuitAddr]
     disc.updateLocalMultiAddr()
 
-    check $mixProto.localMixPubInfo.multiAddr == $circuitAddr
+    check $mixProto.localMixPubInfo.tryGet().multiAddr == $circuitAddr
 
   test "a new address replaces the Mix local address":
     switch.peerInfo.addrs = @[directAddr]
@@ -53,7 +53,7 @@ suite "Discovery - Mix local address":
     switch.peerInfo.addrs = @[otherAddr]
     disc.updateLocalMultiAddr()
 
-    check $mixProto.localMixPubInfo.multiAddr == $otherAddr
+    check $mixProto.localMixPubInfo.tryGet().multiAddr == $otherAddr
 
   test "clearing the addresses resets the Mix local address":
     switch.peerInfo.addrs = @[directAddr]
@@ -62,7 +62,7 @@ suite "Discovery - Mix local address":
     switch.peerInfo.addrs = @[]
     disc.updateLocalMultiAddr()
 
-    check $mixProto.localMixPubInfo.multiAddr == $mixUnsetMultiAddr()
+    check $mixProto.localMixPubInfo.tryGet().multiAddr == $mixUnsetMultiAddr()
 
   test "no Mix-compatible address resets the Mix local address":
     switch.peerInfo.addrs = @[directAddr]
@@ -71,7 +71,7 @@ suite "Discovery - Mix local address":
     switch.peerInfo.addrs = @[udpAddr]
     disc.updateLocalMultiAddr()
 
-    check $mixProto.localMixPubInfo.multiAddr == $mixUnsetMultiAddr()
+    check $mixProto.localMixPubInfo.tryGet().multiAddr == $mixUnsetMultiAddr()
 
 suite "Discovery - bootstrap addresses":
   let

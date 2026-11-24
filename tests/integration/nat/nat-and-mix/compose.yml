@@ -49,6 +49,8 @@ services:
   # Routers
   seeder_router:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: 1
@@ -66,6 +68,8 @@ services:
 
   leecher_router:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: 1
@@ -84,6 +88,8 @@ services:
   # Mix-proxy Nodes
   mix_proxy_1:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       wan:
@@ -98,9 +104,13 @@ services:
       - enable_nat_servers
       - -%-
       - enable_mix
+      - -%-
+      - enable_dht_proxy
 
   mix_proxy_2:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       wan:
@@ -116,9 +126,13 @@ services:
       - enable_nat_servers
       - -%-
       - enable_mix
+      - -%-
+      - enable_dht_proxy
 
   mix_proxy_3:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       wan:
@@ -134,9 +148,13 @@ services:
       - enable_nat_servers
       - -%-
       - enable_mix
+      - -%-
+      - enable_dht_proxy
 
   mix_proxy_4:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       wan:
@@ -152,9 +170,13 @@ services:
       - enable_nat_servers
       - -%-
       - enable_mix
+      - -%-
+      - enable_dht_proxy
 
   seeder:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       seeder_lan:
@@ -177,6 +199,8 @@ services:
 
   leecher:
     image: localhost/storage-nat
+    logging:
+      driver: k8s-file
     cap_add: [NET_ADMIN]
     networks:
       leecher_lan:
