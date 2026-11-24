@@ -1,6 +1,13 @@
 {
   description = "Logos Storage build flake";
 
+  nixConfig = {
+    extra-substituters = [ "https://cache.nix.logos.co/public" ];
+    extra-trusted-public-keys = [
+      "public:zaDAOkd+E3cQyFm9J7qejQYd9HoLJc1SJvnk68hNWeI="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs?ref=release-25.11";
 
