@@ -129,9 +129,7 @@ proc checkLabel(label: string): Result[void, ref CatchableError] =
 
   ok()
 
-proc decode*(
-    T: typedesc[NameRecord], bytes: seq[byte]
-): Result[NameRecord, ref CatchableError] =
+proc decodeFields(bytes: seq[byte]): Result[NameRecord, ref CatchableError] =
   ## Decodes the CBOR map of a name record. Fails if a field is missing, has
   ## the wrong type or is out of range.
   var fields: CborValueRef
@@ -178,6 +176,13 @@ proc decode*(
     )
   )
 
+proc decode*(T: typedesc[NameRecord], bytes: seq[byte]): Result[NameRecord, string] =
+  ## libp2p `SignedPayload.decode` calls it and prints its error with `$`.
+  let record = decodeFields(bytes).valueOr:
+    return err(error.msg)
+
+  ok(record)
+
 proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError] =
   ## The name is the SHA2-256 hash of the public key bytes
   ## followed by the label.
@@ -222,10 +227,6 @@ proc sign*(
     return failure("Cannot sign the name record: " & $error)
 
   ok(signed)
-
-proc `$`(error: ref CatchableError): string =
-  ## libp2p `SignedPayload.decode` prints the error of `NameRecord.decode`.
-  error.msg
 
 proc decodeNameRecord*(bytes: seq[byte]): Result[SignedNameRecord, ref CatchableError] =
   ## Decodes a signed name record and checks its signature. Fails if the bytes
