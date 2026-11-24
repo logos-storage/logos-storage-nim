@@ -225,7 +225,9 @@ asyncchecksuite "Name records in the DHT":
     check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
 
     check (await writer.disc.putValue(key, value)).isOk
-    check (await olderWriter.disc.putValue(key, olderValue)).isOk
+    check olderWriter.disc.routingTable().peers.len == 2
+    # The servers keep the newer value and refuse this put, so it fails
+    check (await olderWriter.disc.putValue(key, olderValue)).isErr
 
     let recordKey = RecordKey.fromBytes(key).tryGet()
 
