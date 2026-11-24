@@ -40,8 +40,8 @@ Rootless, but needs the host netfilter modules. If a router fails on iptables:
 1. A, B and C are NotReachable and in client mode.
 2. A publishes a name: 200. A stops.
 3. B resolves the name to A's CID.
-4. The bootstrap restarts. It resolves the name through its own API: 404. Its
-   table has no peers.
+4. The bootstrap restarts. It resolves the name through its own API: 500,
+   because no peer replied. Its table doesn't have any peer.
 5. B resolves the name again. C then resolves the name to A's CID.
 
 Per-run container logs are written before teardown to

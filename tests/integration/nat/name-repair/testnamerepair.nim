@@ -87,12 +87,13 @@ asyncchecksuite "NAT name repair":
 
     check eventuallyInfo(bootstrapClient, info{"id"}.getStr == bootstrapId)
 
-    # A Kad server never admits client peers in its table, so after the restart
-    # its lookup has nobody to ask. Its lookup checks its local store first, so
-    # the 404 shows the restart wiped the name record.
+    # A Kad server never admits client peers in its table. After the restart, its
+    # lookup doesn't have any peer to ask. Its lookup checks its local store
+    # first, so the 500 "No peer replied" shows that the restart wiped the name
+    # record.
     let resolvedOnBootstrap = await bootstrapClient.resolveNameRaw(nameKey)
 
-    check resolvedOnBootstrap.status == 404
+    check resolvedOnBootstrap.status == 500
 
     let bootstrapInfo = (await bootstrapClient.info()).get
 
