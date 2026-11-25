@@ -357,10 +357,16 @@ proc updateServiceProviders(d: Discovery, ads: seq[Advertisement]) =
   var added: seq[(string, PeerId, PeerRecord)]
 
   for ad in ads:
+    if not ad.data.services.anyIt(it.id == StorageServiceId):
+      continue
+
     let record =
       PeerRecord.init(ad.data.peerId, ad.data.addresses.mapIt(it.address), seqNo = 0)
     for service in ad.data.services:
       if service.id == StorageServiceId:
+        continue
+      if service.id notin
+          [AutonatServiceId, CircuitRelayServiceId, MixServiceId, DhtProxyServiceId]:
         continue
       if ad.data.peerId in d.providersFor(service.id):
         d.providersFor(service.id)[ad.data.peerId] =
