@@ -349,6 +349,17 @@ proc sendWantBlocksRequest(
 
   if allBlockViews.len == 0:
     trace "Peer responded with zero blocks", peer = peer.id, treeCid = treeCid
+    let
+      swarm = download.ctx.swarm
+      swarmPeer = swarm.getPeer(peer.id)
+    if swarmPeer.isSome and
+        missingIndices.anyIt(swarmPeer.get().availability.hasBlock(it)):
+      warn "Peer sent none of the blocks it claimed - banning it from the swarm",
+        peer = peer.id, treeCid = treeCid
+      swarm.banPeer(peer.id)
+      download.handlePeerFailure(peer.id)
+      return
+
     download.requeueBatch(start, count, front = false)
     return
 
