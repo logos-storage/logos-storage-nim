@@ -1,5 +1,6 @@
 import pkg/chronos
 
+import pkg/storage/discovery
 import pkg/storage/rng
 import pkg/storage/blockexchange
 import pkg/storage/chunker
@@ -147,3 +148,85 @@ asyncchecksuite "Test Discovery Engine":
     check await publicMatches.wait(100.millis)
 
     await discoveryEngine.stop()
+
+type StreamingDiscovery = ref object of MockDiscovery
+  receive: ProviderBatchHandler
+  started, stopped: AsyncEvent
+  requests: int
+
+method findBatches(
+    d: StreamingDiscovery,
+    cid: Cid,
+    useMix: bool,
+    deadline: Moment,
+    deliver: ProviderBatchHandler,
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  inc d.requests
+  d.receive = deliver
+  d.started.fire()
+  try:
+    await newAsyncEvent().wait()
+  finally:
+    d.stopped.fire()
+
+asyncchecksuite "Shared provider batches":
+  test "late downloads replay batches independently and the last departure cancels discovery":
+    let
+      backend = StreamingDiscovery(started: newAsyncEvent(), stopped: newAsyncEvent())
+      engine = DiscoveryEngine.new(backend)
+      manager = DownloadManager.new()
+      desc = DownloadDesc(md: testManifestDesc(Cid.example, 256, 1), count: 1)
+      first = manager.startDownload(desc)
+      second = manager.startDownload(desc)
+      record = PeerRecord.init(PeerId.example, newSeq[MultiAddress]())
+      gate = newAsyncEvent()
+      slowStarted = newAsyncEvent()
+      caughtUp = newAsyncEvent()
+    var
+      slowCalls = 0
+      quickCalls = 0
+      active = 0
+
+    proc slow(batch: seq[PeerRecord]) {.async: (raises: [CancelledError]).} =
+      inc active
+      defer:
+        dec active
+      check active == 1
+      inc slowCalls
+      slowStarted.fire()
+      await gate.wait()
+
+    proc quick(batch: seq[PeerRecord]) {.async: (raises: [CancelledError]).} =
+      check batch == @[record]
+      inc quickCalls
+      if quickCalls == 2:
+        caughtUp.fire()
+
+    await engine.start()
+    try:
+      engine.queueFindBlocksReq(first, slow)
+      await backend.started.wait().wait(1.seconds)
+      backend.receive(@[record])
+      await slowStarted.wait().wait(1.seconds)
+      backend.receive(@[record])
+      engine.queueFindBlocksReq(first, slow)
+      engine.queueFindBlocksReq(second, quick)
+      await caughtUp.wait().wait(1.seconds)
+      check slowCalls == 1
+      manager.cancelDownload(first)
+      await sleepAsync(1.milliseconds)
+      check active == 0
+      backend.receive(@[record])
+      check quickCalls == 3
+      manager.cancelDownload(second)
+      await backend.stopped.wait().wait(1.seconds)
+      check backend.requests == 1
+      check not engine.lookupPending(second)
+      backend.started.clear()
+      let next = manager.startDownload(desc)
+      engine.queueFindBlocksReq(next, quick)
+      await backend.started.wait().wait(1.seconds)
+      check backend.requests == 2
+      manager.cancelDownload(next)
+    finally:
+      await engine.stop()
