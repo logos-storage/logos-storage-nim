@@ -312,6 +312,7 @@ proc stop*(s: StorageServer) {.async.} =
     )
 
   s.storageNode.discovery.mixPeerTransport = nil
+  await s.storageNode.discovery.closeProxyStreams()
   if not s.mixTransport.isNil:
     try:
       await s.mixTransport.stop()
