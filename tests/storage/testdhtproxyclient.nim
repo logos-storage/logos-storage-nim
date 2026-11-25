@@ -260,7 +260,8 @@ asyncchecksuite "DHT proxy over MixTransport":
 type GatedTransport = ref object of PeerTransport
   next: PeerTransport
   ready: AsyncEvent
-  dials, active, passFirst: int
+  dials, active, passFirst, failFirst: int
+  failAfter: Duration
   replacement: AsyncEvent
 
 method kind(self: GatedTransport): DownloadTransport =
@@ -275,6 +276,9 @@ method dial(
     dec self.active
   if self.dials == 6 and not self.replacement.isNil:
     self.replacement.fire()
+  if self.dials <= self.failFirst:
+    await sleepAsync(self.failAfter)
+    return failure("Gated dial failed")
   if self.dials > self.passFirst:
     await self.ready.wait()
   return await self.next.dial(peer, codec)
@@ -444,19 +448,59 @@ asyncchecksuite "Concurrent Mix provider discovery":
       for backend in backends:
         check backend.calls == 1
 
-      # A stalled dial exercises the attempt timer before a stream exists.
+      # Five stalled dials keep their places past the former 30-second attempt
+      # limit. No replacement starts while the lookup deadline still runs.
       let stalled = GatedTransport(ready: newAsyncEvent(), replacement: newAsyncEvent())
       discovery.mixPeerTransport = stalled
-      let timed = discovery.findBatches(cid, true, Moment.now() + 60.seconds, receive)
+      let held = discovery.findBatches(cid, true, Moment.now() + 60.seconds, receive)
       check stalled.active == 5
-      await stalled.replacement.wait().wait(35.seconds)
-      await timed.cancelAndWait()
-      check timed.cancelled
+      await sleepAsync(32.seconds)
+      check not held.finished
+      check stalled.active == 5
+      check stalled.dials == 5
+      check not stalled.replacement.isSet
+      await held.cancelAndWait()
+      check held.cancelled
       check stalled.active == 0
+
+      # Attempts that stay silent until the deadline end the lookup there, and
+      # no replacement starts.
+      let quiet = GatedTransport(ready: newAsyncEvent(), replacement: newAsyncEvent())
+      discovery.mixPeerTransport = quiet
+      let silent = discovery.findBatches(cid, true, Moment.now() + 2.seconds, receive)
+      check quiet.active == 5
+      check (await silent.wait(10.seconds)).isErr
+      check quiet.dials == 5
+      check not quiet.replacement.isSet
+      check quiet.active == 0
+
+      # A dial that fails after four seconds frees its place at once. Its
+      # replacement starts with about two seconds left on the six-second
+      # deadline and ends there. A fresh six-second allowance would outlast
+      # the four-second wait below.
+      let failing = GatedTransport(
+        ready: newAsyncEvent(),
+        replacement: newAsyncEvent(),
+        failFirst: 1,
+        failAfter: 4.seconds,
+      )
+      discovery.mixPeerTransport = failing
+      let refilled = discovery.findBatches(cid, true, Moment.now() + 6.seconds, receive)
+      check failing.active == 5
+      await sleepAsync(2.seconds)
+      check failing.dials == 5
+      check not failing.replacement.isSet
+      await failing.replacement.wait().wait(10.seconds)
+      check failing.active == 5
+      check (await refilled.wait(4.seconds)).isErr
+      check failing.dials == 6
+      check failing.active == 0
+
+      discovery.mixPeerTransport = quiet
       let short =
         await discovery.findBatches(cid, true, Moment.now() + 50.milliseconds, receive)
       check short.isErr
-      check stalled.active == 0
+      check quiet.active == 0
       check batches.len == 2
     finally:
       for transport in transports:
