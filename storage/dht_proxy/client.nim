@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[sequtils, tables]
+import std/[sequtils, strutils, tables]
 
 import pkg/chronos
 import pkg/libp2p
@@ -22,6 +22,7 @@ import ../logutils
 import ../utils/mixidentity
 import ../peertransport
 import ./protocol
+import ./experiment
 
 const DefaultLookupTimeout* = 90.seconds
 
@@ -32,6 +33,7 @@ type
   Pending = ref object
     ready: AsyncEvent
     reply: LookupResponse
+    limited: bool # the window was full when this request was sent
 
   ProxyStream = ref object
     peer: PeerId
@@ -42,6 +44,9 @@ type
     reader: Future[void]
     pending: Table[uint64, Pending]
     highWater: uint64
+    window, slowStartLimit, credits: int
+    stated, extra: int # the proxy's stated limit and the probe above it
+    reducedAt: uint64 # highest ID sent before the last window reduction
     callers: int
     draining: bool
     failure: string
@@ -51,6 +56,61 @@ type
     live: seq[ProxyStream]
 
 const MaxPendingPerStream = 32
+
+proc limit(s: ProxyStream): int =
+  let policy = clientPolicy()
+  if policy.adaptive or policy.followLimit:
+    s.window
+  elif policy.window == 0:
+    MaxPendingPerStream
+  else:
+    policy.window
+
+proc adjustWindow(s: ProxyStream, call: Pending) =
+  ## Grow by one per reply until the first busy reply, then by one per full
+  ## window of replies. One busy reply shrinks the window once for all the
+  ## requests that were already sent.
+  let policy = clientPolicy()
+  if policy.followLimit:
+    if call.reply.limit.isSome:
+      s.stated = int(min(call.reply.limit.get, MaxPendingPerStream.uint64))
+    if policy.probe:
+      # Requests in transit hold a place in the window but no proxy slot, so
+      # the stated limit alone leaves slots idle. Add one request per full
+      # window of replies and halve the addition after a busy reply.
+      if call.reply.code == LookupCode.ErrTooBusy:
+        if call.reply.requestId > s.reducedAt:
+          s.extra = s.extra div 2
+          s.reducedAt = s.highWater
+          s.credits = 0
+      elif call.limited:
+        inc s.credits
+        if s.credits >= s.window:
+          inc s.extra
+          s.credits = 0
+    let window = clamp(s.stated + s.extra, 1, MaxPendingPerStream)
+    if window != s.window:
+      s.window = window
+      event("window", s.peer, s.window, s.stated)
+    return
+  if not policy.adaptive:
+    return
+  if call.reply.code == LookupCode.ErrTooBusy:
+    if call.reply.requestId > s.reducedAt:
+      s.window = max(1, int(float(s.window) * policy.decrease))
+      s.slowStartLimit = s.window
+      s.reducedAt = s.highWater
+      s.credits = 0
+      event("window", s.peer, s.window, "busy")
+  elif call.limited and s.window < MaxPendingPerStream:
+    if s.window < s.slowStartLimit:
+      inc s.window
+    else:
+      inc s.credits
+      if s.credits >= s.window:
+        inc s.window
+        s.credits = 0
+    event("window", s.peer, s.window, "reply")
 
 proc evict(client: ProxyClient, s: ProxyStream) =
   if client.streams.getOrDefault(s.peer) == s:
@@ -91,8 +151,9 @@ proc connectAndRead(
         return
       var call: Pending
       if s.pending.pop(reply.requestId, call):
-        s.slotAvailable.fire()
         call.reply = reply
+        s.adjustWindow(call)
+        s.slotAvailable.fire()
         call.ready.fire()
   except CancelledError as exc:
     raise exc
@@ -103,6 +164,7 @@ proc connectAndRead(
     if not s.conn.isNil:
       await noCancel s.conn.close()
     client.live.keepItIf(it != s)
+    event("stream-closed", s.peer, client.live.len, s.failure.replace(' ', '_'))
 
 proc retainProxies*(client: ProxyClient, proxies: seq[PeerRecord]) =
   if client.isNil:
@@ -137,8 +199,12 @@ proc exchange(
 ): Future[?!LookupResponse] {.async: (raises: [CancelledError]).} =
   var s = client.streams.getOrDefault(proxy.peerId)
   if s.isNil:
+    let policy = clientPolicy()
     s = ProxyStream(
       peer: proxy.peerId,
+      window: max(1, policy.initialWindow),
+      stated: max(1, policy.initialWindow),
+      slowStartLimit: MaxPendingPerStream,
       ready: newAsyncEvent(),
       writer: newAsyncLock(),
       slotAvailable: newAsyncEvent(),
@@ -154,47 +220,61 @@ proc exchange(
     await s.ready.wait()
     if s.failure.len > 0:
       return failure(s.failure)
-    let call = Pending(ready: newAsyncEvent())
-    await s.writer.acquire()
-    try:
-      # Only the writer can reserve a slot. The reader or a departing caller
-      # signals when another request can proceed.
-      while s.pending.len >= MaxLookupsPerStream and s.failure.len == 0:
-        s.slotAvailable.clear()
-        await s.slotAvailable.wait()
-      if s.failure.len > 0:
-        return failure(s.failure)
-      if s.highWater == high(uint64):
-        s.draining = true
-        client.evict(s)
-        return failure("DHT proxy request IDs exhausted")
-      id = s.highWater + 1
-      let bytes = LookupRequest(
-        requestId: id, queryType: QueryType.FindProviders, queryBytes: cid.data.buffer
-      ).encode()
-      if bytes.len > MaxLookupRequestBytes:
-        return failure("DHT proxy request too large")
-      s.highWater = id
-      s.pending[id] = call
+    var attempt = 0
+    while true:
+      let call = Pending(ready: newAsyncEvent())
+      event("wait", cid, attempt)
+      await s.writer.acquire()
       try:
-        await s.conn.writeLp(bytes)
-      except CancelledError as exc:
-        client.abort(s, "Interrupted DHT proxy write")
-        raise exc
-      except LPStreamError as exc:
-        client.abort(s, "DHT proxy write failed: " & exc.msg)
+        # Only the writer can reserve a slot. The reader or a departing caller
+        # signals when another request can proceed.
+        while s.pending.len >= s.limit and s.failure.len == 0:
+          s.slotAvailable.clear()
+          await s.slotAvailable.wait()
+        if s.failure.len > 0:
+          return failure(s.failure)
+        if s.highWater == high(uint64):
+          s.draining = true
+          client.evict(s)
+          return failure("DHT proxy request IDs exhausted")
+        id = s.highWater + 1
+        let bytes = LookupRequest(
+          requestId: id, queryType: QueryType.FindProviders, queryBytes: cid.data.buffer
+        ).encode()
+        if bytes.len > MaxLookupRequestBytes:
+          return failure("DHT proxy request too large")
+        s.highWater = id
+        s.pending[id] = call
+        call.limited = s.pending.len >= s.limit
+        event("send", cid, id, s.pending.len, s.limit)
+        try:
+          await s.conn.writeLp(bytes)
+        except CancelledError as exc:
+          client.abort(s, "Interrupted DHT proxy write")
+          raise exc
+        except LPStreamError as exc:
+          client.abort(s, "DHT proxy write failed: " & exc.msg)
+          return failure(s.failure)
+      finally:
+        s.writer.release2()
+      await call.ready.wait()
+      if call.reply.requestId != id:
         return failure(s.failure)
-    finally:
-      s.writer.release2()
-    await call.ready.wait()
-    if call.reply.requestId == id:
-      return success(call.reply)
-    return failure(s.failure)
+      event("reply", cid, id, call.reply.code)
+      if call.reply.code != LookupCode.ErrTooBusy or not clientPolicy().retryBusy:
+        return success(call.reply)
+      # The caller keeps its place among this stream's callers and its original
+      # deadline while the rejected request waits to be sent again.
+      inc attempt
+      let pause = clientPolicy().backoff(attempt)
+      event("backoff", cid, attempt, pause.microseconds)
+      await sleepAsync(pause)
   finally:
     if s.pending.hasKey(id):
       s.pending.del(id)
       s.slotAvailable.fire()
     dec s.callers
+    event("leave", cid, s.callers, s.pending.len)
     if s.callers == 0 and (s.draining or s.conn.isNil):
       client.abort(s, "DHT proxy stream released")
       await noCancel s.reader.cancelAndWait()
