@@ -471,8 +471,7 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
   router.api(MethodGet, "/api/storage/v1/data/{cid}/network/progress/{downloadId}") do(
     cid: Cid, downloadId: uint64, resp: HttpResponseRef
   ) -> RestApiResponse:
-    ## Get the state of a background download: running, or among the last ones
-    ## that ended. `cid` is the cid the download was started with, or its tree cid.
+    ## Get progress of a specific background download
     ##
     var headers = buildCorsHeaders("GET", allowedOrigin)
 
@@ -482,20 +481,20 @@ proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRou
     if downloadId.isErr:
       return RestApiResponse.error(Http400, "Invalid download ID", headers = headers)
 
-    without status =? node.backgroundDownloadStatus(downloadId.get(), cid.get()):
+    let progress = node.getDownloadProgress(downloadId.get(), cid.get())
+    if progress.isSome:
+      let
+        p = progress.get()
+        json = %*{
+          "active": true,
+          "received": p.blocksCompleted,
+          "total": p.totalBlocks,
+          "bytes": p.bytesTransferred,
+        }
+      return RestApiResponse.response($json, contentType = "application/json")
+    else:
       let json = %*{"active": false}
       return RestApiResponse.response($json, contentType = "application/json")
-
-    var json = %*{
-      "active": status.state == BackgroundDownloadState.Active,
-      "state": $status.state,
-      "received": status.progress.blocksCompleted,
-      "total": status.progress.totalBlocks,
-      "bytes": status.progress.bytesTransferred,
-    }
-    if status.error.len > 0:
-      json["error"] = %status.error
-    return RestApiResponse.response($json, contentType = "application/json")
 
   router.api(MethodGet, "/api/storage/v1/data/{cid}/network/stream") do(
     cid: Cid, resp: HttpResponseRef
