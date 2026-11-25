@@ -3,7 +3,7 @@
 ## limits on Storage #1587.
 {.push raises: [].}
 
-import std/random
+import std/[os, random]
 import pkg/chronos
 
 type
@@ -45,10 +45,57 @@ proc configure*(client: ClientPolicy, proxy: ProxyPolicy, seed: int64) =
   epoch = Moment.now()
   jitterRng = initRand(seed)
 
+var environmentRead {.threadvar.}: bool
+
+proc readEnvironment() =
+  ## Whole-file GET replay only. STORAGE_PROXY_EXPERIMENT gives a running
+  ## Storage node the policies tests/proxyload.nim gives its "stock",
+  ## "adaptive" and "stated-probe" modes, for a proxy with the default 100
+  ## lookup slots. Unset, the node keeps the limits on Storage #1587.
+  if environmentRead:
+    return
+  environmentRead = true
+  let mode = getEnv("STORAGE_PROXY_EXPERIMENT")
+  if mode.len == 0:
+    return
+  var
+    client = StockClientPolicy
+    proxy = StockProxyPolicy
+  client.initialWindow = 4
+  client.decrease = 0.5
+  client.backoffBase = 100.milliseconds
+  client.backoffMax = 1600.milliseconds
+  let budget = ProxyPolicy(
+    softShare: true, headroom: 10, replyBudget: 1024 * 1024, maxUnwritten: 32
+  )
+  case mode
+  of "stock":
+    discard
+  of "adaptive":
+    client.adaptive = true
+    client.retryBusy = true
+    proxy = budget
+  of "stated-probe":
+    client.followLimit = true
+    client.probe = true
+    client.retryBusy = true
+    proxy = budget
+    proxy.advertise = true
+  else:
+    quit("unknown STORAGE_PROXY_EXPERIMENT " & mode, 2)
+  configure(client, proxy, 1)
+  try:
+    stdout.writeLine("EV 0 policy " & mode)
+    stdout.flushFile()
+  except IOError:
+    discard
+
 proc clientPolicy*(): ClientPolicy =
+  readEnvironment()
   if configured: clientPolicyValue else: StockClientPolicy
 
 proc proxyPolicy*(): ProxyPolicy =
+  readEnvironment()
   if configured: proxyPolicyValue else: StockProxyPolicy
 
 proc backoff*(policy: ClientPolicy, attempt: int): Duration =
@@ -70,6 +117,7 @@ proc tail*(bytes: openArray[byte]): string =
     result.add(digits[int(bytes[i] and 15)])
 
 proc traceEnabled*(): bool =
+  readEnvironment()
   tracing
 
 proc emit*(kind: string, fields: varargs[string, `$`]) =
@@ -79,6 +127,7 @@ proc emit*(kind: string, fields: varargs[string, `$`]) =
     line.add(field)
   try:
     stdout.writeLine(line)
+    stdout.flushFile()
   except IOError:
     discard
 
