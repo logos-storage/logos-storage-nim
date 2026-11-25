@@ -49,7 +49,7 @@ logScope:
 
 const
   ProvideTimeout = 1.minutes
-  LookupTimeout = 1.minutes
+  LookupTimeout* = 1.minutes
   MaxConcurrentMixProxies = 5
   MixProxyAttemptTimeout = 30.seconds
   ServiceLookupTimeout = 1.minutes
@@ -181,11 +181,7 @@ proc eligibleMixProxy(d: Discovery, peer: PeerId): ?PeerRecord =
   none(PeerRecord)
 
 proc findMixBatches(
-    d: Discovery,
-    cid: Cid,
-    deadline: Moment,
-    deliver: ProviderBatchHandler,
-    firstOnly: bool = false,
+    d: Discovery, cid: Cid, deadline: Moment, deliver: ProviderBatchHandler
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
   let proxies = d.knownMixProxyRecords
   var
@@ -231,8 +227,6 @@ proc findMixBatches(
             if batch.len > 0 and Moment.now() < deadline:
               found = true
               deliver(batch)
-              if firstOnly:
-                return success()
           else:
             debug "Mix provider attempt failed", cid, error = reply.error.msg
     if answered:
@@ -246,12 +240,21 @@ proc findMixBatches(
 method findViaMix*(
     d: Discovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.base, async: (raises: [CancelledError]).} =
+  let received = newFuture[void]("Discovery.findViaMix")
   var first: seq[PeerRecord]
   proc receive(batch: seq[PeerRecord]) =
-    first = batch
+    if not received.finished:
+      first = batch
+      received.complete()
 
-  ?await d.findMixBatches(cid, Moment.now() + LookupTimeout, receive, firstOnly = true)
-  return success(first)
+  let lookup = d.findMixBatches(cid, Moment.now() + LookupTimeout, receive)
+  try:
+    discard await race(received, lookup)
+    if not received.finished:
+      ?await lookup
+    return success(first)
+  finally:
+    await noCancel lookup.cancelAndWait()
 
 method findDirect*(
     d: Discovery, cid: Cid

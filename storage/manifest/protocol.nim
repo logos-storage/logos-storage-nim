@@ -9,6 +9,8 @@
 
 {.push raises: [].}
 
+import std/[deques, sets]
+
 import pkg/chronos
 import pkg/libp2p
 import pkg/questionable
@@ -191,41 +193,60 @@ proc fetchManifest*(
     for attempt in 0 ..< self.retries:
       trace "Manifest fetch attempt", cid, attempt, maxRetries = self.retries
 
-      let providers = (
-        await self.discovery.find(
-          cid, useMix = (transport.kind == DownloadTransport.Mix)
-        )
-      ).valueOr:
-        warn "Lookup failed, will retry", cid, err = error
-        lastErr = error
-        # evals to empty provider list
-        @[]
+      let useMix = transport.kind == DownloadTransport.Mix
+      var
+        queued: Deque[PeerRecord]
+        seen: HashSet[PeerId]
+        available = newFuture[void]("ManifestProtocol.providerAvailable")
 
-      if providers.len > 0:
-        for provider in providers:
-          let fetchFut = self.fetchManifestFromPeer(provider, cid, transport)
+      proc receive(batch: seq[PeerRecord]) =
+        for peer in batch:
+          if not useMix or not seen.containsOrIncl(peer.peerId):
+            queued.addLast(peer)
+        if queued.len > 0 and not available.finished:
+          available.complete()
 
-          var blkResult: ?!bt.Block
-          if (await fetchFut.withTimeout(self.fetchTimeout)):
-            blkResult = await fetchFut
-          else:
+      let lookup =
+        self.discovery.findBatches(cid, useMix, Moment.now() + LookupTimeout, receive)
+      try:
+        while true:
+          if queued.len == 0:
+            if lookup.finished:
+              if err =? (await lookup).errorOption:
+                lastErr = err
+              break
+            if available.finished:
+              available = newFuture[void]("ManifestProtocol.providerAvailable")
+            discard await race(available, lookup)
+            continue
+
+          let
+            provider = queued.popFirst()
+            fetch = self.fetchManifestFromPeer(provider, cid, transport)
+          if not await fetch.withTimeout(self.fetchTimeout):
+            await fetch.cancelAndWait()
             trace "Manifest fetch from peer timed out", cid, peer = provider.peerId
             continue
 
-          without blk =? blkResult, fetchErr:
+          without blk =? await fetch, fetchErr:
             trace "Failed to fetch manifest from peer",
               cid, peer = provider.peerId, err = fetchErr.msg
             lastErr = fetchErr
             continue
+          without manifest =? Manifest.decode(blk), decodeErr:
+            if not useMix:
+              return failure("Unable to store manifest: " & decodeErr.msg)
+            lastErr = decodeErr
+            continue
 
-          without manifest =? (
-            await storeManifestBlock(self.localStore, blk, advertise)
-          ), storeErr:
+          await lookup.cancelAndWait()
+          without stored =?
+            await self.localStore.storeDecodedManifestBlock(blk, manifest, advertise),
+            storeErr:
             return failure("Unable to store manifest: " & storeErr.msg)
-
-          return success manifest
-      else:
-        trace "No providers found for manifest, will retry", cid, attempt
+          return success stored
+      finally:
+        await noCancel lookup.cancelAndWait()
 
       if attempt < self.retries - 1:
         await sleepAsync(self.retryDelay)
