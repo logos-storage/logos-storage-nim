@@ -10,8 +10,7 @@
 {.push raises: [].}
 
 import pkg/chronos
-import pkg/libp2p/stream/connection
-from pkg/libp2p_mix_transport import TransportStream
+import pkg/libp2p/[stream/connection, varint]
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/std/enums
 import pkg/protobuf_serialization/pkg/results
@@ -42,33 +41,61 @@ type
     ErrResponseTooLarge = 201
     ErrTooBusy = 202
 
+  # Decode correlation separately so a malformed query with one ID can receive
+  # ErrDecodeFailed. A repeated field lets us reject conflicting IDs.
+  RequestEnvelope {.proto2.} = object
+    requestIds {.fieldNumber: 3, pint.}: seq[uint64]
+
   LookupRequest* {.proto2.} = object
+    requestId* {.fieldNumber: 3, required, pint.}: uint64
     queryType* {.fieldNumber: 1, required, ext.}: QueryType
     queryBytes* {.fieldNumber: 2, required.}: seq[byte]
 
   LookupResponse* {.proto2.} = object
+    requestId* {.fieldNumber: 3, required, pint.}: uint64
     code* {.fieldNumber: 1, required, ext.}: LookupCode
     providers* {.fieldNumber: 2.}: seq[seq[byte]]
 
-Protobuf.serializerForResult([LookupRequest, LookupResponse])
+Protobuf.serializerForResult([LookupRequest, LookupResponse, RequestEnvelope])
 
-proc sendResponse*(
-    conn: Connection, response: LookupResponse
-) {.async: (raises: [CancelledError, LPStreamError]).} =
-  await conn.writeLp(response.encode())
-  if conn of TransportStream:
-    # Closing a Mix stream cancels retransmission. Let the client close after
-    # consuming the response. Both handlers bound this wait by the exchange deadline.
-    await conn.join()
+proc requestIdOf*(bytes: seq[byte]): uint64 =
+  let envelope = RequestEnvelope.decode(bytes).valueOr:
+    return 0
+  if envelope.requestIds.len == 1:
+    return envelope.requestIds[0]
+
+proc readFrameBody*(
+    conn: Connection, first: byte, maxSize: int
+): Future[seq[byte]] {.async: (raises: [CancelledError, LPStreamError]).} =
+  var prefix: array[10, byte]
+  prefix[0] = first
+  for i in 0 ..< prefix.len:
+    if i > 0:
+      await conn.readExactly(addr prefix[i], 1)
+    var
+      length: uint64
+      consumed: int
+    let decoded = PB.getUVarint(prefix.toOpenArray(0, i), consumed, length)
+    if decoded.isOk:
+      if length == 0 or length > maxSize.uint64:
+        raise (ref MaxSizeError)(msg: "Invalid DHT proxy frame length")
+      var payload = newSeqUninit[byte](int(length))
+      await conn.readExactly(addr payload[0], payload.len)
+      return payload
+    if decoded.error != VarintError.Incomplete:
+      break
+  raise (ref InvalidVarintError)(msg: "Invalid DHT proxy length prefix")
 
 proc packProviders*(
-    providers: seq[seq[byte]], budget_bytes: int
+    providers: seq[seq[byte]], budget_bytes: int, requestId: uint64
 ): Result[seq[seq[byte]], LookupCode] =
   if providers.len == 0:
     error "packProviders called with no providers"
     return err(LookupCode.ErrInternal)
 
-  let single = LookupResponse(code: LookupCode.Ok, providers: providers[0 ..< 1])
+  let single = LookupResponse(
+    requestId: requestId, code: LookupCode.Ok, providers: providers[0 ..< 1]
+  )
   if single.encode().len > budget_bytes:
     return err(LookupCode.ErrResponseTooLarge)
 
@@ -78,7 +105,9 @@ proc packProviders*(
   while lo < hi:
     let
       mid = (lo + hi + 1) div 2
-      test = LookupResponse(code: LookupCode.Ok, providers: providers[0 ..< mid])
+      test = LookupResponse(
+        requestId: requestId, code: LookupCode.Ok, providers: providers[0 ..< mid]
+      )
     if test.encode().len <= budget_bytes:
       lo = mid
     else:

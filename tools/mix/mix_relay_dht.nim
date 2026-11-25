@@ -26,7 +26,7 @@ import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
 import pkg/results
 
-import pkg/storage/dht_proxy/protocol
+import pkg/storage/dht_proxy/[protocol, server]
 from pkg/storage/discovery import StorageServiceId, MixServiceId, DhtProxyServiceId
 import pkg/storage/utils/spr
 
@@ -119,13 +119,11 @@ proc generateKeys(dataDir: string) =
 
 type DhtProxyProtocol = ref object of LPProtocol
   kad: KadDHT
-  inFlight: int
-  maxInFlight: int
 
 proc handleFindProviders(
-    self: DhtProxyProtocol, queryBytes: seq[byte]
+    self: DhtProxyProtocol, req: LookupRequest
 ): Future[LookupResponse] {.async: (raises: [CancelledError]).} =
-  let c = Cid.init(queryBytes).valueOr:
+  let c = Cid.init(req.queryBytes).valueOr:
     warn "Invalid CID in lookup request"
     return LookupResponse(code: LookupCode.ErrInvalidCid)
 
@@ -153,62 +151,23 @@ proc handleFindProviders(
   if encoded.len == 0:
     return LookupResponse(code: LookupCode.ErrInternal)
 
-  let packed = packProviders(encoded, MaxLookupResponseBytes).valueOr:
+  let packed = packProviders(encoded, MaxLookupResponseBytes, req.requestId).valueOr:
     return LookupResponse(code: error)
 
   LookupResponse(code: LookupCode.Ok, providers: packed)
 
-proc handleLookupRequest(
-    self: DhtProxyProtocol, conn: Connection
-) {.async: (raises: [CancelledError]).} =
-  try:
-    if self.inFlight >= self.maxInFlight:
-      debug "DHT proxy at capacity, replying ErrTooBusy",
-        inFlight = self.inFlight, max = self.maxInFlight
-      await conn.sendResponse(LookupResponse(code: LookupCode.ErrTooBusy))
-      return
-
-    inc self.inFlight
-    defer:
-      dec self.inFlight
-
-    let
-      reqBytes =
-        await conn.readLp(MaxLookupRequestBytes).wait(DhtProxyRequestReadTimeout)
-      req = LookupRequest.decode(reqBytes).valueOr:
-        warn "Failed to decode lookup request"
-        await conn.sendResponse(LookupResponse(code: LookupCode.ErrDecodeFailed))
-        return
-
-    let resp =
-      case req.queryType
-      of FindProviders:
-        await self.handleFindProviders(req.queryBytes)
-
-    await conn.sendResponse(resp)
-  except CancelledError as exc:
-    raise exc
-  except LPStreamError as exc:
-    warn "Stream error", err = exc.msg
-  except CatchableError as exc:
-    warn "Handler error", err = exc.msg
-
 proc new(
     T: type DhtProxyProtocol, kad: KadDHT, maxInFlight: int = DefaultMaxInFlightLookups
 ): DhtProxyProtocol =
-  let self = DhtProxyProtocol(kad: kad, maxInFlight: maxInFlight)
-
-  proc handler(
-      conn: Connection, proto: string
-  ): Future[void] {.async: (raises: [CancelledError]).} =
-    try:
-      await self.handleLookupRequest(conn).wait(DhtProxyExchangeTimeout)
-    except AsyncTimeoutError:
-      debug "DHT proxy exchange timed out"
-    finally:
-      await noCancel conn.close()
-
-  self.handler = handler
+  let self = DhtProxyProtocol(kad: kad)
+  self.handler = newProxyHandler(
+    maxInFlight,
+    proc(
+        req: LookupRequest
+    ): Future[LookupResponse] {.async: (raises: [CancelledError]).} =
+      await self.handleFindProviders(req)
+    ,
+  )
   self.codec = DhtProxyCodec
   self
 
