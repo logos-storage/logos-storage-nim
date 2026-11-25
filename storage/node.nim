@@ -526,11 +526,11 @@ proc iterateManifests*(self: StorageNodeRef, onManifest: OnManifest) {.async.} =
     if cid =? await c:
       without blk =? await self.networkStore.getBlock(cid):
         warn "Failed to get manifest block by cid", cid
-        return
+        continue
 
       without manifest =? Manifest.decode(blk):
         warn "Failed to decode manifest", cid
-        return
+        continue
 
       onManifest(cid, manifest)
 

@@ -240,6 +240,9 @@ proc banAndDropPeer(
     await blockExc.network.dropPeer(peerId)
 
 proc validateBlockDeliveryView(self: BlockExcEngine, view: BlockDeliveryView): ?!void =
+  if view.cid.mcodec != BlockCodec:
+    return failure("Block CID codec " & $view.cid.mcodec & " is not " & $BlockCodec)
+
   without proof =? view.proof:
     return failure("Missing proof")
 
