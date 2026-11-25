@@ -58,18 +58,31 @@ prefix. The proxy returns the longest prefix of whole provider records that
 fits with the status and request ID. It returns `ErrResponseTooLarge` if the
 first record exceeds the budget and `NotFound` if the search found no providers.
 
-A client needs a usable local Mix address and a started transport. Discovery
-tries eligible proxies in random order within the lookup deadline. A successful
-`NotFound` completes the lookup with an empty result. If every attempt fails,
-the client returns an error.
+A client needs a usable local Mix address and a started transport.
+
+A provider lookup for one CID asks up to five distinct eligible proxies at once,
+chosen in random order. Each request travels on the stream the client holds to
+that proxy. Until a proxy returns providers, a failed, timed-out or `NotFound`
+attempt frees its place for the next candidate. After the first provider list
+arrives, discovery starts no further attempts and still passes on lists from
+the attempts already in flight. Block discovery uses every list. A manifest
+fetch tries one provider at a time and keeps later distinct providers as
+fallbacks. The lookup succeeds, possibly with no providers, when at least one
+proxy answered. If every attempt fails, the client returns an error without
+direct fallback. A lookup has a 60-second deadline. Each proxy attempt may
+use all the time left on it. An attempt that replaces a failed or empty one
+starts later and gets only the time that remains. If the first five attempts
+stay silent until the deadline, no replacement starts.
 
 The proxy limits concurrent lookups across clients to 100 by default
 (`--dht-proxy-max-inflight` in Storage). A valid request over lookup capacity
 receives `ErrTooBusy` with its request ID. An idle stream takes no lookup slot.
 
 The client accepts up to 32 callers per stream. Four can await replies at once.
-Additional callers wait for a slot within their lookup deadline. The 90-second lookup
-deadline includes dialing, waiting to write and waiting for a reply. Cancelling
+Additional callers wait for a slot within their own deadline. That deadline
+includes dialing, waiting to write and waiting for a reply. It is 90 seconds
+by default. An attempt started by discovery gets the time left on the 60-second
+lookup deadline. Cancelling
 a caller after the complete request has been sent detaches that caller. A
 partial write closes the stream because later messages need an intact length
 prefix and body.
