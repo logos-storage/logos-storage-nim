@@ -332,6 +332,12 @@ proc sendWantBlocksRequest(
     return
 
   if requestResult.isErr:
+    if requestResult.error.kind == TreeCidMismatch:
+      warn "Peer answered with another tree - banning peer",
+        peer = peer.id, error = requestResult.error.msg
+      await self.banAndDropPeer(download, peer.id)
+      return
+
     warn "Batch request failed", peer = peer.id, error = requestResult.error.msg
     let swarm = download.ctx.swarm
     if swarm.recordPeerFailure(peer.id):
@@ -1001,6 +1007,15 @@ proc requestWantBlocks(
       )
     )
   let response = ?await blockExc.network.sendWantBlocksRequest(peer, blockRange)
+  if response.treeCid != blockRange.treeCid:
+    return err(
+      wantBlocksError(
+        TreeCidMismatch,
+        "Response tree " & $response.treeCid & " doesn't match requested tree " &
+          $blockRange.treeCid,
+      )
+    )
+
   var blockViews: seq[BlockDeliveryView]
 
   for btBlock in response.blocks:

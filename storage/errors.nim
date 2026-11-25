@@ -40,6 +40,7 @@ type
     ProofPathTooLarge
     ProofDecodeFailed
     MissingProof
+    TreeCidMismatch
     TooManyBlocks
     NoConnection
     ConnectionClosed
