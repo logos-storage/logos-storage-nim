@@ -116,6 +116,11 @@ proc handleManifestRequest(
       await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
       return
 
+    if cid.mcodec != ManifestCodec:
+      warn "Manifest request for a non-manifest CID", cid
+      await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
+      return
+
     without advertised =? (await self.localStore.isAdvertised(cid)), advertiseErr:
       warn "Unable to read advertise state", cid, err = advertiseErr.msg
       await writeManifestResponse(conn, ManifestFetchStatus.NotFound)
