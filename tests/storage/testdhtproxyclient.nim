@@ -256,3 +256,254 @@ asyncchecksuite "DHT proxy over MixTransport":
       MaxLookupResponseBytes
     check packProviders(@[newSeq[byte](MaxLookupResponseBytes)], MaxLookupResponseBytes).error ==
       LookupCode.ErrResponseTooLarge
+
+type GatedTransport = ref object of PeerTransport
+  next: PeerTransport
+  ready: AsyncEvent
+  dials, active, passFirst, failFirst: int
+  failAfter: Duration
+  replacement: AsyncEvent
+
+method kind(self: GatedTransport): DownloadTransport =
+  DownloadTransport.Mix
+
+method dial(
+    self: GatedTransport, peer: PeerRecord, codec: string
+): Future[?!Connection] {.async: (raises: [CatchableError]).} =
+  inc self.dials
+  inc self.active
+  defer:
+    dec self.active
+  if self.dials == 6 and not self.replacement.isNil:
+    self.replacement.fire()
+  if self.dials <= self.failFirst:
+    await sleepAsync(self.failAfter)
+    return failure("Gated dial failed")
+  if self.dials > self.passFirst:
+    await self.ready.wait()
+  return await self.next.dial(peer, codec)
+
+type GatedBackend = ref object of Discovery
+  ready: AsyncEvent
+  reply: Future[?!seq[PeerRecord]].Raising([CancelledError])
+  calls: int
+
+method findDirect(
+    self: GatedBackend, cid: Cid
+): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]).} =
+  inc self.calls
+  self.ready.fire()
+  return await self.reply
+
+asyncchecksuite "Concurrent Mix provider discovery":
+  test "refills five outstanding attempts until a usable result, then drains":
+    let
+      rng = newRng()
+      listen = MultiAddress.init("/ip4/127.0.0.1/tcp/0").tryGet()
+      arrived = newAsyncEvent()
+      discovery = Discovery()
+      cid = Cid.example
+    var
+      infos = MixNodeInfo.generateRandomMany(9, rng)
+      switches: seq[Switch]
+      mixes: seq[MixProtocol]
+      transports: seq[MixTransport]
+      backends: seq[GatedBackend]
+      released: seq[int]
+      batches: seq[seq[PeerRecord]]
+      received = newAsyncEvent()
+
+    proc attempts(): int =
+      for backend in backends:
+        result += backend.calls
+
+    proc waitForAttempts(n: int) {.async.} =
+      while attempts() < n:
+        arrived.clear()
+        await arrived.wait().wait(10.seconds)
+      check attempts() == n
+
+    proc respond(reply: ?!seq[PeerRecord]) =
+      for i, backend in backends:
+        if backend.calls > 0 and i notin released:
+          released.add(i)
+          backend.reply.complete(reply)
+          return
+      doAssert false, "no pending request"
+
+    try:
+      for i, info in infos:
+        let
+          switch = SwitchBuilder
+            .new()
+            .withRng(rng)
+            .withPrivateKey(PrivateKey(scheme: Secp256k1, skkey: info.libp2pPrivKey))
+            .withAddress(listen)
+            .withTcpTransport()
+            .withYamux()
+            .withNoise()
+            .build()
+          mix = MixProtocol.new(
+            info,
+            switch,
+            delayStrategy = Opt.some(DelayStrategy(NoSamplingDelayStrategy.new(rng))),
+          )
+        switches.add(switch)
+        mixes.add(mix)
+        switch.mount(mix)
+        if i > 0:
+          let backend = GatedBackend(
+            ready: arrived,
+            reply: Future[?!seq[PeerRecord]].Raising([CancelledError]).init(),
+          )
+          backends.add(backend)
+          switch.mount(DhtProxyProtocol.new(backend))
+        await switch.start()
+        infos[i].multiAddr = switch.peerInfo.listenAddrs[0]
+        mix.setLocalMultiAddr(infos[i].multiAddr).tryGet()
+      for i, mix in mixes:
+        mix.nodePool.add(infos.includeAllExcept(infos[i]))
+        await mix.start()
+        let transport = newMixTransport(mix)
+        (await transport.start()).tryGet()
+        transports.add(transport)
+        if i > 0:
+          let record = PeerRecord.init(
+            infos[i].peerId, @[mix.localMixPubInfo.tryGet().toMixAddress().tryGet()]
+          )
+          discovery.staticDhtMixProxies.add(@[record, record])
+
+      discovery.mixProto = mixes[0]
+      discovery.mixPeerTransport = MixPeerTransport.new(transports[0])
+      let
+        start = Moment.now()
+        provider = discovery.staticDhtMixProxies[0]
+        extra = discovery.staticDhtMixProxies[^1]
+      proc receive(batch: seq[PeerRecord]) =
+        batches.add(batch)
+        echo "provider batch ",
+          batches.len,
+          " elapsed_ms=",
+          (Moment.now() - start).milliseconds,
+          " records=",
+          batch.len,
+          " attempts=",
+          attempts()
+        received.fire()
+
+      let query = discovery.findBatches(cid, true, start + 60.seconds, receive)
+      await waitForAttempts(5)
+      respond(success(newSeq[PeerRecord]()))
+      await waitForAttempts(6)
+      respond(seq[PeerRecord].failure("fixture lookup error"))
+      await waitForAttempts(7)
+      respond(success(@[provider]))
+      await received.wait().wait(10.seconds)
+      check not query.finished
+      received.clear()
+      respond(success(@[provider, extra]))
+      await received.wait().wait(10.seconds)
+      for _ in 0 ..< 3:
+        respond(success(newSeq[PeerRecord]()))
+      check (await query.wait(10.seconds)).isOk
+      check batches == @[@[provider], @[provider, extra]]
+      check attempts() == 7
+      for backend in backends:
+        check backend.calls <= 1
+
+      # The manifest caller needs one nonempty list. Hold all but two stream
+      # opens, so cancellation of the remaining attempts is observable.
+      let openTwo = GatedTransport(
+        next: discovery.mixPeerTransport,
+        ready: newAsyncEvent(),
+        replacement: newAsyncEvent(),
+        passFirst: 2,
+      )
+      discovery.mixPeerTransport = openTwo
+      released.setLen(0)
+      for backend in backends:
+        backend.calls = 0
+        backend.reply = Future[?!seq[PeerRecord]].Raising([CancelledError]).init()
+      let manifest = discovery.find(cid, useMix = true)
+      await waitForAttempts(2)
+      respond(success(newSeq[PeerRecord]()))
+      await openTwo.replacement.wait().wait(5.seconds)
+      check not manifest.finished
+      check openTwo.active == 4
+      respond(success(@[provider]))
+      let first = await manifest.wait(5.seconds)
+      require first.isOk
+      check first.get == @[provider]
+      check openTwo.active == 0
+      check openTwo.dials == 6
+
+      discovery.mixPeerTransport = openTwo.next
+      for backend in backends:
+        backend.calls = 0
+        backend.reply = Future[?!seq[PeerRecord]].Raising([CancelledError]).init()
+        backend.reply.complete(success(newSeq[PeerRecord]()))
+      let empty = await discovery.find(cid, useMix = true)
+      require empty.isOk
+      check empty.get.len == 0
+      for backend in backends:
+        check backend.calls == 1
+
+      # Five stalled dials keep their places past the former 30-second attempt
+      # limit. No replacement starts while the lookup deadline still runs.
+      let stalled = GatedTransport(ready: newAsyncEvent(), replacement: newAsyncEvent())
+      discovery.mixPeerTransport = stalled
+      let held = discovery.findBatches(cid, true, Moment.now() + 60.seconds, receive)
+      check stalled.active == 5
+      await sleepAsync(32.seconds)
+      check not held.finished
+      check stalled.active == 5
+      check stalled.dials == 5
+      check not stalled.replacement.isSet
+      await held.cancelAndWait()
+      check held.cancelled
+      check stalled.active == 0
+
+      # Attempts that stay silent until the deadline end the lookup there, and
+      # no replacement starts.
+      let quiet = GatedTransport(ready: newAsyncEvent(), replacement: newAsyncEvent())
+      discovery.mixPeerTransport = quiet
+      let silent = discovery.findBatches(cid, true, Moment.now() + 2.seconds, receive)
+      check quiet.active == 5
+      check (await silent.wait(10.seconds)).isErr
+      check quiet.dials == 5
+      check not quiet.replacement.isSet
+      check quiet.active == 0
+
+      # A dial that fails after four seconds frees its place at once. Its
+      # replacement starts with about two seconds left on the six-second
+      # deadline and ends there. A fresh six-second allowance would outlast
+      # the four-second wait below.
+      let failing = GatedTransport(
+        ready: newAsyncEvent(),
+        replacement: newAsyncEvent(),
+        failFirst: 1,
+        failAfter: 4.seconds,
+      )
+      discovery.mixPeerTransport = failing
+      let refilled = discovery.findBatches(cid, true, Moment.now() + 6.seconds, receive)
+      check failing.active == 5
+      await sleepAsync(2.seconds)
+      check failing.dials == 5
+      check not failing.replacement.isSet
+      await failing.replacement.wait().wait(10.seconds)
+      check failing.active == 5
+      check (await refilled.wait(4.seconds)).isErr
+      check failing.dials == 6
+      check failing.active == 0
+
+      discovery.mixPeerTransport = quiet
+      let short =
+        await discovery.findBatches(cid, true, Moment.now() + 50.milliseconds, receive)
+      check short.isErr
+      check quiet.active == 0
+      check batches.len == 2
+    finally:
+      for transport in transports:
+        await transport.stop()
+      for switch in switches:
+        await switch.stop()
