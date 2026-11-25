@@ -36,6 +36,7 @@ type
   ProxyStream = ref object
     peer: PeerId
     ready: AsyncEvent
+    slotAvailable: AsyncEvent
     writer: AsyncLock
     conn: Connection
     reader: Future[void]
@@ -60,6 +61,7 @@ proc failStream(client: ProxyClient, s: ProxyStream, reason: string) =
     s.failure = reason
     client.evict(s)
     s.ready.fire()
+    s.slotAvailable.fire()
     for call in s.pending.values:
       call.ready.fire()
 
@@ -89,6 +91,7 @@ proc connectAndRead(
         return
       var call: Pending
       if s.pending.pop(reply.requestId, call):
+        s.slotAvailable.fire()
         call.reply = reply
         call.ready.fire()
   except CancelledError as exc:
@@ -134,7 +137,12 @@ proc exchange(
 ): Future[?!LookupResponse] {.async: (raises: [CancelledError]).} =
   var s = client.streams.getOrDefault(proxy.peerId)
   if s.isNil:
-    s = ProxyStream(peer: proxy.peerId, ready: newAsyncEvent(), writer: newAsyncLock())
+    s = ProxyStream(
+      peer: proxy.peerId,
+      ready: newAsyncEvent(),
+      writer: newAsyncLock(),
+      slotAvailable: newAsyncEvent(),
+    )
     client.streams[proxy.peerId] = s
     client.live.add(s)
     s.reader = client.connectAndRead(s, transport, proxy)
@@ -149,6 +157,11 @@ proc exchange(
     let call = Pending(ready: newAsyncEvent())
     await s.writer.acquire()
     try:
+      # Only the writer can reserve a slot. The reader or a departing caller
+      # signals when another request can proceed.
+      while s.pending.len >= MaxLookupsPerStream and s.failure.len == 0:
+        s.slotAvailable.clear()
+        await s.slotAvailable.wait()
       if s.failure.len > 0:
         return failure(s.failure)
       if s.highWater == high(uint64):
@@ -178,7 +191,9 @@ proc exchange(
       return success(call.reply)
     return failure(s.failure)
   finally:
-    s.pending.del(id)
+    if s.pending.hasKey(id):
+      s.pending.del(id)
+      s.slotAvailable.fire()
     dec s.callers
     if s.callers == 0 and (s.draining or s.conn.isNil):
       client.abort(s, "DHT proxy stream released")

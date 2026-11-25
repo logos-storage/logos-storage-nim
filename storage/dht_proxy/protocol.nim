@@ -20,6 +20,7 @@ import ../utils/protobuf/serializer
 
 const DhtProxyCodec* = "/storage/dht-proxy/2.0.0"
 
+const MaxLookupsPerStream* = 4
 const DefaultMaxInFlightLookups* = 100
 const DhtProxyRequestReadTimeout* = 5.seconds
 

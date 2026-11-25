@@ -8,7 +8,6 @@ import ./protocol
 
 const
   MaxProxyStreams = 128
-  MaxLookupsPerStream = 4
   IdleStreamTimeout = 90.seconds
 
 type FindProviders = proc(req: LookupRequest): Future[LookupResponse] {.
@@ -63,7 +62,9 @@ proc newProxyHandler*(maxInFlight: int, lookup: FindProviders): LPProtoHandler =
           while workers.len > 0 and not read.finished:
             discard await race(FutureBase(read), workers.mapIt(FutureBase(it)))
             workers.keepItIf(not it.finished)
-          await read.wait(IdleStreamTimeout)
+          await read.wait(
+            if lastId == 0: DhtProxyRequestReadTimeout else: IdleStreamTimeout
+          )
         finally:
           await noCancel read.cancelAndWait()
         let payload = await readFrameBody(conn, first, MaxLookupRequestBytes).wait(
