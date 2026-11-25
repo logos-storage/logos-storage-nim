@@ -39,6 +39,7 @@ type
     ProofCreationFailed
     ProofPathTooLarge
     ProofDecodeFailed
+    MissingProof
     TooManyBlocks
     NoConnection
     ConnectionClosed

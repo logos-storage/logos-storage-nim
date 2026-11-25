@@ -577,15 +577,14 @@ proc readWantBlocksResponse*(
     for i, bm in blocksMeta:
       let blockDataLen = bm.dataLen.int
 
-      var proof: StorageMerkleProof
-      if bm.proof.isSome:
-        proof = bm.proof.get
+      if bm.proof.isNone:
+        return err(wantBlocksError(MissingProof, "Missing proof at block " & $i))
       response.blocks[i] = BlockEntry(
         index: bm.index,
         cid: bm.cid,
         dataOffset: offset,
         dataLen: blockDataLen,
-        proof: proof,
+        proof: bm.proof.get,
       )
       offset += blockDataLen
 
