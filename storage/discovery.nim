@@ -51,7 +51,6 @@ const
   ProvideTimeout = 1.minutes
   LookupTimeout* = 1.minutes
   MaxConcurrentMixProxies = 5
-  MixProxyAttemptTimeout = 30.seconds
   ServiceLookupTimeout = 1.minutes
 
   StorageServiceId* = "/logos-storage/1.0.0"
@@ -204,13 +203,12 @@ proc findMixBatches(
         if remaining <= ZeroDuration:
           break
         trace "Starting Mix provider attempt", cid, proxy = proxy.peerId
+        # An attempt may use all the time left on the lookup deadline, dial
+        # and exchange included. A replacement that starts later gets only
+        # what remains.
         pending.add(
           dht_proxy_client.lookupProviders(
-            d.mixProto,
-            d.mixPeerTransport,
-            proxy,
-            cid,
-            min(MixProxyAttemptTimeout, remaining),
+            d.mixProto, d.mixPeerTransport, proxy, cid, remaining
           )
         )
       if pending.len == 0:

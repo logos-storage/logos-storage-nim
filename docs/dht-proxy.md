@@ -58,10 +58,13 @@ providers as fallbacks. The lookup succeeds, possibly with no providers, when at
 least one proxy answered. If every attempt fails, it returns an error without
 direct fallback.
 
-A lookup has a 60-second deadline. Each proxy attempt gets at most 30 seconds of
-it, covering session establishment, stream opening, and the request/response
-exchange. Timeout or cancellation cancels the exchange and closes its stream. A
-proxy may still finish a DHT search it has already started.
+A lookup has a 60-second deadline. Each proxy attempt may use all the time left
+on it, covering session establishment, stream opening, and the request/response
+exchange. An attempt that replaces a failed or empty one starts later and gets
+only the time that remains. If the first five attempts stay silent until the
+deadline, no replacement starts. Timeout or cancellation cancels the exchange
+and closes its stream. A proxy may still finish a DHT search it has already
+started.
 
 The proxy limits concurrent exchanges to
 100 by default (`--dht-proxy-max-inflight` in Storage), reads the request within
