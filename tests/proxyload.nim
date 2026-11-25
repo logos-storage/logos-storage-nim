@@ -179,9 +179,11 @@ method findDirect(
   return success(b.replies.getOrDefault(cid, b.small))
 
 proc cidFor(node, index: int): Cid =
-  blocktype.Block.new(
-    @[byte(settings.seed and 255), byte(node), byte(index shr 8), byte(index and 255)]
-  ).tryGet().cid
+  blocktype.Block
+    .new(
+      @[byte(settings.seed and 255), byte(node), byte(index shr 8), byte(index and 255)]
+    )
+    .tryGet().cid
 
 proc searchTime(node, index: int): Duration =
   var r = initRand(int64(settings.seed) * 1_000_003 + int64(node) * 10_007 + index + 1)
@@ -203,6 +205,7 @@ proc lookup(
   var got = 0
   proc deliver(batch: seq[PeerRecord]) {.gcsafe, raises: [].} =
     got += batch.len
+
   event("start", cid, node.index, tail(cid.data.buffer), deadline.milliseconds)
   try:
     let res =
@@ -232,6 +235,7 @@ proc drive(node: Node) {.async.} =
       let index = node.next
       inc node.next
       discard await node.lookup(index, settings.deadlineMs.milliseconds)
+
   var callers: seq[Future[void]]
   for _ in 0 ..< node.callers:
     callers.add(caller())
@@ -301,7 +305,9 @@ proc rawRequests(node: int, count: int): seq[byte] =
     let cid = cidFor(node, i)
     backend.durations[cid] = 100.milliseconds
     let req = LookupRequest(
-      requestId: i.uint64, queryType: QueryType.FindProviders, queryBytes: cid.data.buffer
+      requestId: i.uint64,
+      queryType: QueryType.FindProviders,
+      queryBytes: cid.data.buffer,
     ).encode()
     result.add(PB.toBytes(req.len.uint64).toOpenArray())
     result.add(req)
@@ -329,9 +335,8 @@ proc pipeScene() {.async.} =
       index: nodes.len,
       callers: callers,
       total: total,
-      discovery: Discovery(
-        mixProto: mix, mixPeerTransport: wire, staticDhtMixProxies: @[proxy]
-      ),
+      discovery:
+        Discovery(mixProto: mix, mixPeerTransport: wire, staticDhtMixProxies: @[proxy]),
     )
     nodes.add(node)
     wires.add(wire)
@@ -398,6 +403,7 @@ proc pipeScene() {.async.} =
           discard await pipe.readOnce(addr buf[0], buf.len)
       except CancelledError, LPStreamError:
         discard
+
     var drains: seq[Future[void]]
     for i in countup(0, hogPipes.high, 2):
       drains.add(drain(hogPipes[i]))
@@ -562,24 +568,42 @@ proc main() {.async.} =
     let pair = paramStr(i).split('=', 1)
     doAssert pair.len == 2, paramStr(i)
     case pair[0]
-    of "capacity": settings.capacity = parseInt(pair[1])
-    of "callers": settings.callers = parseInt(pair[1])
-    of "cids": settings.cids = parseInt(pair[1])
-    of "delayMs": settings.delayMs = parseInt(pair[1])
-    of "linkBytes": settings.linkBytes = parseInt(pair[1])
-    of "slowRate": settings.slowRate = parseInt(pair[1])
-    of "fastLowMs": settings.fastLowMs = parseInt(pair[1])
-    of "fastHighMs": settings.fastHighMs = parseInt(pair[1])
-    of "slowLowMs": settings.slowLowMs = parseInt(pair[1])
-    of "slowHighMs": settings.slowHighMs = parseInt(pair[1])
-    of "slowShare": settings.slowShare = parseFloat(pair[1])
-    of "deadlineMs": settings.deadlineMs = parseInt(pair[1])
-    of "bigBytes": settings.bigBytes = parseInt(pair[1])
-    of "lateMs": settings.lateMs = parseInt(pair[1])
-    of "lightCallers": settings.lightCallers = parseInt(pair[1])
-    of "lightCids": settings.lightCids = parseInt(pair[1])
-    of "mixNodes": settings.mixNodes = parseInt(pair[1])
-    else: quit("unknown setting " & pair[0], 2)
+    of "capacity":
+      settings.capacity = parseInt(pair[1])
+    of "callers":
+      settings.callers = parseInt(pair[1])
+    of "cids":
+      settings.cids = parseInt(pair[1])
+    of "delayMs":
+      settings.delayMs = parseInt(pair[1])
+    of "linkBytes":
+      settings.linkBytes = parseInt(pair[1])
+    of "slowRate":
+      settings.slowRate = parseInt(pair[1])
+    of "fastLowMs":
+      settings.fastLowMs = parseInt(pair[1])
+    of "fastHighMs":
+      settings.fastHighMs = parseInt(pair[1])
+    of "slowLowMs":
+      settings.slowLowMs = parseInt(pair[1])
+    of "slowHighMs":
+      settings.slowHighMs = parseInt(pair[1])
+    of "slowShare":
+      settings.slowShare = parseFloat(pair[1])
+    of "deadlineMs":
+      settings.deadlineMs = parseInt(pair[1])
+    of "bigBytes":
+      settings.bigBytes = parseInt(pair[1])
+    of "lateMs":
+      settings.lateMs = parseInt(pair[1])
+    of "lightCallers":
+      settings.lightCallers = parseInt(pair[1])
+    of "lightCids":
+      settings.lightCids = parseInt(pair[1])
+    of "mixNodes":
+      settings.mixNodes = parseInt(pair[1])
+    else:
+      quit("unknown setting " & pair[0], 2)
   let (client, proxy) = policies(settings.mode, settings.capacity)
   configure(client, proxy, settings.seed)
   event("config", $settings)

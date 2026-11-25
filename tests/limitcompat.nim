@@ -14,7 +14,10 @@ type StockResponse {.proto2.} = object
 Protobuf.serializerForResult([StockResponse])
 
 let withLimit = LookupResponse(
-  requestId: 7, code: LookupCode.Ok, providers: @[@[1'u8, 2, 3]], limit: Opt.some(12'u64)
+  requestId: 7,
+  code: LookupCode.Ok,
+  providers: @[@[1'u8, 2, 3]],
+  limit: Opt.some(12'u64),
 ).encode()
 let old = StockResponse.decode(withLimit)
 echo "stock decodes reply with limit: ", old.isOk
@@ -27,6 +30,5 @@ echo "experiment decodes stock reply: ", fresh.isOk
 if fresh.isOk:
   doAssert fresh.get.requestId == 9 and fresh.get.limit.isNone
 echo "bytes added by the limit field: ",
-  withLimit.len - LookupResponse(
-    requestId: 7, code: LookupCode.Ok, providers: @[@[1'u8, 2, 3]]
-  ).encode().len
+  withLimit.len -
+    LookupResponse(requestId: 7, code: LookupCode.Ok, providers: @[@[1'u8, 2, 3]]).encode().len
