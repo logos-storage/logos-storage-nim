@@ -56,6 +56,8 @@ type
     requestId* {.fieldNumber: 3, required, pint.}: uint64
     code* {.fieldNumber: 1, required, ext.}: LookupCode
     providers* {.fieldNumber: 2.}: seq[seq[byte]]
+    # Experiment: requests the proxy will currently accept on this stream.
+    limit* {.fieldNumber: 4, pint.}: Opt[uint64]
 
 Protobuf.serializerForResult([LookupRequest, LookupResponse, RequestEnvelope])
 
