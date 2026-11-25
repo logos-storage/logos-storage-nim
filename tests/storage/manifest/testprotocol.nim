@@ -247,20 +247,37 @@ asyncchecksuite "Manifest protocol":
       batches.stopped
       gated.calls == @[batches.first.peerId]
 
-  test "A verified block that fails manifest decoding leaves fallbacks eligible":
+  test "A CID-verified block with invalid manifest bytes is terminal":
     let invalid = bt.Block.new(data = @[0xff'u8], codec = ManifestCodec).tryGet()
     (await serverStore.putBlock(invalid)).tryGet()
-    batches.fallback = batches.first
-    batches.first =
-      PeerRecord.init(serverSwitch.peerInfo.peerId, serverSwitch.peerInfo.addrs)
+    batches.first = batches.fallback
     clientProto.discovery = batches
-    let fetch = clientProto.fetchManifest(invalid.cid, true, gated)
-    batches.release.fire()
-    batches.finish.fire()
-    gated.release.fire()
-    let fetched = await fetch.wait(5.seconds)
+    clientProto.retries = 2
+    let fetched =
+      await clientProto.fetchManifest(invalid.cid, true, gated).wait(5.seconds)
     check:
       fetched.isErr
-      fetched.error of BlockNotFoundError
-      gated.calls == @[batches.first.peerId, batches.fallback.peerId]
+      fetched.error.msg ==
+        "Unable to store manifest: " & Manifest.decode(invalid).error.msg
+      batches.stopped
+      batches.attempts == 1
+      gated.calls == @[batches.first.peerId]
       not (await clientStore.hasBlock(invalid.cid)).tryGet()
+
+  test "A peer reporting NotFound leaves a later provider eligible":
+    let emptyPeer = newStandardSwitch()
+    emptyPeer.mount(ManifestProtocol.new(CacheStore.new(), MockDiscovery.new()))
+    await emptyPeer.start()
+    try:
+      batches.first =
+        PeerRecord.init(emptyPeer.peerInfo.peerId, emptyPeer.peerInfo.addrs)
+      clientProto.discovery = batches
+      batches.release.fire()
+      let fetched =
+        await clientProto.fetchManifest(manifestBlk.cid, true, gated).wait(5.seconds)
+      check:
+        fetched.tryGet().treeCid == manifest.treeCid
+        gated.calls == @[batches.first.peerId, batches.fallback.peerId]
+        batches.stopped
+    finally:
+      await emptyPeer.stop()
