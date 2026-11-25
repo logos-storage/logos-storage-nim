@@ -183,6 +183,28 @@ asyncchecksuite "Test Node - Basic":
     check completion.isErr
     check completion.error of RetriesExhaustedError
 
+  test "Should not fetch missing blocks when retrieving a dataset locally":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+      treeCid = md.manifest.treeCid
+
+    check (await localStore.delBlock(treeCid, 0)).isOk
+
+    downloadManager.maxBlockRetries = 1000
+    downloadManager.retryInterval = 1.hours
+
+    let stream = (await node.retrieve(md.manifestCid, local = true)).get()
+    defer:
+      await stream.close()
+
+    let data =
+      try:
+        await stream.drain().wait(5.seconds)
+      except LPStreamError:
+        newSeq[byte]()
+    check data.len < md.manifest.datasetSize.int
+
   test "Retrieve One Block":
     let
       testString = "Block 1"

@@ -364,7 +364,9 @@ proc retrieve*(
     return await self.streamSingleBlock(cid)
 
   await self.streamEntireDataset(
-    ManifestDescriptor(manifest: manifest, manifestCid: cid), transport = transport
+    ManifestDescriptor(manifest: manifest, manifestCid: cid),
+    fetchLocal = local,
+    transport = transport,
   )
 
 proc deleteSingleBlock(self: StorageNodeRef, cid: Cid): Future[?!void] {.async.} =
