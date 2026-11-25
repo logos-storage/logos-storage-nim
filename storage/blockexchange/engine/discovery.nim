@@ -31,7 +31,8 @@ declareGauge(storage_inflight_discovery, "inflight discovery requests")
 
 const
   DefaultConcurrentDiscRequests = 10
-  DefaultDiscoveryTimeout = 1.minutes
+  # Longer than the lookup timeout, so a lookup can return what it found by then.
+  DefaultDiscoveryTimeout = LookupTimeout + 10.seconds
 
 type
   DiscoveryKey = tuple[cid: Cid, transport: DownloadTransport]
