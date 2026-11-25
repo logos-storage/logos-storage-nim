@@ -234,10 +234,8 @@ proc fetchManifest*(
             lastErr = fetchErr
             continue
           without manifest =? Manifest.decode(blk), decodeErr:
-            if not useMix:
-              return failure("Unable to store manifest: " & decodeErr.msg)
-            lastErr = decodeErr
-            continue
+            # CID verification binds the decode failure to the content, across peers.
+            return failure("Unable to store manifest: " & decodeErr.msg)
 
           await lookup.cancelAndWait()
           without stored =?
