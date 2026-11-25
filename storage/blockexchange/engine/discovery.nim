@@ -39,78 +39,139 @@ type
   ProvidersCallback* =
     proc(providers: seq[PeerRecord]) {.async: (raises: [CancelledError]).}
 
+  Subscriber = ref object
+    download: ActiveDownload
+    callback: ProvidersCallback
+    next: int
+    delivery: Future[void]
+    onDone: CallbackFunc
+
+  SharedLookup = ref object
+    key: DiscoveryKey
+    batches: seq[seq[PeerRecord]]
+    subscribers: Table[uint64, Subscriber]
+    request: Future[?!void].Raising([CancelledError])
+
   DiscoveryEngine* = ref object of RootObj
-    discovery*: Discovery # Discovery interface
-    discEngineRunning*: bool # Indicates if discovery is running
-    concurrentDiscReqs: int # Concurrent discovery requests
+    discovery*: Discovery
+    discEngineRunning*: bool
+    concurrentDiscReqs: int
     discoveryQueue*: AsyncQueue[DiscoveryKey]
-    providersCallbacks*: Table[DiscoveryKey, Table[uint64, ProvidersCallback]]
-    trackedFutures*: TrackedFutures # Tracked Discovery tasks futures
-    inFlightDiscReqs*: Table[DiscoveryKey, Future[?!seq[PeerRecord]]]
+    lookups: Table[DiscoveryKey, SharedLookup]
+    trackedFutures*: TrackedFutures
+
+proc deliver(
+    lookup: SharedLookup, subscriber: Subscriber
+) {.async: (raises: [CancelledError]).} =
+  while subscriber.next < lookup.batches.len and
+      not subscriber.download.completionFuture.finished:
+    let batch = lookup.batches[subscriber.next]
+    inc subscriber.next
+    await subscriber.callback(batch)
+
+proc schedule(lookup: SharedLookup, subscriber: Subscriber) =
+  if subscriber.delivery.isNil or subscriber.delivery.finished:
+    subscriber.delivery = lookup.deliver(subscriber)
+
+proc forget(b: DiscoveryEngine, lookup: SharedLookup) =
+  if b.lookups.getOrDefault(lookup.key) == lookup:
+    b.lookups.del(lookup.key)
+
+proc runLookup(
+    b: DiscoveryEngine, lookup: SharedLookup
+) {.async: (raises: [CancelledError]).} =
+  let key = lookup.key
+  proc receive(batch: seq[PeerRecord]) =
+    lookup.batches.add(batch)
+    for subscriber in toSeq(lookup.subscribers.values):
+      lookup.schedule(subscriber)
+
+  try:
+    if b.lookups.getOrDefault(key) != lookup:
+      return
+    let deadline = Moment.now() + DefaultDiscoveryTimeout
+    lookup.request = b.discovery.findBatches(
+      key.cid, key.transport == DownloadTransport.Mix, deadline, receive
+    )
+    try:
+      # Waiting on the barrier lets the last subscriber cancel this request
+      # without cancelling its queue worker.
+      await allFutures(lookup.request).wait(deadline - Moment.now())
+      if not lookup.request.cancelled:
+        let res = await lookup.request
+        if res.isErr:
+          debug "Discovery lookup failed", cid = key.cid, error = res.error.msg
+    except AsyncTimeoutError:
+      debug "Discovery lookup timed out", cid = key.cid
+    await lookup.request.cancelAndWait()
+    while true:
+      var deliveries: seq[Future[void]]
+      for subscriber in lookup.subscribers.values:
+        if not subscriber.delivery.isNil and not subscriber.delivery.finished:
+          deliveries.add(subscriber.delivery)
+      if deliveries.len == 0:
+        break
+      await allFutures(deliveries)
+  finally:
+    b.forget(lookup)
+    if not lookup.request.isNil:
+      await noCancel lookup.request.cancelAndWait()
+    for subscriber in toSeq(lookup.subscribers.values):
+      subscriber.download.completionFuture.removeCallback(subscriber.onDone)
+      subscriber.onDone = nil
+      if not subscriber.delivery.isNil:
+        await noCancel subscriber.delivery.cancelAndWait()
+    lookup.subscribers.clear()
 
 proc discoveryTaskLoop(b: DiscoveryEngine) {.async: (raises: []).} =
-  ## Run discovery tasks
-  ## Peer availability is tracked per-download in DownloadContext.swarm.
-  ## This loop just runs discovery for CIDs that are queued.
-
   try:
     while b.discEngineRunning:
       let key = await b.discoveryQueue.get()
-      let cid = key.cid
-
-      if key in b.inFlightDiscReqs:
-        trace "Discovery request already in progress", cid
+      let lookup = b.lookups.getOrDefault(key)
+      if lookup.isNil:
         continue
-
-      trace "Running discovery task for cid", cid
-
-      let request =
-        b.discovery.find(cid, useMix = key.transport == DownloadTransport.Mix)
-      b.inFlightDiscReqs[key] = request
-      storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
-
-      defer:
-        b.inFlightDiscReqs.del(key)
-        storage_inflight_discovery.set(b.inFlightDiscReqs.len.int64)
-
-      let providers =
-        if await request.withTimeout(DefaultDiscoveryTimeout):
-          await request
-        else:
-          seq[PeerRecord].failure("Provider lookup timed out")
-
-      if providers.isErr:
-        debug "Discovery lookup failed", cid, error = providers.error.msg
-
-      var callbacks: Table[uint64, ProvidersCallback]
-      # Callbacks added while these run still find the lookup in flight and must get this result.
-      while b.providersCallbacks.pop(key, callbacks):
-        if providers.isOk:
-          await allFutures(callbacks.values.toSeq.mapIt(it(providers.get())))
+      storage_inflight_discovery.inc()
+      try:
+        await b.runLookup(lookup)
+      finally:
+        storage_inflight_discovery.dec()
   except CancelledError:
     trace "Discovery task cancelled"
-    return
-
-  info "Exiting discovery task runner"
 
 func lookupPending*(b: DiscoveryEngine, download: ActiveDownload): bool =
-  let key = (download.manifestCid, download.ctx.transport)
-  key in b.discoveryQueue or key in b.inFlightDiscReqs
+  (download.manifestCid, download.ctx.transport) in b.lookups
 
 proc queueFindBlocksReq*(
     b: DiscoveryEngine, download: ActiveDownload, callback: ProvidersCallback
 ) =
+  if download.cancelled or download.completionFuture.finished:
+    return
   let key = (download.manifestCid, download.ctx.transport)
-  if not b.lookupPending(download):
+  var lookup = b.lookups.getOrDefault(key)
+  if lookup.isNil:
+    lookup = SharedLookup(key: key)
     try:
-      b.discoveryQueue.putNoWait(key)
+      if key notin b.discoveryQueue:
+        b.discoveryQueue.putNoWait(key)
     except CatchableError as exc:
       warn "Exception queueing discovery request", exc = exc.msg
       return
+    b.lookups[key] = lookup
+  if download.id in lookup.subscribers:
+    return
+  let subscriber = Subscriber(download: download, callback: callback)
+  proc done(data: pointer) =
+    if not subscriber.delivery.isNil:
+      subscriber.delivery.cancelSoon()
+    if lookup.subscribers.values.toSeq.allIt(it.download.completionFuture.finished):
+      b.forget(lookup)
+      if not lookup.request.isNil:
+        lookup.request.cancelSoon()
 
-  b.providersCallbacks.mgetOrPut(key, initTable[uint64, ProvidersCallback]())[
-    download.id
-  ] = callback
+  subscriber.onDone = done
+  download.completionFuture.addCallback(done)
+  lookup.subscribers[download.id] = subscriber
+  lookup.schedule(subscriber)
 
 proc start*(b: DiscoveryEngine) {.async: (raises: []).} =
   ## Start the discengine task
@@ -141,6 +202,13 @@ proc stop*(b: DiscoveryEngine) {.async: (raises: []).} =
   b.discEngineRunning = false
   trace "Stopping discovery loop and tasks"
   await b.trackedFutures.cancelTracked()
+  b.discoveryQueue.clear()
+  for lookup in toSeq(b.lookups.values):
+    for subscriber in lookup.subscribers.values:
+      subscriber.download.completionFuture.removeCallback(subscriber.onDone)
+      subscriber.onDone = nil
+    lookup.subscribers.clear()
+    b.forget(lookup)
   trace "Discovery loop and tasks stopped"
 
   trace "Discovery engine stopped"
@@ -157,6 +225,4 @@ proc new*(
     concurrentDiscReqs: concurrentDiscReqs,
     discoveryQueue: newAsyncQueue[DiscoveryKey](concurrentDiscReqs),
     trackedFutures: TrackedFutures.new(),
-    inFlightDiscReqs: initTable[DiscoveryKey, Future[?!seq[PeerRecord]]](),
-    providersCallbacks: initTable[DiscoveryKey, Table[uint64, ProvidersCallback]](),
   )

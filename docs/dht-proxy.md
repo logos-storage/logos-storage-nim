@@ -46,13 +46,27 @@ proxy returns `ErrResponseTooLarge`. An empty result returns `NotFound`.
 
 The client requires a usable local Mix address and a started transport. Missing
 Mix information, unavailable proxies, unsupported codecs, and remote error
-statuses fail the attempt. Discovery tries the remaining proxy candidates in
-random order. A successful `NotFound` response completes the lookup with an empty
-result. Exhausting the candidates returns an error without direct fallback.
+statuses fail the attempt.
 
-Each proxy attempt has a 90-second deadline covering session establishment,
-stream opening, and the request/response exchange. Timeout or cancellation cancels
-the exchange and closes its stream. The proxy limits concurrent exchanges to
+A provider lookup for one CID asks up to five distinct eligible proxies at once,
+chosen in random order, each on its own stream. Until a proxy returns providers,
+a failed, timed-out or `NotFound` attempt frees its place for the next candidate.
+After the first provider list arrives, discovery starts no further attempts and
+still passes on lists from the attempts already in flight. Block discovery uses
+every list. A manifest fetch tries one provider at a time and keeps later distinct
+providers as fallbacks. The lookup succeeds, possibly with no providers, when at
+least one proxy answered. If every attempt fails, it returns an error without
+direct fallback.
+
+A lookup has a 60-second deadline. Each proxy attempt may use all the time left
+on it, covering session establishment, stream opening, and the request/response
+exchange. An attempt that replaces a failed or empty one starts later and gets
+only the time that remains. If the first five attempts stay silent until the
+deadline, no replacement starts. Timeout or cancellation cancels the exchange
+and closes its stream. A proxy may still finish a DHT search it has already
+started.
+
+The proxy limits concurrent exchanges to
 100 by default (`--dht-proxy-max-inflight` in Storage), reads the request within
 five seconds, and bounds the full exchange to 90 seconds. Requests beyond capacity
 receive `ErrTooBusy`. These limits bound application messages and work; MixTransport
