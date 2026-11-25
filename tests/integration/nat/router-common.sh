@@ -9,6 +9,12 @@ set -euo pipefail
 # defined in the compose file.
 wanif=$(ip -o -4 addr show | awk -v ip="$ROUTER_WAN_IP" '$0 ~ ip {print $2; exit}')
 
+for subnet in ${WAN_SUBNETS:-}; do
+  if [[ -z "$(ip -o -4 route show "$subnet")" ]]; then
+    ip route add "$subnet" dev "$wanif"
+  fi
+done
+
 # Actual NAT (masquerading) rule.
 if ! iptables -t nat -A POSTROUTING -s "$LAN_SUBNET" -o "$wanif" -j MASQUERADE; then
   echo "ERROR: iptables NAT failed. Load netfilter modules on the host:" >&2

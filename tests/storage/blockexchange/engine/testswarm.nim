@@ -177,6 +177,19 @@ suite "BlockAvailability":
     check merged.ranges[0] == IndexRange(start: 0'u64, count: 4'u64)
     check merged.ranges[1] == IndexRange(start: 6'u64, count: 2'u64)
 
+  test "Should drop ranges outside the needed range":
+    let
+      avail = BlockAvailability.fromRanges(
+        @[
+          IndexRange(start: 0'u64, count: 30'u64),
+          IndexRange(start: 50'u64, count: 10'u64),
+        ]
+      )
+      kept = avail.keepOverlapping((start: 0'u64, count: 10'u64))
+
+    check kept.kind == bakRanges
+    check kept.ranges == @[IndexRange(start: 0'u64, count: 30'u64)]
+
 suite "SwarmPeer":
   test "touch updates lastSeen":
     let
@@ -344,7 +357,9 @@ suite "Swarm":
     discard swarm.addPeer(newer, BlockAvailability.unknown())
     swarm.getPeer(older).get().lastSeen = Moment.now() - 10.seconds
 
-    check swarm.replaceUnknownPeer(joining, BlockAvailability.complete())
+    check swarm.replaceIdlePeer(
+      joining, BlockAvailability.complete(), (start: 0'u64, count: 1'u64)
+    )
     check swarm.getPeer(older).isNone
     check swarm.getPeer(newer).isSome
     check swarm.getPeer(joining).isSome
@@ -360,7 +375,9 @@ suite "Swarm":
     discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
     swarm.banPeer(banned)
 
-    check not swarm.replaceUnknownPeer(banned, BlockAvailability.complete())
+    check not swarm.replaceIdlePeer(
+      banned, BlockAvailability.complete(), (start: 0'u64, count: 1'u64)
+    )
     check swarm.getPeer(unknownPeer).isSome
     check swarm.getPeer(banned).isNone
 
@@ -374,8 +391,50 @@ suite "Swarm":
       joining = PeerId.example
     discard swarm.addPeer(unknownPeer, BlockAvailability.unknown())
 
-    check not swarm.replaceUnknownPeer(joining, BlockAvailability.unknown())
+    check not swarm.replaceIdlePeer(
+      joining, BlockAvailability.unknown(), (start: 0'u64, count: 1'u64)
+    )
     check swarm.getPeer(unknownPeer).isSome
+    check swarm.getPeer(joining).isNone
+
+  test "Should replace a peer with nothing in the needed range":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 1, deltaTarget: 1, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      aheadPeer = PeerId.example
+      joining = PeerId.example
+    discard swarm.addPeer(
+      aheadPeer, BlockAvailability.fromRanges(@[IndexRange(start: 10, count: 10)])
+    )
+
+    check swarm.replaceIdlePeer(
+      joining,
+      BlockAvailability.fromRanges(@[IndexRange(start: 0, count: 5)]),
+      (start: 0'u64, count: 5'u64),
+    )
+    check swarm.getPeer(aheadPeer).isNone
+    check swarm.getPeer(joining).isSome
+
+  test "Should not replace a peer with blocks in the needed range":
+    let config =
+      SwarmConfig(deltaMin: 1, deltaMax: 1, deltaTarget: 1, maxPeerFailures: 3)
+    swarm = Swarm.new(config)
+
+    let
+      neededPeer = PeerId.example
+      joining = PeerId.example
+    discard swarm.addPeer(
+      neededPeer, BlockAvailability.fromRanges(@[IndexRange(start: 0, count: 20)])
+    )
+
+    check not swarm.replaceIdlePeer(
+      joining,
+      BlockAvailability.fromRanges(@[IndexRange(start: 0, count: 5)]),
+      (start: 0'u64, count: 5'u64),
+    )
+    check swarm.getPeer(neededPeer).isSome
     check swarm.getPeer(joining).isNone
 
   test "Should not re-query a stale unknown peer queried recently":

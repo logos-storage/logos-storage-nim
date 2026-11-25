@@ -309,7 +309,7 @@ proc handleConnection*(
   let peer = self.getOrCreatePeer(conn.peerId)
   await peer.readLoop(conn)
 
-method init*(self: BlockExcNetwork) {.raises: [].} =
+proc init*(self: BlockExcNetwork) {.raises: [].} =
   ## Perform protocol initialization
   ##
 

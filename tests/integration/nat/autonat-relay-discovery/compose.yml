@@ -1,0 +1,142 @@
+# NAT autonat-relay-discovery scenario — see README.md. Run via testautonatrelaydiscovery.nim.
+name: nat-autonat-relay-discovery
+
+x-addresses:
+  wan_subnet_1: &wan_subnet_1 7.7.7.0/24
+  wan_subnet_2: &wan_subnet_2 39.39.39.0/24
+  wan_subnet_3: &wan_subnet_3 71.71.71.0/24
+  wan_subnets: &wan_subnets "7.7.7.0/24 39.39.39.0/24 71.71.71.0/24"
+  lan_subnet: &lan_subnet 10.99.0.0/24
+  bootstrap_ip: &bootstrap_ip 7.7.7.10
+  autonat_server_ip: &autonat_server_ip 39.39.39.11
+  relay_server_ip: &relay_server_ip 71.71.71.12
+  client_ip: &client_ip 7.7.7.20
+  router_wan_ip: &router_wan_ip 7.7.7.2
+  router_lan_ip: &router_lan_ip 10.99.0.2
+  node_ip: &node_ip 10.99.0.10
+
+networks:
+  wan:
+    internal: true
+    ipam:
+      config:
+        - subnet: *wan_subnet_1
+        - subnet: *wan_subnet_2
+        - subnet: *wan_subnet_3
+  lan:
+    ipam:
+      config:
+        - subnet: *lan_subnet
+
+services:
+  router:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router_wan_ip
+      lan:
+        ipv4_address: *router_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router_wan_ip
+      LAN_SUBNET: *lan_subnet
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  bootstrap:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    networks:
+      wan:
+        ipv4_address: *bootstrap_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *bootstrap_ip
+
+  autonat_server:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [bootstrap]
+    networks:
+      wan:
+        ipv4_address: *autonat_server_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *autonat_server_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+      - autonat
+
+  relay_server:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [bootstrap]
+    networks:
+      wan:
+        ipv4_address: *relay_server_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *relay_server_ip
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+      - relay
+
+  client:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [bootstrap, autonat_server, relay_server]
+    networks:
+      wan:
+        ipv4_address: *client_ip
+    environment:
+      WAN_SUBNETS: *wan_subnets
+    ports:
+      - "127.0.0.1:18096:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - use-identify
+      - *bootstrap_ip
+      - -%-
+      - with_args
+      - --nat-schedule-interval=5s
+
+  node:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router, bootstrap, autonat_server, relay_server]
+    networks:
+      lan:
+        ipv4_address: *node_ip
+    ports:
+      - "127.0.0.1:18095:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router_lan_ip
+      - *bootstrap_ip

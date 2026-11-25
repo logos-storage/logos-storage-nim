@@ -9,104 +9,114 @@
 
 {.push raises: [], gcsafe.}
 
-import pkg/libp2p
-import pkg/questionable
-import pkg/questionable/results
+import std/sequtils
+
+import pkg/libp2p/cid
+import pkg/libp2p/multicodec
+import pkg/protobuf_serialization
+import pkg/results
 import pkg/stew/byteutils
 import pkg/serde/json
 
 import ../units
-import ../errors
 import ./merkletree
 
 const MaxMerkleTreeSize = 100.MiBs.uint
 const MaxMerkleProofSize = 1.MiBs.uint
 
+type
+  MerkleNode {.proto2.} = object
+    node {.fieldNumber: 1, required.}: seq[byte]
+
+  MerkleTreeMessage {.proto2.} = object
+    mcodec {.fieldNumber: 1, required, pint.}: uint64
+    leavesCount {.fieldNumber: 2, required, pint.}: uint64
+    nodes {.fieldNumber: 3.}: seq[MerkleNode]
+
+  MerkleProofMessage {.proto2.} = object
+    mcodec {.fieldNumber: 1, required, pint.}: uint64
+    index {.fieldNumber: 2, required, pint.}: uint64
+    nleaves {.fieldNumber: 3, required, pint.}: uint64
+    path {.fieldNumber: 4.}: seq[MerkleNode]
+
+proc decodeTreeMessage(
+    data: seq[byte]
+): MerkleTreeMessage {.raises: [SerializationError].} =
+  decode(Protobuf, data, MerkleTreeMessage)
+
+proc decodeProofMessage(
+    data: seq[byte]
+): MerkleProofMessage {.raises: [SerializationError].} =
+  decode(Protobuf, data, MerkleProofMessage)
+
 proc encode*(self: StorageMerkleTree): seq[byte] =
-  var pb = initProtoBuffer()
-  pb.write(1, self.mcodec.uint64)
-  pb.write(2, self.leavesCount.uint64)
+  var nodes: seq[MerkleNode]
   for node in self.nodes:
-    var nodesPb = initProtoBuffer()
-    nodesPb.write(1, node)
-    nodesPb.finish()
-    pb.write(3, nodesPb)
+    nodes.add(MerkleNode(node: node))
 
-  pb.finish
-  pb.buffer
+  encode(
+    Protobuf,
+    MerkleTreeMessage(
+      mcodec: self.mcodec.uint64, leavesCount: self.leavesCount.uint64, nodes: nodes
+    ),
+  )
 
-proc decode*(_: type StorageMerkleTree, data: seq[byte]): ?!StorageMerkleTree =
-  var pb = initProtoBuffer(data)
-  var mcodecCode: uint64
-  var leavesCount: uint64
-  discard ?pb.getField(1, mcodecCode).mapFailure
-  discard ?pb.getField(2, leavesCount).mapFailure
+proc decode*(
+    _: type StorageMerkleTree, data: seq[byte]
+): Result[StorageMerkleTree, ref CatchableError] =
+  let message =
+    try:
+      decodeTreeMessage(data)
+    except SerializationError as exc:
+      return err(exc)
 
-  let mcodec = MultiCodec.codec(mcodecCode.int)
+  let mcodec = MultiCodec.codec(message.mcodec.int)
   if mcodec == InvalidMultiCodec:
-    return failure("Invalid MultiCodec code " & $mcodecCode)
+    return
+      err(newException(CatchableError, "Invalid MultiCodec code " & $message.mcodec))
 
-  var
-    nodesBuff: seq[seq[byte]]
-    nodes: seq[ByteHash]
-
-  if ?pb.getRepeatedField(3, nodesBuff).mapFailure:
-    for nodeBuff in nodesBuff:
-      var node: ByteHash
-      discard ?initProtoBuffer(nodeBuff).getField(1, node).mapFailure
-      nodes.add node
-
-  StorageMerkleTree.fromNodes(mcodec, nodes, leavesCount.int)
+  StorageMerkleTree.fromNodes(
+    mcodec, message.nodes.mapIt(it.node), message.leavesCount.int
+  )
 
 proc encode*(self: StorageMerkleProof): seq[byte] =
-  var pb = initProtoBuffer()
-  pb.write(1, self.mcodec.uint64)
-  pb.write(2, self.index.uint64)
-  pb.write(3, self.nleaves.uint64)
+  encode(
+    Protobuf,
+    MerkleProofMessage(
+      mcodec: self.mcodec.uint64,
+      index: self.index.uint64,
+      nleaves: self.nleaves.uint64,
+      path: self.path.mapIt(MerkleNode(node: it)),
+    ),
+  )
 
-  for node in self.path:
-    var nodesPb = initProtoBuffer()
-    nodesPb.write(1, node)
-    nodesPb.finish()
-    pb.write(4, nodesPb)
+proc decode*(
+    _: type StorageMerkleProof, data: seq[byte]
+): Result[StorageMerkleProof, ref CatchableError] =
+  let message =
+    try:
+      decodeProofMessage(data)
+    except SerializationError as exc:
+      return err(exc)
 
-  pb.finish
-  pb.buffer
-
-proc decode*(_: type StorageMerkleProof, data: seq[byte]): ?!StorageMerkleProof =
-  var pb = initProtoBuffer(data)
-  var mcodecCode: uint64
-  var index: uint64
-  var nleaves: uint64
-  discard ?pb.getField(1, mcodecCode).mapFailure
-
-  let mcodec = MultiCodec.codec(mcodecCode.int)
+  let mcodec = MultiCodec.codec(message.mcodec.int)
   if mcodec == InvalidMultiCodec:
-    return failure("Invalid MultiCodec code " & $mcodecCode)
+    return
+      err(newException(CatchableError, "Invalid MultiCodec code " & $message.mcodec))
 
-  discard ?pb.getField(2, index).mapFailure
-  discard ?pb.getField(3, nleaves).mapFailure
+  StorageMerkleProof.init(
+    mcodec, message.index.int, message.nleaves.int, message.path.mapIt(it.node)
+  )
 
-  var
-    nodesBuff: seq[seq[byte]]
-    nodes: seq[ByteHash]
-
-  if ?pb.getRepeatedField(4, nodesBuff).mapFailure:
-    for nodeBuff in nodesBuff:
-      var node: ByteHash
-      let nodePb = initProtoBuffer(nodeBuff)
-      discard ?nodePb.getField(1, node).mapFailure
-      nodes.add node
-
-  StorageMerkleProof.init(mcodec, index.int, nleaves.int, nodes)
-
-proc fromJson*(_: type StorageMerkleProof, json: JsonNode): ?!StorageMerkleProof =
+proc fromJson*(
+    _: type StorageMerkleProof, json: JsonNode
+): Result[StorageMerkleProof, ref CatchableError] =
   expectJsonKind(Cid, JString, json)
   var bytes: seq[byte]
   try:
     bytes = hexToSeqByte(json.str)
-  except ValueError as err:
-    return failure(err)
+  except ValueError as exc:
+    return err(exc)
 
   StorageMerkleProof.decode(bytes)
 

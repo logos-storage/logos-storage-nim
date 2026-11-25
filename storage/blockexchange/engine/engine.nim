@@ -208,7 +208,9 @@ proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
     for provider in connected & unconnected:
       let peerId = provider.peerId
       if swarm.addPeer(peerId, BlockAvailability.unknown()) or
-          swarm.replaceUnknownPeer(peerId, BlockAvailability.unknown()):
+          swarm.replaceIdlePeer(
+            peerId, BlockAvailability.unknown(), download.ctx.neededRange()
+          ):
         dialing.add(provider)
 
     let dialed = await allFinished(dialing.mapIt(blockExc.network.dialPeer(it)))
@@ -684,12 +686,12 @@ proc downloadWorker(
       let swarm = download.ctx.swarm
       var shouldBroadcast = false
 
-      if swarm.peersNeeded() != shHealthy:
-        blockExc.admitUserConnectedPeers(swarm)
-        self.searchForNewPeers(download)
-
       if swarm.peersWithRange(start, count).len == 0:
         shouldBroadcast = true
+
+      if shouldBroadcast or swarm.peersNeeded() != shHealthy:
+        blockExc.admitUserConnectedPeers(swarm)
+        self.searchForNewPeers(download)
 
       if shouldBroadcast:
         let swarmPeers = swarm.members()

@@ -8,13 +8,14 @@
 
 {.push raises: [].}
 
-import std/[options, net, os, sequtils, json]
+import std/[options, net, os, random, sequtils, sets, json]
 import results
 
 import pkg/chronos
 import pkg/chronicles
 import pkg/libp2p
 import pkg/libp2p/services/autorelayservice
+from pkg/libp2p/protocols/connectivity/autonatv2/utils import hasIncomingConn
 import pkg/libp2p/protocols/connectivity/autonatv2/service
 import pkg/libp2p/protocols/connectivity/relay/relay as relayProtocol
 import pkg/libp2p/protocols/connectivity/dcutr/client as dcutrClientModule
@@ -160,14 +161,11 @@ method handleNatStatus*(
   of Unknown:
     discard
   of Reachable:
-    if dialBackAddr.isSome:
-      if autoRelayService.isRunning:
-        await autoRelayService.stop(switch)
-        debug "AutoRelayService stopped"
+    if autoRelayService.isRunning:
+      await autoRelayService.stop(switch)
+      debug "AutoRelayService stopped"
 
-      await discovery.setServerMode(isServer = true)
-    else:
-      warn "Empty dialback address in AutoNat when node is Reachable"
+    await discovery.setServerMode(isServer = true)
   of NotReachable:
     await discovery.setServerMode(isServer = false)
 
@@ -200,8 +198,11 @@ method handleNatStatus*(
     if not autoRelayService.isRunning:
       debug "No port mapping found let's start autorelay"
 
-      await autoRelayService.start(switch)
-      debug "AutoRelayService started"
+      try:
+        await autoRelayService.start(switch)
+        debug "AutoRelayService started"
+      except LPError as exc:
+        warn "Failed to start AutoRelayService", err = exc.msg
 
 proc reachabilityStr*(autonat: Option[AutonatV2Service]): string =
   if autonat.isSome:
@@ -227,12 +228,67 @@ proc peerConnections*(switch: Switch): JsonNode =
     entry["direct"] = newJBool(muxers.anyIt(not isRelayed(it.connection)))
     result.add(entry)
 
-proc findAutonatServers*(bootstrapNodes: seq[SignedPeerRecord]): seq[SignedPeerRecord] =
-  ## Returns the list of Autonat servers.
-  ## The nodes are expected to be directly reachable.
-  ## Currently returns bootstrap nodes. In the future, any network participant
-  ## confirmed reachable by AutoNAT and running as AutonatServer could be included.
-  bootstrapNodes
+proc countAutonatHelpers*(switch: Switch): int =
+  # Match peer selection in libp2p's AutonatV2Verifier.
+  switch.connectedPeers(Direction.Out).countIt(
+    AutonatServiceId in switch.peerStore[ProtoBook][it] and
+      not switch.hasIncomingConn(it)
+  )
+
+proc relayPeers*(relayAddresses: seq[MultiAddress]): HashSet[PeerId] =
+  for address in relayAddresses:
+    let circuit = address[0 .. ^2].valueOr:
+      continue
+    let relay = parseFullAddress(circuit).valueOr:
+      continue
+    result.incl(relay[0])
+
+proc connectMissing*(
+    discovery: Discovery,
+    switch: Switch,
+    serviceId: string,
+    servers: seq[PeerRecord],
+    missing: int,
+) {.async: (raises: [CancelledError]).} =
+  proc connect(server: PeerRecord): Future[bool] {.async: (raises: [CancelledError]).} =
+    try:
+      # AutoNAT and AutoRelay use outbound connections only, so an inbound one is not reused,
+      # and NAT needs them even when the connection slots are full.
+      await switch.connect(
+        server.peerId,
+        server.addresses.mapIt(it.address),
+        forceDial = true,
+        reuseConnection = false,
+      )
+      return true
+    except CancelledError as exc:
+      raise exc
+    except CatchableError as e:
+      warn "Cannot connect to NAT server",
+        serviceId, peer = server.peerId, error = e.msg
+      return false
+
+  if missing <= 0:
+    return
+
+  let outbound = switch.connectedPeers(Direction.Out)
+  var candidates = servers.filterIt(it.peerId notin outbound)
+  shuffle(candidates)
+  if candidates.len > missing:
+    candidates.setLen(missing)
+
+  debug "Connecting to NAT servers", serviceId, missing, connecting = candidates.len
+
+  let connects = candidates.mapIt(connect(it))
+  try:
+    await allFutures(connects)
+  except CancelledError as exc:
+    await noCancel allFutures(connects.mapIt(it.cancelAndWait()))
+    raise exc
+
+  for i, fut in connects:
+    if not fut.value():
+      discovery.removeServiceProvider(serviceId, candidates[i].peerId)
 
 # Hole punching logic below is adapted from libp2p's HPService
 # (libp2p/services/hpservice.nim). HPService cannot be used directly because it
@@ -288,9 +344,10 @@ proc holePunchIfRelayed*(
     await closeRelayConn(relayedConn)
     return
 
-  var natAddrs = switch.peerStore.getMostObservedProtosAndPorts()
+  var natAddrs = switch.addressManager.mostObservedProtosAndPorts()
   if natAddrs.len == 0:
-    natAddrs = switch.peerInfo.listenAddrs.mapIt(switch.peerStore.guessDialableAddr(it))
+    natAddrs =
+      switch.peerInfo.listenAddrs.mapIt(switch.addressManager.externalAddrFor(it))
   try:
     await DcutrClient.new().startSync(switch, peerId, natAddrs)
     await closeRelayConn(relayedConn)
