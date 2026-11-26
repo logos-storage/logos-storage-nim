@@ -184,8 +184,9 @@ proc decode*(T: typedesc[NameRecord], bytes: seq[byte]): Result[NameRecord, stri
   ok(record)
 
 proc name*(publicKey: PublicKey, label: string): Result[Name, ref CatchableError] =
-  ## The name is the SHA2-256 hash of the public key bytes
-  ## followed by the label.
+  ## The name is the SHA2-256 hash of a domain-separated serialization of 
+  ## the public key bytes, which prepends a unique prefix per public key 
+  ## algorithm, followed by the label.
   ## Two different pairs never give the same name.
   let labelCheck = checkLabel(label)
 
