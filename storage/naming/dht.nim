@@ -103,10 +103,21 @@ method select*(
     let signed = decodeNameRecord(entry.value.toBytes()).valueOr:
       continue
 
+    # A conflict is detected when 2 records have the same seqnum with
+    # a different CID.
     let conflicts =
       newestIndex >= 0 and signed.data.seqnum == newest.seqnum and
       signed.data.cid != newest.cid
 
+    # Here there are 3 cases:
+    #  1. newestIndex = -1: this is the first iteration, so we set
+    #     newestIndex to the first item, 0.
+    #  2. A conflict is detected (same seqnum, another CID): newestIndex is
+    #     updated to the current item, so the last one in the list wins. For a
+    #     put, the list is [received, stored], so the stored record stays and
+    #     the conflicting one is refused.
+    #  3. The record `isNewer`: a higher seqnum, or the same seqnum and a
+    #     later expiration.
     if newestIndex < 0 or conflicts or signed.data.isNewer(newest):
       newestIndex = i
       newest = signed.data
