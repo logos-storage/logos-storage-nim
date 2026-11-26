@@ -13,7 +13,7 @@ import pkg/chronos
 import pkg/datastore
 import pkg/libp2p
 import pkg/questionable/results
-import pkg/stew/byteutils
+import pkg/stew/base64
 
 import ../clock
 import ../discovery
@@ -55,9 +55,9 @@ proc new*(
   )
 
 proc persistenceKeyFromName(name: Name): Key =
-  ## The name is raw bytes, so it is written in hex to make a valid key.
-  Key.init(StorageNamesNamespace & "/" & byteutils.toHex(name)).expect(
-    "The namespace is constant and the name is written in hex"
+  ## The name is raw bytes, so it is written in base64url to make a valid key.
+  Key.init(StorageNamesNamespace & "/" & Base64Url.encode(name)).expect(
+    "The namespace is constant and the name is written in base64url"
   )
 
 proc name(self: NamePublisherRef, label: string): Result[Name, ref CatchableError] =
