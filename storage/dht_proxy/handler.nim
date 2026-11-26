@@ -55,6 +55,16 @@ proc handleLookupRequest(
     self: DhtProxyProtocol, conn: Connection
 ) {.async: (raises: [CancelledError]).} =
   try:
+    if self.inFlight >= self.maxInFlight:
+      debug "DHT proxy at capacity, replying ErrTooBusy",
+        inFlight = self.inFlight, max = self.maxInFlight
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrTooBusy))
+      return
+
+    inc self.inFlight
+    defer:
+      dec self.inFlight
+
     let reqBytes =
       try:
         await conn.readLp(MaxLookupRequestBytes).wait(DhtProxyRequestReadTimeout)
@@ -64,25 +74,15 @@ proc handleLookupRequest(
 
     let req = LookupRequest.decode(reqBytes).valueOr:
       warn "Failed to decode lookup request"
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrDecodeFailed).encode())
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrDecodeFailed))
       return
-
-    if self.inFlight >= self.maxInFlight:
-      debug "DHT proxy at capacity, replying ErrTooBusy",
-        inFlight = self.inFlight, max = self.maxInFlight
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrTooBusy).encode())
-      return
-
-    inc self.inFlight
-    defer:
-      dec self.inFlight
 
     let resp =
       case req.queryType
       of FindProviders:
         await self.handleFindProviders(req.queryBytes)
 
-    await conn.writeLp(resp.encode())
+    await conn.sendResponse(resp)
   except CancelledError as exc:
     raise exc
   except LPStreamError as exc:
@@ -101,7 +101,9 @@ proc new*(
       conn: Connection, proto: string
   ): Future[void] {.async: (raises: [CancelledError]).} =
     try:
-      await self.handleLookupRequest(conn)
+      await self.handleLookupRequest(conn).wait(DhtProxyExchangeTimeout)
+    except AsyncTimeoutError:
+      debug "DHT proxy exchange timed out"
     finally:
       await noCancel conn.close()
 

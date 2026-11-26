@@ -10,7 +10,8 @@
 {.push raises: [].}
 
 import pkg/chronos
-import pkg/libp2p_mix
+import pkg/libp2p/stream/connection
+from pkg/libp2p_mix_transport import TransportStream
 import pkg/protobuf_serialization
 import pkg/protobuf_serialization/std/enums
 import pkg/protobuf_serialization/pkg/results
@@ -18,18 +19,15 @@ import pkg/protobuf_serialization/pkg/results
 import ../logutils
 import ../utils/protobuf/serializer
 
-const DhtProxyCodec* = "/storage/dht-proxy/1.0.0"
+const DhtProxyCodec* = "/storage/dht-proxy/2.0.0"
 
 const DefaultMaxInFlightLookups* = 100
 const DhtProxyRequestReadTimeout* = 5.seconds
 
-let MaxLookupRequestBytes* = getMaxMessageSizeForCodec(DhtProxyCodec, 1).expect(
-    "DhtProxyCodec framing leaves no room for a Sphinx forward payload"
-  )
-
-let MaxLookupResponseBytes* = getMaxMessageSizeForCodec(DhtProxyCodec, 0).expect(
-    "DhtProxyCodec framing leaves no room for a Sphinx reply payload"
-  )
+# Stream limits are independent of Sphinx packet capacity.
+const MaxLookupRequestBytes* = 4 * 1024
+const MaxLookupResponseBytes* = 256 * 1024
+const DhtProxyExchangeTimeout* = 90.seconds
 
 type
   QueryType* {.pure.} = enum
@@ -53,6 +51,15 @@ type
     providers* {.fieldNumber: 2.}: seq[seq[byte]]
 
 Protobuf.serializerForResult([LookupRequest, LookupResponse])
+
+proc sendResponse*(
+    conn: Connection, response: LookupResponse
+) {.async: (raises: [CancelledError, LPStreamError]).} =
+  await conn.writeLp(response.encode())
+  if conn of TransportStream:
+    # Closing a Mix stream cancels retransmission. Let the client close after
+    # consuming the response. Both handlers bound this wait by the exchange deadline.
+    await conn.join()
 
 proc packProviders*(
     providers: seq[seq[byte]], budget_bytes: int
