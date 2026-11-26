@@ -183,7 +183,7 @@ proc publish*(
 
   ok(signed)
 
-proc unpublish*(
+proc stopPublishing*(
     self: NamePublisherRef, label: string
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
   ## Deletes the stored name record.

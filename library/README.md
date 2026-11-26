@@ -116,7 +116,7 @@ storage_ctx_destroy(ctx);
 | `storage_ctx_get_advertise` | `cid` | `"true"` or `"false"` |
 | `storage_ctx_set_advertise` | `cid`, `advertise` | the new setting |
 | `storage_ctx_name_publish` | `label`, `cid`, `seqnum` | the name key |
-| `storage_ctx_name_unpublish` | `label` | empty |
+| `storage_ctx_name_stop_publishing` | `label` | empty |
 | `storage_ctx_name_refresh` | `nameKey` | empty |
 | `storage_ctx_name_resolve` | `nameKey` | the CID, empty when the DHT doesn't have a name record |
 | `storage_ctx_name_is_key` | `nameKey` | `"true"` or `"false"` |
@@ -183,7 +183,7 @@ The name API lets you point a DHT key, represented as a CID, to a dataset CID. T
 - The call fails when `seqnum` is equal to the one of the stored name record and `cid` is another CID. So two calls with `seqnum` 0 and two CIDs in the same second: the second one fails.
 - The call succeeds when the name record is persisted, even if the DHT doesn't take it. The next republish advertises it again.
 
-`name_unpublish` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
+`name_stop_publishing` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
 
 `name_refresh` reads the name record of the `nameKey` in the DHT and advertises it again, unchanged. Any node can refresh any name. The call fails when the DHT doesn't have a name record for the `nameKey`.
 

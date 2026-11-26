@@ -741,7 +741,7 @@ paths:
     delete:
       summary: "Stop publishing the name record corresponding to the label."
       tags: [Names]
-      operationId: unpublishName
+      operationId: stopPublishingName
       parameters:
         - name: label
           in: query

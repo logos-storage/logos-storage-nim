@@ -818,7 +818,7 @@ proc initNamesApi(
     ##
     var headers = buildCorsHeaders("DELETE", allowedOrigin)
 
-    (await namePublisher.unpublish(request.query.getString("label", ""))).isOkOr:
+    (await namePublisher.stopPublishing(request.query.getString("label", ""))).isOkOr:
       return RestApiResponse.error(Http400, error.msg, headers = headers)
 
     resp.status = Http204

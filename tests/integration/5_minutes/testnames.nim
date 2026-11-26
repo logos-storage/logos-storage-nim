@@ -245,7 +245,7 @@ twonodessuite "Names":
 
     check response.status == 403
 
-  test "unpublish deletes the name record of a label", namesConfig:
+  test "stop publishing deletes the name record of a label", namesConfig:
     let
       cid = (await client1.upload("catalog contents")).get
       otherCid = (await client1.upload("other catalog contents")).get
@@ -256,9 +256,9 @@ twonodessuite "Names":
 
     check published.status == 200
 
-    let unpublished = await client1.unpublishNameRaw(@{"label": SpecialLabel})
+    let stopped = await client1.stopPublishingNameRaw(@{"label": SpecialLabel})
 
-    check unpublished.status == 204
+    check stopped.status == 204
 
     # If the name record were still stored, the same seqnum with another CID
     # would be refused.
@@ -268,8 +268,8 @@ twonodessuite "Names":
 
     check republished.status == 200
 
-  test "unpublish refuses a request without a label", namesConfig:
-    let response = await client1.unpublishNameRaw(@[])
+  test "stop publishing refuses a request without a label", namesConfig:
+    let response = await client1.stopPublishingNameRaw(@[])
 
     check response.status == 400
 

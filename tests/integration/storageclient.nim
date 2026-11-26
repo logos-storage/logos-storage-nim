@@ -287,7 +287,7 @@ proc publishNameRaw*(
   let url = client.baseurl & "/names?" & encodeQuery(params, usePlus = false)
   return client.post(url, headers = headers)
 
-proc unpublishNameRaw*(
+proc stopPublishingNameRaw*(
     client: StorageClient, params: seq[(string, string)]
 ): Future[HttpClientResponseRef] {.
     async: (raw: true, raises: [CancelledError, HttpError])

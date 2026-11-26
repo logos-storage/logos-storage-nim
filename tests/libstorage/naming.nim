@@ -55,8 +55,8 @@ asyncchecksuite "Libstorage - names":
     if res.isErr:
       check "invalid CID" in res.error
 
-  test "unpublish refuses an empty label":
-    let res = await storage_name_unpublish(node, "")
+  test "stop publishing refuses an empty label":
+    let res = await storage_name_stop_publishing(node, "")
 
     check res.isErr
 

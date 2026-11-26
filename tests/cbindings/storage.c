@@ -1166,11 +1166,11 @@ static int name_publish(StorageCtx *storage_ctx, const char *label, const char *
     return is_resp_ok(r, name);
 }
 
-static int name_unpublish(StorageCtx *storage_ctx, const char *label)
+static int name_stop_publishing(StorageCtx *storage_ctx, const char *label)
 {
     Resp *r = alloc_resp();
 
-    if (storage_ctx_name_unpublish(storage_ctx, label, on_str_reply, r) != RET_OK)
+    if (storage_ctx_name_stop_publishing(storage_ctx, label, on_str_reply, r) != RET_OK)
     {
         free_resp(r);
         return RET_ERR;
@@ -1244,11 +1244,11 @@ int check_name_resolve(StorageCtx *storage_ctx, const char *cid)
     return ret;
 }
 
-int check_name_unpublish(StorageCtx *storage_ctx, const char *cid)
+int check_name_stop_publishing(StorageCtx *storage_ctx, const char *cid)
 {
     char *res = NULL;
 
-    if (name_publish(storage_ctx, "unpublish", cid, 0, &res) != RET_OK)
+    if (name_publish(storage_ctx, "stop-publishing", cid, 0, &res) != RET_OK)
     {
         fprintf(stderr, "publish failed: %s\n", res ? res : "(null)");
         free(res);
@@ -1257,9 +1257,9 @@ int check_name_unpublish(StorageCtx *storage_ctx, const char *cid)
 
     free(res);
 
-    if (name_unpublish(storage_ctx, "unpublish") != RET_OK)
+    if (name_stop_publishing(storage_ctx, "stop-publishing") != RET_OK)
     {
-        fprintf(stderr, "unpublish failed\n");
+        fprintf(stderr, "stop publishing failed\n");
         return RET_ERR;
     }
 
@@ -1556,7 +1556,7 @@ int main(void)
     RUN_TEST(check_advertise(storage_ctx, cid, false));
     RUN_TEST(check_advertise(storage_ctx, cid, true));
     RUN_TEST(check_name_resolve(storage_ctx, cid));
-    RUN_TEST(check_name_unpublish(storage_ctx, cid));
+    RUN_TEST(check_name_stop_publishing(storage_ctx, cid));
     RUN_TEST(check_name_refresh(storage_ctx, cid));
     RUN_TEST(check_name_resolve_key(storage_ctx, cid));
     RUN_TEST(check_name_is_key(storage_ctx, cid));

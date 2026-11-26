@@ -36,15 +36,15 @@ proc storage_name_publish(
   except CancelledError:
     return err("Failed to publish the name: operation cancelled.")
 
-proc storage_name_unpublish(
+proc storage_name_stop_publishing(
     self: Storage, label: string
 ): Future[Result[string, string]] {.ffi.} =
   ## Deletes the stored name record of the label.
   try:
-    (await self.namePublisher.unpublish(label)).isOkOr:
-      return err("Failed to unpublish the name: " & error.msg)
+    (await self.namePublisher.stopPublishing(label)).isOkOr:
+      return err("Failed to stop publishing the name: " & error.msg)
   except CancelledError:
-    return err("Failed to unpublish the name: operation cancelled.")
+    return err("Failed to stop publishing the name: operation cancelled.")
 
   return ok("")
 

@@ -234,27 +234,27 @@ asyncchecksuite "Name publisher":
 
     check (await publisher.publish("catalog", longCid)).isErr
 
-  test "unpublish deletes the name record":
+  test "stopPublishing deletes the name record":
     check (await publisher.publish("catalog", cid)).isOk
 
-    check (await publisher.unpublish("catalog")).isOk
+    check (await publisher.stopPublishing("catalog")).isOk
     check (await publisher.getNameRecords()).tryGet().len == 0
 
-  test "unpublish keeps the other labels":
+  test "stopPublishing keeps the other labels":
     check (await publisher.publish("catalog", cid)).isOk
     check (await publisher.publish("release", cid)).isOk
 
-    check (await publisher.unpublish("catalog")).isOk
+    check (await publisher.stopPublishing("catalog")).isOk
 
     let stored = (await publisher.getNameRecords()).tryGet()
 
     check stored.len == 1
     check stored[0].data.label == "release"
 
-  test "unpublish refuses an empty label":
-    check (await publisher.unpublish("")).isErr
+  test "stopPublishing refuses an empty label":
+    check (await publisher.stopPublishing("")).isErr
 
-  test "unpublish returns an error when deleting fails":
+  test "stopPublishing returns an error when deleting fails":
     let
       failingDs = FailingDatastore.new(newMetaDs())
       failingPublisher = newPublisher(server, failingDs, clock)
@@ -263,7 +263,7 @@ asyncchecksuite "Name publisher":
 
     failingDs.failDelete = true
 
-    check (await failingPublisher.unpublish("catalog")).isErr
+    check (await failingPublisher.stopPublishing("catalog")).isErr
 
   test "republishAll extends the expiration with the same CID and seqnum":
     let reader =
