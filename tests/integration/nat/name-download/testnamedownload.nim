@@ -107,6 +107,11 @@ asyncchecksuite "NAT name download":
     # name to the new CID.
     let content2 = "second dataset of the catalog"
 
+    # Backs off for a second so publication does not fail if the above ends up
+    # being fast (spec does not allow publishing more than once per second for
+    # the same name).
+    await sleepAsync(timer.seconds(2))
+
     let cid2 = (await publisherClient.upload(content2)).get
     let published2 =
       await publisherClient.publishNameRaw(@{"label": "catalog", "cid": $cid2})
