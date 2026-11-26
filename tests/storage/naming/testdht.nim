@@ -12,7 +12,7 @@ import ../../checktest
 import ../helpers
 import ../helpers/mockclock
 import ../examples
-import ./namenodes
+import ../helpers/dhtnodes
 import ../../../storage/discovery
 import ../../../storage/naming/record
 import ../../../storage/naming/publisher

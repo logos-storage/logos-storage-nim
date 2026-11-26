@@ -9,7 +9,7 @@ import ../helpers
 import ../helpers/mockclock
 import ../helpers/failingdatastore
 import ../examples
-import ./namenodes
+import ../helpers/dhtnodes
 import ../../../storage/discovery
 import ../../../storage/namespaces
 import ../../../storage/naming/record

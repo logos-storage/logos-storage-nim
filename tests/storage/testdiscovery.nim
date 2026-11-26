@@ -8,7 +8,7 @@ import pkg/questionable/results
 import ../asynctest
 import ../checktest
 import ./helpers
-import ./helpers/testnodes
+import ./helpers/dhtnodes
 import ./examples
 import ../../storage/discovery
 import ../../storage/rng
