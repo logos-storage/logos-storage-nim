@@ -25,6 +25,8 @@
 
 {.push raises: [].}
 
+import std/sequtils
+
 import pkg/faststreams
 import pkg/libp2p/cid
 import pkg/protobuf_serialization
@@ -64,6 +66,9 @@ proc encode*(manifest: Manifest): ?!seq[byte] =
   except IOError as exc:
     failure(exc.msg)
 
+func isValidMetadata(value: string, maxLen: int): bool =
+  value.len <= maxLen and value.allIt(it >= ' ' and it != '\x7F' and it != '"')
+
 proc decode*(_: type Manifest, data: openArray[byte]): ?!Manifest =
   if data.len == 0:
     return failure("Empty manifest input")
@@ -92,6 +97,14 @@ proc decode*(_: type Manifest, data: openArray[byte]): ?!Manifest =
 
   if manifest.datasetSize.uint64 == 0:
     return failure("Manifest dataset size is zero")
+
+  if manifest.filename.isSome and
+      not manifest.filename.get.isValidMetadata(MaxFilenameSize):
+    return failure("Manifest filename is not valid")
+
+  if manifest.mimetype.isSome and
+      not manifest.mimetype.get.isValidMetadata(MaxMimetypeSize):
+    return failure("Manifest mimetype is not valid")
 
   manifest.success
 
