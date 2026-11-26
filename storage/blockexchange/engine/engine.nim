@@ -396,6 +396,14 @@ proc sendWantBlocksRequest(
       await self.banAndDropPeer(download, peer.id)
       return
 
+    if view.proof.get.nleaves != download.ctx.md.manifest.blocksCount:
+      warn "Proof leaf count doesn't match the dataset's block count - banning peer",
+        nleaves = view.proof.get.nleaves,
+        blocksCount = download.ctx.md.manifest.blocksCount,
+        peer = peer.id
+      await self.banAndDropPeer(download, peer.id)
+      return
+
     if err =? self.validateBlockDeliveryView(view).errorOption:
       error "Block validation failed - corrupted data from peer",
         address = view.address, msg = err.msg, peer = peer.id
