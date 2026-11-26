@@ -42,6 +42,9 @@ import ./dht_proxy/handler
 import ./utils/fileutils
 import ./utils/mixidentity
 import ./discovery
+import ./systemclock
+import ./naming/publisher
+from ./naming/dht import NameRecordValidatorRef, NameRecordSelectorRef
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -65,6 +68,7 @@ type
     restServer: RestServerRef
     storageNode: StorageNodeRef
     repoStore: RepoStore
+    namePublisher: NamePublisherRef
     maintenance: BlockMaintainer
     taskpool: Taskpool
     # Expose to make reachability accessible from rest api
@@ -87,6 +91,9 @@ func node*(self: StorageServer): StorageNodeRef =
 
 func repoStore*(self: StorageServer): RepoStore =
   return self.repoStore
+
+func namePublisher*(self: StorageServer): NamePublisherRef =
+  return self.namePublisher
 
 proc enableMix(
     self: StorageServer
@@ -284,6 +291,8 @@ proc start*(self: StorageServer) {.async.} =
     if self.autonatService.isSome:
       await self.autonatService.get.start(self.storageNode.switch)
 
+    self.namePublisher.start()
+
     if self.restServer != nil:
       self.restServer.start()
 
@@ -310,6 +319,8 @@ proc stop*(s: StorageServer) {.async.} =
     s.storageNode.switch.removePeerEventHandler(
       s.holePunchHandler.get, PeerEventKind.Joined
     )
+
+  await s.namePublisher.stop()
 
   s.storageNode.discovery.mixPeerTransport = nil
   if not s.mixTransport.isNil:
@@ -509,6 +520,7 @@ proc new*(
     kadAddressPolicy = dialableMixAddressPolicy
 
   let
+    clock = SystemClock.new()
     discovery = Discovery.new(
       switch,
       bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
@@ -522,6 +534,8 @@ proc new*(
         dhtProxyServer = config.dhtProxyServer,
       ),
       serviceLookupInterval = config.natScheduleInterval,
+      validator = NameRecordValidatorRef(clock: clock),
+      selector = NameRecordSelectorRef(),
     )
 
     repoData =
@@ -553,6 +567,9 @@ proc new*(
       quotaMaxBytes = config.storageQuota,
       blockTtl = config.blockTtl,
     )
+
+    namePublisher =
+      NamePublisherRef.new(discovery, repoStore.metaDs.ds, privateKey, clock)
 
     maintenance = BlockMaintainer.new(
       repoStore,
@@ -738,7 +755,7 @@ proc new*(
     restServer = RestServerRef
       .new(
         storageNode.initRestApi(
-          config, repoStore, autonatService, autoRelayService, natMapper,
+          config, repoStore, namePublisher, autonatService, autoRelayService, natMapper,
           config.apiCorsAllowedOrigin,
         ),
         initTAddress(config.apiBindAddress.get(), config.apiPort),
@@ -752,6 +769,7 @@ proc new*(
     storageNode: storageNode,
     restServer: restServer,
     repoStore: repoStore,
+    namePublisher: namePublisher,
     maintenance: maintenance,
     taskPool: taskPool,
     logFile: logFile,

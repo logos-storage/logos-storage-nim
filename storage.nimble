@@ -14,6 +14,7 @@ when (NimbleMajor, NimbleMinor) < (0, 26):
 
 requires "nim >= 2.2.14 & < 2.3.0"
 requires "asynctest >= 0.5.4 & < 0.6.0"
+requires "cbor_serialization >= 0.3.0 & < 0.4.0"
 requires "chronicles >= 0.12.3 & < 0.13.0"
 # ffi needs closeThreadDispatcher, which no chronos release has yet.
 requires "chronos#2d81a7625d74269581ba24c8bc40b69fccf27d47"

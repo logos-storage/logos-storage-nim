@@ -52,6 +52,12 @@ const
   LookupTimeout* = 1.minutes
   MaxConcurrentMixProxies = 5
   ServiceLookupTimeout = 1.minutes
+  PutValueTimeout = 1.minutes
+  ValueQuorum = 5
+  # Seconds. The libp2p defaults, that a test build can shorten, for example
+  # with -d:storage_kad_record_retention=3600
+  KadRecordRetention {.intdefine: "storage_kad_record_retention".} = 24 * 60 * 60
+  KadCleanupInterval {.intdefine: "storage_kad_cleanup_interval".} = 60 * 60
 
   StorageServiceId* = "/logos-storage/1.0.0"
   AutonatServiceId* = $AutonatV2Codec.DialRequest
@@ -322,6 +328,50 @@ method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
   ##
   d.kad.providerManager.providedKeys.provided.clear()
 
+proc putValue*(
+    d: Discovery, key: seq[byte], value: seq[byte]
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Store a value under a key on the closest server nodes. Fails when the value
+  ## isn't stored on any peer.
+  ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error putting value: " & $error)
+
+  try:
+    let res = await d.kad.putValue(recordKey, Value.init(value)).wait(PutValueTimeout)
+
+    if res.isErr:
+      return failure("Error putting value: " & $res.error)
+
+    if res.get() == 0:
+      return failure("Error putting value: the value isn't stored on any peer")
+
+    return success()
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error putting value: " & exc.msg)
+
+proc getValue*(
+    d: Discovery, key: seq[byte]
+): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
+  ## Read the value stored under a key
+  ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error getting value: " & $error)
+
+  try:
+    let res = await d.kad.getValue(recordKey).wait(LookupTimeout)
+
+    if res.isErr:
+      return failure("Error getting value: " & $res.error)
+
+    return success res.get().value.toBytes()
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error getting value: " & exc.msg)
+
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
 
@@ -555,6 +605,8 @@ proc new*(
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
     providedServices: openArray[string] = [],
     serviceLookupInterval = ZeroDuration,
+    validator: EntryValidator = DefaultEntryValidator(),
+    selector: EntrySelector = DefaultEntrySelector(),
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -574,7 +626,14 @@ proc new*(
   self.kad = KadDHT.new(
     switch,
     bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(addressPolicy = addressPolicy),
+    config = KadDHTConfig.new(
+      addressPolicy = addressPolicy,
+      quorum = ValueQuorum,
+      recordExpirationInterval = chronos.seconds(KadRecordRetention),
+      cleanupDataEntriesInterval = chronos.seconds(KadCleanupInterval),
+      validator = validator,
+      selector = selector,
+    ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

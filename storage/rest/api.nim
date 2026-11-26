@@ -42,6 +42,9 @@ import ../blockexchange
 import ../units
 import ../utils/options
 import ../nat
+import ../naming/dht
+import ../naming/publisher
+import ../utils/nameutils
 
 import ./coders
 import ./json
@@ -738,10 +741,172 @@ proc initDebugApi(
         trace "Excepting processing request", exc = exc.msg
         return RestApiResponse.error(Http500, headers = headers)
 
+proc isOriginAllowed(request: HttpRequestRef, allowedOrigin: Option[string]): bool =
+  ## A request without an Origin header is accepted. Otherwise the Origin must
+  ## be the one of `--api-cors-origin`, or any origin but `null` when it is `*`.
+  let origins = request.headers.getList("Origin")
+
+  if origins.len == 0:
+    return true
+
+  if origins.len > 1 or origins[0] == "null":
+    return false
+
+  without corsOrigin =? allowedOrigin:
+    return false
+
+  if corsOrigin == "*":
+    return true
+
+  # The same rule as the CORS check of presto
+  if corsOrigin.startsWith("http://") or corsOrigin.startsWith("https://"):
+    return origins[0] == corsOrigin
+
+  if origins[0].startsWith("http://"):
+    return origins[0][7 ..^ 1] == corsOrigin
+
+  if origins[0].startsWith("https://"):
+    return origins[0][8 ..^ 1] == corsOrigin
+
+  return false
+
+proc initNamesApi(
+    node: StorageNodeRef, namePublisher: NamePublisherRef, router: var RestRouter
+) =
+  let allowedOrigin = router.allowedOrigin
+
+  router.api(MethodPost, "/api/storage/v1/names") do() -> RestApiResponse:
+    ## Publish a name record for the label and the CID, and return the name key.
+    ## A seqnum of 0 or a missing seqnum means the current time.
+    ##
+    var headers = buildCorsHeaders("POST", allowedOrigin)
+
+    if not request.isOriginAllowed(allowedOrigin):
+      return RestApiResponse.error(Http403, "The Origin is not allowed")
+
+    let cid = Cid.init(request.query.getString("cid", "")).valueOr:
+      return RestApiResponse.error(Http400, "Invalid CID: " & $error, headers = headers)
+
+    let seqnumText = request.query.getString("seqnum", "")
+    let seqnum =
+      if seqnumText == "":
+        Opt.none(uint64)
+      else:
+        let parsed = Base10.decode(uint64, seqnumText).valueOr:
+          return RestApiResponse.error(
+            Http400, "Invalid seqnum: " & $error, headers = headers
+          )
+
+        if parsed == 0:
+          Opt.none(uint64)
+        else:
+          Opt.some(parsed)
+
+    let signed = (
+      await namePublisher.publish(request.query.getString("label", ""), cid, seqnum)
+    ).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    return RestApiResponse.response(
+      nameKeyString(signed), contentType = "text/plain", headers = headers
+    )
+
+  router.api(MethodDelete, "/api/storage/v1/names") do(
+    resp: HttpResponseRef
+  ) -> RestApiResponse:
+    ## Stop publishing the name record of the label.
+    ##
+    var headers = buildCorsHeaders("DELETE", allowedOrigin)
+
+    (await namePublisher.stopPublishing(request.query.getString("label", ""))).isOkOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    resp.status = Http204
+
+    await resp.sendBody("")
+
+  router.api(MethodGet, "/api/storage/v1/names/{nameKey}") do(
+    nameKey: string
+  ) -> RestApiResponse:
+    ## Return the CID of the name key.
+    ##
+    var headers = buildCorsHeaders("GET", allowedOrigin)
+
+    let name = parseName(nameKey.get()).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    let cid = (await node.discovery.resolve(name)).valueOr:
+      return RestApiResponse.error(Http500, error.msg, headers = headers)
+
+    if cid.isNone:
+      return RestApiResponse.error(
+        Http404,
+        "The DHT doesn't have a name record for the name key",
+        headers = headers,
+      )
+
+    return RestApiResponse.response(
+      $cid.get(), contentType = "text/plain", headers = headers
+    )
+
+  router.api(MethodPost, "/api/storage/v1/names/{nameKey}/refresh") do(
+    nameKey: string, resp: HttpResponseRef
+  ) -> RestApiResponse:
+    ## Advertise the name record of the name key in the DHT again.
+    ##
+    var headers = buildCorsHeaders("POST", allowedOrigin)
+
+    if not request.isOriginAllowed(allowedOrigin):
+      return RestApiResponse.error(Http403, "The Origin is not allowed")
+
+    let name = parseName(nameKey.get()).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    (await node.discovery.refresh(name)).isOkOr:
+      if error.isNoNameRecordError:
+        return RestApiResponse.error(
+          Http404,
+          "The DHT doesn't have a name record for the name key",
+          headers = headers,
+        )
+
+      return RestApiResponse.error(Http500, error.msg, headers = headers)
+
+    resp.status = Http204
+
+    await resp.sendBody("")
+
+  router.api(MethodGet, "/api/storage/v1/names/{peerId}/{label}") do(
+    peerId: string, label: string
+  ) -> RestApiResponse:
+    ## Return the CID that the peer publishes for the label. The router has
+    ## already decoded the percent-encoded label.
+    ##
+    var headers = buildCorsHeaders("GET", allowedOrigin)
+
+    let publicKey = parsePublicKey(peerId.get()).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    let nameBytes = name(publicKey, label.get()).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    let cid = (await node.discovery.resolve(nameBytes)).valueOr:
+      return RestApiResponse.error(Http500, error.msg, headers = headers)
+
+    if cid.isNone:
+      return RestApiResponse.error(
+        Http404, "The DHT doesn't have a name record for the name", headers = headers
+      )
+
+    return RestApiResponse.response(
+      $cid.get(), contentType = "text/plain", headers = headers
+    )
+
 proc initRestApi*(
     node: StorageNodeRef,
     conf: StorageConf,
     repoStore: RepoStore,
+    namePublisher: NamePublisherRef,
     autonat: Option[AutonatV2Service],
     autoRelay: Option[AutoRelayService],
     natMapper: Option[NatPortMapper],
@@ -751,6 +916,7 @@ proc initRestApi*(
 
   initDataApi(node, repoStore, router)
   initNodeApi(node, conf, router)
+  initNamesApi(node, namePublisher, router)
   initDebugApi(node, autonat, autoRelay, natMapper, router)
 
   return router

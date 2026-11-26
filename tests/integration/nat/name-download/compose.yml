@@ -1,0 +1,168 @@
+# NAT name-download scenario: see README.md. Run via testnamedownload.nim.
+name: nat-name-download
+
+# Three NATed nodes, one behind each router (separate lans). All stay Kad
+# clients, so the bootstrap is the only DHT server.
+x-addresses:
+  wan_subnet: &wan_subnet 7.7.7.0/24
+  lan1_subnet: &lan1_subnet 10.99.1.0/24
+  lan2_subnet: &lan2_subnet 10.99.2.0/24
+  lan3_subnet: &lan3_subnet 10.99.3.0/24
+  # bootstrap: public, autonat + relay server, the only DHT server
+  bootstrap_ip: &bootstrap_ip 7.7.7.10
+  # router1 (A's NAT)
+  router1_wan_ip: &router1_wan_ip 7.7.7.3
+  router1_lan_ip: &router1_lan_ip 10.99.1.2
+  # router2 (B's NAT)
+  router2_wan_ip: &router2_wan_ip 7.7.7.4
+  router2_lan_ip: &router2_lan_ip 10.99.2.2
+  # router3 (D's NAT)
+  router3_wan_ip: &router3_wan_ip 7.7.7.5
+  router3_lan_ip: &router3_lan_ip 10.99.3.2
+  # A behind router1, B behind router2, D behind router3
+  publisher_ip: &publisher_ip 10.99.1.10
+  downloader_ip: &downloader_ip 10.99.2.10
+  second_downloader_ip: &second_downloader_ip 10.99.3.10
+
+networks:
+  wan:
+    internal: true
+    ipam:
+      config:
+        - subnet: *wan_subnet
+  lan1:
+    ipam:
+      config:
+        - subnet: *lan1_subnet
+  lan2:
+    ipam:
+      config:
+        - subnet: *lan2_subnet
+  lan3:
+    ipam:
+      config:
+        - subnet: *lan3_subnet
+
+services:
+  router1:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router1_wan_ip
+      lan1:
+        ipv4_address: *router1_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router1_wan_ip
+      LAN_SUBNET: *lan1_subnet
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  router2:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router2_wan_ip
+      lan2:
+        ipv4_address: *router2_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router2_wan_ip
+      LAN_SUBNET: *lan2_subnet
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  router3:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      wan:
+        ipv4_address: *router3_wan_ip
+      lan3:
+        ipv4_address: *router3_lan_ip
+    environment:
+      ROUTER_WAN_IP: *router3_wan_ip
+      LAN_SUBNET: *lan3_subnet
+    volumes:
+      - ../router-common.sh:/scripts/router-common.sh:ro,z
+    entrypoint: ["bash", "/scripts/router-common.sh"]
+
+  bootstrap:
+    image: localhost/storage-nat
+    networks:
+      wan:
+        ipv4_address: *bootstrap_ip
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - public_node
+      - *bootstrap_ip
+      - -%-
+      - enable_nat_servers
+
+  # A: behind router1, uploads the files and publishes the name. Published
+  # port: the test drives its API.
+  publisher:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router1, bootstrap]
+    networks:
+      lan1:
+        ipv4_address: *publisher_ip
+    ports:
+      - "127.0.0.1:18100:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router1_lan_ip
+      - *bootstrap_ip
+
+  # B: behind router2, resolves the name and downloads. Its data dir is a tmpfs,
+  # so a restart gives it a fresh data dir.
+  downloader:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router2, bootstrap]
+    networks:
+      lan2:
+        ipv4_address: *downloader_ip
+    ports:
+      - "127.0.0.1:18101:8080"
+    tmpfs:
+      - /data
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router2_lan_ip
+      - *bootstrap_ip
+
+  # D: behind router3, downloads file 2 and serves it to B once A has stopped
+  second-downloader:
+    image: localhost/storage-nat
+    cap_add: [NET_ADMIN]
+    depends_on: [router3, bootstrap]
+    networks:
+      lan3:
+        ipv4_address: *second_downloader_ip
+    ports:
+      - "127.0.0.1:18102:8080"
+    volumes:
+      - ../node-entrypoint.sh:/scripts/node-entrypoint.sh:ro,z
+    entrypoint: ["bash", "/scripts/node-entrypoint.sh"]
+    command:
+      - private_node
+      - *router3_lan_ip
+      - *bootstrap_ip

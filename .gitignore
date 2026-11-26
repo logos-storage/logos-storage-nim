@@ -52,6 +52,7 @@ tests/cbindings/data-dir
 tests/cbindings/downloaded_hello.txt
 tests/cbindings/log-file-data-dir
 tests/cbindings/log-file.log
+tests/cbindings/refresh-data-dir
 tests/cbindings/log-file.bin
 
 nimbledeps

@@ -1,9 +1,14 @@
 import std/sequtils
+import pkg/chronos
+import pkg/libp2p except setup
 import pkg/libp2p/multiaddress
 import pkg/libp2p_mix
+import pkg/questionable/results
 
 import ../asynctest
+import ../checktest
 import ./helpers
+import ./helpers/dhtnodes
 import ./examples
 import ../../storage/discovery
 import ../../storage/rng
@@ -97,3 +102,66 @@ suite "Discovery - bootstrap addresses":
     )
 
     check $privateAddr notin disc.bootstrapAddrs
+
+asyncchecksuite "Discovery - DHT values":
+  let
+    nodes = TestNodes()
+    lookupTimeout = 30.seconds
+
+  teardown:
+    await nodes.stop()
+
+  proc toBytes(text: string): seq[byte] =
+    @(text.toOpenArrayByte(0, text.high))
+
+  test "a client node puts a value and a server node reads it":
+    let
+      serverA = await nodes.startNode(isServer = true)
+      serverB = await nodes.startNode(isServer = true, bootstrap = @[serverA])
+      client = await nodes.startNode(isServer = false, bootstrap = @[serverA])
+      key = toBytes("client-to-server")
+      value = toBytes("value")
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
+
+    check (await client.disc.putValue(key, value)).isOk
+
+    let got = await serverB.disc.getValue(key)
+    check got.isOk
+    check got.tryGet == value
+
+  test "a put that isn't stored on any peer fails":
+    let node = await nodes.startNode(isServer = true)
+
+    check (await node.disc.putValue(toBytes("no-peer"), toBytes("value"))).isErr
+
+  test "reading a key that does not exist fails":
+    let
+      server = await nodes.startNode(isServer = true)
+      client = await nodes.startNode(isServer = false, bootstrap = @[server])
+      fut = client.disc.getValue(toBytes("unknown"))
+
+    check await fut.withTimeout(lookupTimeout)
+    check fut.read().isErr
+
+  test "a second put on the same key replaces the value":
+    let
+      serverA = await nodes.startNode(isServer = true)
+      serverB = await nodes.startNode(isServer = true, bootstrap = @[serverA])
+      bootstrapNodes = @[serverA, serverB]
+      writer = await nodes.startNode(isServer = false, bootstrap = bootstrapNodes)
+      reader = await nodes.startNode(isServer = false, bootstrap = bootstrapNodes)
+      key = toBytes("second-put")
+      value = toBytes("first value")
+      newerValue = toBytes("second value")
+
+    # Wait until serverA knows serverB
+    check eventually(serverA.disc.routingTable().peers.len >= 1, timeout = 10_000)
+
+    check (await writer.disc.putValue(key, value)).isOk
+    check (await writer.disc.putValue(key, newerValue)).isOk
+
+    let got = await reader.disc.getValue(key)
+    check got.isOk
+    check got.tryGet == newerValue
