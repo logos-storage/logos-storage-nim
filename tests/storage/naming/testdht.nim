@@ -3,6 +3,7 @@ import std/tables
 import pkg/chronos
 import pkg/libp2p except setup
 import pkg/libp2p/protocols/kademlia
+import pkg/libp2p/vbuffer
 import pkg/datastore
 import pkg/questionable/results
 
@@ -319,6 +320,19 @@ checksuite "Name record validator":
 
     RecordKey.fromBytes(cid.data.buffer).tryGet()
 
+  proc sha256Key(digest: seq[byte]): RecordKey =
+    ## A name key written by hand, since MultiHash.init refuses a digest of
+    ## another length.
+    var buffer = initVBuffer()
+    buffer.writeVarint(1'u64)
+    buffer.writeVarint(uint64(int(multiCodec("storage-name"))))
+    buffer.writeVarint(uint64(int(multiCodec("sha2-256"))))
+    buffer.writeVarint(uint64(digest.len))
+    buffer.writeArray(digest)
+    buffer.finish()
+
+    RecordKey.fromBytes(buffer.buffer).tryGet()
+
   test "accepts a valid name record under the name key":
     let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
 
@@ -345,6 +359,17 @@ checksuite "Name record validator":
         cidKey(multiCodec("storage-name"), multiCodec("blake2b-256"), @catalogName)
 
     check not validator.isValid(otherKey, EntryRecord(value: signedBytes()))
+
+  test "refuses a CID with a SHA2-256 digest that is not 32 bytes":
+    let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
+
+    check validator.isValid(sha256Key(@catalogName), EntryRecord(value: signedBytes()))
+    check not validator.isValid(
+      sha256Key(@(catalogName[0 ..< 31])), EntryRecord(value: signedBytes())
+    )
+    check not validator.isValid(
+      sha256Key(@catalogName & @[0'u8]), EntryRecord(value: signedBytes())
+    )
 
   test "refuses a valid name record stored under the name of another label":
     let validator = NameRecordValidatorRef(clock: MockClock.new(currentTime))
