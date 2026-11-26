@@ -14,6 +14,7 @@ when (NimbleMajor, NimbleMinor) < (0, 26):
 
 requires "nim >= 2.2.14 & < 2.3.0"
 requires "asynctest >= 0.5.4 & < 0.6.0"
+requires "cbor_serialization >= 0.3.0 & < 0.4.0"
 requires "chronicles >= 0.12.3 & < 0.13.0"
 # ffi needs closeThreadDispatcher, which no chronos release has yet.
 requires "chronos#2d81a7625d74269581ba24c8bc40b69fccf27d47"
@@ -22,7 +23,7 @@ requires "constantine >= 0.2.0 & < 0.3.0"
 requires "contractabi >= 0.7.3 & < 0.8.0"
 requires "https://github.com/logos-storage/nim-datastore >= 0.2.4 & < 0.3.0"
 requires "leveldbstatic >= 0.2.3 & < 0.3.0"
-requires "json_serialization == 0.4.4"
+requires "json_serialization == 0.5.0"
 requires "https://github.com/status-im/lrucache.nim >= 1.2.2 & < 1.3.0"
 requires "faststreams >= 0.5.0 & < 0.6.0"
 # The C bindings need fixes made after v0.3.1-rc.0, which have no tag yet.

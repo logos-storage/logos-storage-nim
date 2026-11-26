@@ -29,6 +29,7 @@ import pkg/libp2p_mix_transport/address/parse
 import pkg/questionable
 import pkg/questionable/results
 
+import ./peertransport
 import ./rng as storage_rng
 import ./utils/mixidentity
 import ./errors
@@ -48,8 +49,15 @@ logScope:
 
 const
   ProvideTimeout = 1.minutes
-  LookupTimeout = 1.minutes
+  LookupTimeout* = 1.minutes
+  MaxConcurrentMixProxies = 5
   ServiceLookupTimeout = 1.minutes
+  PutValueTimeout = 1.minutes
+  ValueQuorum = 5
+  # Seconds. The libp2p defaults, that a test build can shorten, for example
+  # with -d:storage_kad_record_retention=3600
+  KadRecordRetention {.intdefine: "storage_kad_record_retention".} = 24 * 60 * 60
+  KadCleanupInterval {.intdefine: "storage_kad_cleanup_interval".} = 60 * 60
 
   StorageServiceId* = "/logos-storage/1.0.0"
   AutonatServiceId* = $AutonatV2Codec.DialRequest
@@ -81,6 +89,7 @@ type
     staticDhtMixProxies*: seq[PeerRecord]
     staticAutonatServers: seq[PeerRecord]
     staticCircuitRelayServers: seq[PeerRecord]
+    mixPeerTransport*: PeerTransport
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -164,20 +173,92 @@ proc circuitRelayServers*(d: Discovery): seq[PeerRecord] =
   ## Returns the static circuit relay servers and the discovered ones.
   d.withDiscovered(d.staticCircuitRelayServers, CircuitRelayServiceId)
 
+type ProviderBatchHandler* = proc(providers: seq[PeerRecord]) {.gcsafe, raises: [].}
+
+proc knownMixProxyRecords(d: Discovery): seq[PeerRecord] =
+  d.staticDhtMixProxies & d.serviceProvidersOf(DhtProxyServiceId)
+
+proc eligibleMixProxy(d: Discovery, peer: PeerId): ?PeerRecord =
+  for record in d.knownMixProxyRecords:
+    if record.peerId == peer and
+        mixAddresses(peer, record.addresses.mapIt(it.address)).len > 0:
+      return some(record)
+  none(PeerRecord)
+
+proc findMixBatches(
+    d: Discovery, cid: Cid, deadline: Moment, deliver: ProviderBatchHandler
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  let proxies = d.knownMixProxyRecords
+  var
+    candidates: seq[PeerId]
+    seen: HashSet[PeerId]
+  for proxy in proxies:
+    if not seen.containsOrIncl(proxy.peerId):
+      candidates.add(proxy.peerId)
+  Rng.instance().shuffle(candidates)
+
+  var
+    pending: seq[Future[?!seq[PeerRecord]].Raising([CancelledError])]
+    found, answered: bool
+  try:
+    while Moment.now() < deadline:
+      while not found and pending.len < MaxConcurrentMixProxies and candidates.len > 0:
+        without proxy =? d.eligibleMixProxy(candidates.pop()):
+          continue
+        let remaining = deadline - Moment.now()
+        if remaining <= ZeroDuration:
+          break
+        trace "Starting Mix provider attempt", cid, proxy = proxy.peerId
+        # An attempt may use all the time left on the lookup deadline, dial
+        # and exchange included. A replacement that starts later gets only
+        # what remains.
+        pending.add(
+          dht_proxy_client.lookupProviders(
+            d.mixProto, d.mixPeerTransport, proxy, cid, remaining
+          )
+        )
+      if pending.len == 0:
+        break
+      discard await race(pending[0], pending.toOpenArray(1, pending.high))
+      # Inspect every ready reply before deciding whether to fill a vacant slot.
+      for i in countdown(pending.high, 0):
+        if pending[i].finished:
+          let reply = await pending[i]
+          pending.del(i)
+          if reply.isOk:
+            answered = true
+            let batch = reply.get.filterIt(it.peerId != d.peerId)
+            if batch.len > 0 and Moment.now() < deadline:
+              found = true
+              deliver(batch)
+          else:
+            debug "Mix provider attempt failed", cid, error = reply.error.msg
+    if answered:
+      return success()
+    return failure("All Mix lookup proxies failed")
+  finally:
+    for attempt in pending:
+      attempt.cancelSoon()
+    await noCancel allFutures(pending)
+
 method findViaMix*(
     d: Discovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.base, async: (raises: [CancelledError]).} =
-  var candidates = d.dhtMixProxies
-  shuffle(candidates)
+  let received = newFuture[void]("Discovery.findViaMix")
+  var first: seq[PeerRecord]
+  proc receive(batch: seq[PeerRecord]) =
+    if not received.finished:
+      first = batch
+      received.complete()
 
-  for proxy in candidates:
-    let res = await dht_proxy_client.lookupProviders(d.mixProto, proxy, cid)
-    if res.isErr:
-      warn "Mix lookup proxy failed", cid, proxy = proxy.peerId, err = res.error.msg
-      continue
-    return success res.get
-
-  failure("All Mix lookup proxies failed (candidates=" & $candidates.len & ")")
+  let lookup = d.findMixBatches(cid, Moment.now() + LookupTimeout, receive)
+  try:
+    discard await race(received, lookup)
+    if not received.finished:
+      ?await lookup
+    return success(first)
+  finally:
+    await noCancel lookup.cancelAndWait()
 
 method findDirect*(
     d: Discovery, cid: Cid
@@ -197,9 +278,9 @@ method find*(
 ): Future[?!seq[PeerRecord]] {.async: (raises: [CancelledError]), base.} =
   let providers =
     if useMix:
-      if d.mixProto.isNil or d.dhtMixProxies.len == 0:
+      if d.mixProto.isNil or d.mixPeerTransport.isNil or d.dhtMixProxies.len == 0:
         return failure(
-          "Mix lookup requested but MixProtocol not enabled no Mix proxies configured"
+          "Mix lookup requested but MixTransport not enabled or no Mix proxies configured"
         )
       else:
         (await d.findViaMix(cid)).valueOr:
@@ -211,6 +292,19 @@ method find*(
         return failure(error.msg)
 
   ok(providers.filterIt(not (it.peerId == d.peerId)))
+
+method findBatches*(
+    d: Discovery,
+    cid: Cid,
+    useMix: bool,
+    deadline: Moment,
+    deliver: ProviderBatchHandler,
+): Future[?!void] {.base, async: (raises: [CancelledError]).} =
+  if useMix and not d.mixProto.isNil and not d.mixPeerTransport.isNil:
+    return await d.findMixBatches(cid, deadline, deliver)
+  let providers = ?await d.find(cid, useMix)
+  deliver(providers)
+  return success()
 
 method provide*(d: Discovery, cid: Cid) {.async: (raises: [CancelledError]), base.} =
   ## Provide a block Cid
@@ -233,6 +327,50 @@ method stopProvidingAll*(d: Discovery) {.base, gcsafe, raises: [].} =
   ## Stop announcing every Cid this node provides by clearing the table
   ##
   d.kad.providerManager.providedKeys.provided.clear()
+
+proc putValue*(
+    d: Discovery, key: seq[byte], value: seq[byte]
+): Future[?!void] {.async: (raises: [CancelledError]).} =
+  ## Store a value under a key on the closest server nodes. Fails when the value
+  ## isn't stored on any peer.
+  ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error putting value: " & $error)
+
+  try:
+    let res = await d.kad.putValue(recordKey, Value.init(value)).wait(PutValueTimeout)
+
+    if res.isErr:
+      return failure("Error putting value: " & $res.error)
+
+    if res.get() == 0:
+      return failure("Error putting value: the value isn't stored on any peer")
+
+    return success()
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error putting value: " & exc.msg)
+
+proc getValue*(
+    d: Discovery, key: seq[byte]
+): Future[?!seq[byte]] {.async: (raises: [CancelledError]).} =
+  ## Read the value stored under a key
+  ##
+  let recordKey = RecordKey.fromBytes(key).valueOr:
+    return failure("Error getting value: " & $error)
+
+  try:
+    let res = await d.kad.getValue(recordKey).wait(LookupTimeout)
+
+    if res.isErr:
+      return failure("Error getting value: " & $res.error)
+
+    return success res.get().value.toBytes()
+  except CancelledError as exc:
+    raise exc
+  except CatchableError as exc:
+    return failure("Error getting value: " & exc.msg)
 
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
@@ -473,6 +611,8 @@ proc new*(
     addressPolicy: PeerAddressPolicy = defaultAddressPolicy,
     providedServices: openArray[string] = [],
     serviceLookupInterval = ZeroDuration,
+    validator: EntryValidator = DefaultEntryValidator(),
+    selector: EntrySelector = DefaultEntrySelector(),
 ): Discovery =
   ## Create a new Discovery node instance backed by the libp2p Kademlia DHT
   ##
@@ -492,7 +632,14 @@ proc new*(
   self.kad = KadDHT.new(
     switch,
     bootstrapNodes = @bootstrapNodes,
-    config = KadDHTConfig.new(addressPolicy = addressPolicy),
+    config = KadDHTConfig.new(
+      addressPolicy = addressPolicy,
+      quorum = ValueQuorum,
+      recordExpirationInterval = chronos.seconds(KadRecordRetention),
+      cleanupDataEntriesInterval = chronos.seconds(KadCleanupInterval),
+      validator = validator,
+      selector = selector,
+    ),
     rng = storage_rng.libp2pRng(storage_rng.Rng.instance()),
     isServer = isServer,
   )

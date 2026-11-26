@@ -42,6 +42,9 @@ import ./dht_proxy/handler
 import ./utils/fileutils
 import ./utils/mixidentity
 import ./discovery
+import ./systemclock
+import ./naming/publisher
+from ./naming/dht import NameRecordValidatorRef, NameRecordSelectorRef
 import ./utils/addrutils
 import ./utils/spr
 import ./namespaces
@@ -65,6 +68,7 @@ type
     restServer: RestServerRef
     storageNode: StorageNodeRef
     repoStore: RepoStore
+    namePublisher: NamePublisherRef
     maintenance: BlockMaintainer
     taskpool: Taskpool
     # Expose to make reachability accessible from rest api
@@ -87,6 +91,9 @@ func node*(self: StorageServer): StorageNodeRef =
 
 func repoStore*(self: StorageServer): RepoStore =
   return self.repoStore
+
+func namePublisher*(self: StorageServer): NamePublisherRef =
+  return self.namePublisher
 
 proc enableMix(
     self: StorageServer
@@ -123,7 +130,6 @@ proc enableMix(
   for info in relayPool.values:
     mixProto.nodePool.add(info)
 
-  mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(MaxLookupResponseBytes))
   await mixProto.start()
   switch.mount(mixProto)
 
@@ -133,25 +139,28 @@ proc enableMix(
 proc startMixTransport*(
     s: StorageServer, mixProto: MixProtocol
 ) {.async: (raises: [CancelledError, StorageError]).} =
-  if not s.config.mixEnabled or mixProto.isNil:
+  if mixProto.isNil or not (s.config.mixEnabled or s.config.dhtProxyServer):
     return
 
-  let
-    engine = s.storageNode.engine
-    directNetwork = engine.contextFor(DownloadTransport.Direct).network
-    mixTransport = newMixTransport(mixProto)
-    mixNetwork = BlockExcNetwork.new(
-      directNetwork.switch,
-      MixPeerTransport.new(mixTransport),
-      maxInflight = directNetwork.sendConcurrencyLimit,
-    )
-  engine.attach(
-    BlockExcContext.new(mixNetwork, engine.localStore, engine.downloadManager)
-  )
+  let mixTransport = newMixTransport(mixProto)
   (await mixTransport.start()).isOkOr:
-    await engine.detach(DownloadTransport.Mix)
     raise newException(StorageError, "Failed to start MixTransport: " & error)
   s.mixTransport = mixTransport
+
+  if s.config.mixEnabled:
+    let
+      engine = s.storageNode.engine
+      directNetwork = engine.contextFor(DownloadTransport.Direct).network
+      mixPeerTransport = MixPeerTransport.new(mixTransport)
+      mixNetwork = BlockExcNetwork.new(
+        directNetwork.switch,
+        mixPeerTransport,
+        maxInflight = directNetwork.sendConcurrencyLimit,
+      )
+    engine.attach(
+      BlockExcContext.new(mixNetwork, engine.localStore, engine.downloadManager)
+    )
+    s.storageNode.discovery.mixPeerTransport = mixPeerTransport
 
 proc start*(self: StorageServer) {.async.} =
   if self.isStarted:
@@ -212,7 +221,7 @@ proc start*(self: StorageServer) {.async.} =
     await dhtProxyProto.start()
     switch.mount(dhtProxyProto)
 
-  if self.config.mixEnabled:
+  if self.config.mixEnabled or self.config.dhtProxyServer:
     let (mixProto, relayPool) = await self.enableMix()
 
     self.storageNode.discovery.mixProto = mixProto
@@ -236,7 +245,7 @@ proc start*(self: StorageServer) {.async.} =
   # we need to derive the mix address manually. We need to wait
   # until AFTER storageNode.start as otherwise we'll see an
   # uninitialized mix address.
-  if self.config.mixEnabled and self.config.nat.hasExtIp:
+  if not self.storageNode.discovery.mixProto.isNil and self.config.nat.hasExtIp:
     let
       mixProto = self.storageNode.discovery.mixProto
       mixAddress = mixProto.localMixPubInfo.flatMap(toMixAddress)
@@ -282,6 +291,8 @@ proc start*(self: StorageServer) {.async.} =
     if self.autonatService.isSome:
       await self.autonatService.get.start(self.storageNode.switch)
 
+    self.namePublisher.start()
+
     if self.restServer != nil:
       self.restServer.start()
 
@@ -309,6 +320,9 @@ proc stop*(s: StorageServer) {.async.} =
       s.holePunchHandler.get, PeerEventKind.Joined
     )
 
+  await s.namePublisher.stop()
+
+  s.storageNode.discovery.mixPeerTransport = nil
   if not s.mixTransport.isNil:
     try:
       await s.mixTransport.stop()
@@ -506,6 +520,7 @@ proc new*(
     kadAddressPolicy = dialableMixAddressPolicy
 
   let
+    clock = SystemClock.new()
     discovery = Discovery.new(
       switch,
       bootstrapNodes = bootstrapNodes.mapIt(it.toPeerIdAndAddrs()),
@@ -519,6 +534,8 @@ proc new*(
         dhtProxyServer = config.dhtProxyServer,
       ),
       serviceLookupInterval = config.natScheduleInterval,
+      validator = NameRecordValidatorRef(clock: clock),
+      selector = NameRecordSelectorRef(),
     )
 
     repoData =
@@ -550,6 +567,9 @@ proc new*(
       quotaMaxBytes = config.storageQuota,
       blockTtl = config.blockTtl,
     )
+
+    namePublisher =
+      NamePublisherRef.new(discovery, repoStore.metaDs.ds, privateKey, clock)
 
     maintenance = BlockMaintainer.new(
       repoStore,
@@ -735,7 +755,7 @@ proc new*(
     restServer = RestServerRef
       .new(
         storageNode.initRestApi(
-          config, repoStore, autonatService, autoRelayService, natMapper,
+          config, repoStore, namePublisher, autonatService, autoRelayService, natMapper,
           config.apiCorsAllowedOrigin,
         ),
         initTAddress(config.apiBindAddress.get(), config.apiPort),
@@ -749,6 +769,7 @@ proc new*(
     storageNode: storageNode,
     restServer: restServer,
     repoStore: repoStore,
+    namePublisher: namePublisher,
     maintenance: maintenance,
     taskPool: taskPool,
     logFile: logFile,

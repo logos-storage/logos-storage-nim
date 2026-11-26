@@ -32,6 +32,15 @@ components:
       description: Content Identifier as specified at https://github.com/multiformats/cid
       example: QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N
 
+    NameKey:
+      type: string
+      description: The DHT key of a name, encoded as a CID.
+
+    Label:
+      type: string
+      description: A UTF-8 string of 1 to 256 bytes.
+      example: logos-chat
+
     LogLevel:
       type: string
       description: "One of the log levels: TRACE, DEBUG, INFO, NOTICE, WARN, ERROR or FATAL"
@@ -270,6 +279,8 @@ tags:
     description: Node management
   - name: Debug
     description: Debugging configuration
+  - name: Names
+    description: Names that point to a dataset CID
 
 paths:
   "/connect/{peerId}":
@@ -690,3 +701,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DebugInfo"
+
+  "/names":
+    post:
+      summary: "Publish a name record for the label and the CID."
+      tags: [Names]
+      operationId: publishName
+      parameters:
+        - name: label
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Label"
+        - name: cid
+          in: query
+          required: true
+          description: "The dataset CID that the name record points to."
+          schema:
+            $ref: "#/components/schemas/Cid"
+        - name: seqnum
+          in: query
+          required: false
+          description: "When it is 0 or missing, the node takes the current Unix time."
+          schema:
+            type: integer
+            format: uint64
+            default: 0
+      responses:
+        "200":
+          description: The name key
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/NameKey"
+        "400":
+          description: Invalid label, CID or seqnum, or the seqnum is refused
+        "403":
+          description: The Origin header is refused
+    delete:
+      summary: "Stop publishing the name record corresponding to the label."
+      tags: [Names]
+      operationId: stopPublishingName
+      parameters:
+        - name: label
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Label"
+      responses:
+        "204":
+          description: The name record is deleted
+        "400":
+          description: Invalid label
+
+  "/names/{nameKey}":
+    get:
+      summary: "Return the CID of the name key."
+      tags: [Names]
+      operationId: resolveName
+      parameters:
+        - in: path
+          name: nameKey
+          required: true
+          schema:
+            $ref: "#/components/schemas/NameKey"
+      responses:
+        "200":
+          description: The dataset CID of the name record
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/Cid"
+        "400":
+          description: Invalid name key
+        "404":
+          description: The DHT doesn't have a name record for the name key
+
+  "/names/{nameKey}/refresh":
+    post:
+      summary: "Advertise the name record of the name key again."
+      tags: [Names]
+      operationId: refreshName
+      parameters:
+        - in: path
+          name: nameKey
+          required: true
+          schema:
+            $ref: "#/components/schemas/NameKey"
+      responses:
+        "204":
+          description: The name record is advertised again
+        "400":
+          description: Invalid name key
+        "403":
+          description: The Origin header is refused
+        "404":
+          description: The DHT doesn't have a name record for the name key
+
+  "/names/{peerId}/{label}":
+    get:
+      summary: "Return the CID that the peer publishes for the label."
+      tags: [Names]
+      operationId: resolveNameByKey
+      parameters:
+        - in: path
+          name: peerId
+          required: true
+          description: "The peer ID of the publisher."
+          schema:
+            $ref: "#/components/schemas/PeerId"
+        - in: path
+          name: label
+          required: true
+          schema:
+            $ref: "#/components/schemas/Label"
+      responses:
+        "200":
+          description: The dataset CID of the name record
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/Cid"
+        "400":
+          description: Invalid peer ID or label
+        "404":
+          description: The DHT doesn't have a name record for the name

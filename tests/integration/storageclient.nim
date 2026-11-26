@@ -1,5 +1,6 @@
 import std/strutils
 import std/sequtils
+from std/uri import encodeQuery, encodeUrl
 
 from pkg/libp2p import Cid, `$`, init
 import pkg/questionable/results
@@ -274,4 +275,49 @@ proc hasBlockRaw*(
     async: (raw: true, raises: [CancelledError, HttpError])
 .} =
   let url = client.baseurl & "/data/" & cid & "/exists"
+  return client.get(url)
+
+proc publishNameRaw*(
+    client: StorageClient,
+    params: seq[(string, string)],
+    headers: seq[HttpHeaderTuple] = @[],
+): Future[HttpClientResponseRef] {.
+    async: (raw: true, raises: [CancelledError, HttpError])
+.} =
+  let url = client.baseurl & "/names?" & encodeQuery(params, usePlus = false)
+  return client.post(url, headers = headers)
+
+proc stopPublishingNameRaw*(
+    client: StorageClient, params: seq[(string, string)]
+): Future[HttpClientResponseRef] {.
+    async: (raw: true, raises: [CancelledError, HttpError])
+.} =
+  let url = client.baseurl & "/names?" & encodeQuery(params, usePlus = false)
+  return client.delete(url)
+
+proc resolveNameRaw*(
+    client: StorageClient, nameKey: string
+): Future[HttpClientResponseRef] {.
+    async: (raw: true, raises: [CancelledError, HttpError])
+.} =
+  let url = client.baseurl & "/names/" & encodeUrl(nameKey, usePlus = false)
+  return client.get(url)
+
+proc refreshNameRaw*(
+    client: StorageClient, nameKey: string, headers: seq[HttpHeaderTuple] = @[]
+): Future[HttpClientResponseRef] {.
+    async: (raw: true, raises: [CancelledError, HttpError])
+.} =
+  let url =
+    client.baseurl & "/names/" & encodeUrl(nameKey, usePlus = false) & "/refresh"
+  return client.post(url, headers = headers)
+
+proc resolveNameByKeyRaw*(
+    client: StorageClient, peerId: string, label: string
+): Future[HttpClientResponseRef] {.
+    async: (raw: true, raises: [CancelledError, HttpError])
+.} =
+  let url =
+    client.baseurl & "/names/" & encodeUrl(peerId, usePlus = false) & "/" &
+    encodeUrl(label, usePlus = false)
   return client.get(url)

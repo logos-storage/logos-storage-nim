@@ -54,14 +54,11 @@ proc disableAdvertise*(
 
   success(disabled)
 
-proc storeManifestBlock*(
-    store: BlockStore, blk: Block, advertise: bool
+proc storeDecodedManifestBlock*(
+    store: BlockStore, blk: Block, manifest: Manifest, advertise: bool
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   ## Store a manifest block, recording whether the dataset it describes is
   ## announced to the DHT and served to peers. 
-
-  without manifest =? Manifest.decode(blk), err:
-    return failure(err)
 
   var disabled: seq[Cid]
 
@@ -73,3 +70,9 @@ proc storeManifestBlock*(
     return failure(err)
 
   success(manifest)
+
+proc storeManifestBlock*(
+    store: BlockStore, blk: Block, advertise: bool
+): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
+  let manifest = ?Manifest.decode(blk)
+  return await store.storeDecodedManifestBlock(blk, manifest, advertise)

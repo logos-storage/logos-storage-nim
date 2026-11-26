@@ -115,6 +115,12 @@ storage_ctx_destroy(ctx);
 | `storage_ctx_exists` | `cid` | `"true"` or `"false"` |
 | `storage_ctx_get_advertise` | `cid` | `"true"` or `"false"` |
 | `storage_ctx_set_advertise` | `cid`, `advertise` | the new setting |
+| `storage_ctx_name_publish` | `label`, `cid`, `seqnum` | the name key |
+| `storage_ctx_name_stop_publishing` | `label` | empty |
+| `storage_ctx_name_refresh` | `nameKey` | empty |
+| `storage_ctx_name_resolve` | `nameKey` | the CID, empty when the DHT doesn't have a name record |
+| `storage_ctx_name_is_key` | `nameKey` | `"true"` or `"false"` |
+| `storage_ctx_name_resolve_key` | `peerId`, `label` | the CID, empty when the DHT doesn't have a name record |
 
 `chunkSize` defaults to the block size (`1024 * 64` bytes) when it is 0. `local` restricts a download to the local store. `isPrivate` downloads over the Mix transport, and it must match the setting of an open session for the same `cid`. When `advertise` is `false`, the node does not announce the dataset to the DHT and does not serve it to peers. When no session is open for the `cid`, `download_stream` opens its own session as a direct, advertised download from the network.
 
@@ -161,6 +167,31 @@ Directly from disk, where `filepath` is an absolute path:
 Via chunks: `download_init` opens the session, `download_chunk` returns the next chunk, and an empty reply means EOF. `download_cancel` drops the session.
 
 Via stream: `download_stream` opens the session when none exists and reads to the end. It fires `on_download_chunk` for every chunk and writes to `filepath` when it is set. `download_cancel` closes the stream, and `download_stream` then returns.
+
+## Names
+
+The name API lets you point a DHT key, represented as a CID, to a dataset CID. The node signs its names with its own private key. Its peer ID has the matching public key.
+
+- A `nameKey` is the DHT key of a name, encoded as a CID string.
+- A `label` is a UTF-8 string of 1 to 256 bytes.
+- A `peerId` is the peer ID of the publisher.
+
+`name_publish` signs a name record for the `label` and the `cid`, persists it and advertises it in the DHT. The node advertises it again every 4 hours and after a restart. The name record expires after 8 hours.
+
+- `seqnum` is the sequence number of the name record. When it is 0, the node takes the current Unix time in seconds.
+- The call fails when `seqnum` is lower than the one of the stored name record.
+- The call fails when `seqnum` is equal to the one of the stored name record and `cid` is another CID. So two calls with `seqnum` 0 and two CIDs in the same second: the second one fails.
+- The call succeeds when the name record is persisted, even if the DHT doesn't take it. The next republish advertises it again.
+
+`name_stop_publishing` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
+
+`name_refresh` reads the name record of the `nameKey` in the DHT and advertises it again, unchanged. Any node can refresh any name. The call fails when the DHT doesn't have a name record for the `nameKey`.
+
+`name_resolve` and `name_resolve_key` read the name record in the DHT and return its CID. They return an empty string when the DHT doesn't have a name record.
+
+`name_is_key` tells if a string is a name key, without the DHT. A dataset CID is not a name key.
+
+Every other call fails when a `nameKey`, a `label`, a `peerId` or a `cid` is not valid.
 
 ## Go wrapper
 
