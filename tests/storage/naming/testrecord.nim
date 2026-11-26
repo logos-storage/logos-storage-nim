@@ -274,6 +274,19 @@ checksuite "Name record":
 
       check decodeNameRecord(bytes).isErr
 
+  test "refuses a name record whose expiration is negative":
+    let
+      negativeOne = CborValueRef(
+        kind: CborValueKind.Negative, numVal: CborNumber(sign: CborSign.Neg, integer: 0)
+      )
+      fields = cborFields(newRecord(label))
+
+    fields["expiration"] = taggedValue(1, negativeOne)
+
+    let bytes = signPayload(Cbor.encode(fields))
+
+    check decodeNameRecord(bytes).isErr
+
   test "refuses a name record whose cid is not a valid CID":
     let fields = cborFields(newRecord(label))
 

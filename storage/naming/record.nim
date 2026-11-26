@@ -100,9 +100,9 @@ proc readTime(fields: CborValueRef, key: string): Result[int64, ref CatchableErr
   let value = fields.readField(key, {CborValueKind.Tag}).valueOr:
     return err(error)
 
-  if value.tagVal.tag != 1 or value.tagVal.val.kind notin IntegerKinds:
+  if value.tagVal.tag != 1 or value.tagVal.val.kind != CborValueKind.Unsigned:
     return failure(
-      "The `" & key & "` field of the name record is not an integer under tag 1"
+      "The `" & key & "` field of the name record is not an unsigned integer under tag 1"
     )
 
   let number = value.tagVal.val.numVal.toInt(int64).valueOr:
