@@ -20,6 +20,7 @@ import pkg/libp2p/protocols/service_discovery except PeerRecord
 import pkg/libp2p/extended_peer_record
 import pkg/libp2p/stream/connection
 import pkg/libp2p_mix
+import pkg/libp2p_mix_transport
 import pkg/libp2p_mix/[curve25519, mix_node]
 import pkg/libp2p_mix_transport/address/parse
 import pkg/libp2p/crypto/curve25519 as libp2p_curve25519
@@ -164,7 +165,7 @@ proc handleLookupRequest(
     if self.inFlight >= self.maxInFlight:
       debug "DHT proxy at capacity, replying ErrTooBusy",
         inFlight = self.inFlight, max = self.maxInFlight
-      await conn.writeLp(LookupResponse(code: LookupCode.ErrTooBusy).encode())
+      await conn.sendResponse(LookupResponse(code: LookupCode.ErrTooBusy))
       return
 
     inc self.inFlight
@@ -172,10 +173,11 @@ proc handleLookupRequest(
       dec self.inFlight
 
     let
-      reqBytes = await conn.readLp(MaxLookupRequestBytes)
+      reqBytes =
+        await conn.readLp(MaxLookupRequestBytes).wait(DhtProxyRequestReadTimeout)
       req = LookupRequest.decode(reqBytes).valueOr:
         warn "Failed to decode lookup request"
-        await conn.writeLp(LookupResponse(code: LookupCode.ErrDecodeFailed).encode())
+        await conn.sendResponse(LookupResponse(code: LookupCode.ErrDecodeFailed))
         return
 
     let resp =
@@ -183,7 +185,7 @@ proc handleLookupRequest(
       of FindProviders:
         await self.handleFindProviders(req.queryBytes)
 
-    await conn.writeLp(resp.encode())
+    await conn.sendResponse(resp)
   except CancelledError as exc:
     raise exc
   except LPStreamError as exc:
@@ -200,7 +202,9 @@ proc new(
       conn: Connection, proto: string
   ): Future[void] {.async: (raises: [CancelledError]).} =
     try:
-      await self.handleLookupRequest(conn)
+      await self.handleLookupRequest(conn).wait(DhtProxyExchangeTimeout)
+    except AsyncTimeoutError:
+      debug "DHT proxy exchange timed out"
     finally:
       await noCancel conn.close()
 
@@ -416,6 +420,7 @@ proc runWithDhtProxy(
     kadBootstrap = conf.bootstrapNodes.mapIt(it.toPeerIdAndAddrs())
     kad = KadDHT.new(switch, bootstrapNodes = kadBootstrap, rng = newRng())
   let proxyProto = DhtProxyProtocol.new(kad, maxInFlight = conf.maxInFlight)
+  let transport = newMixTransport(mixProto)
 
   try:
     await mixProto.start()
@@ -428,7 +433,6 @@ proc runWithDhtProxy(
   except CatchableError as exc:
     raise newException(CatchableError, "DhtProxyProtocol start failed: " & exc.msg)
   switch.mount(proxyProto)
-
   switch.mount(kad)
 
   let disco = newServiceDiscovery(switch, conf)
@@ -443,6 +447,19 @@ proc runWithDhtProxy(
     await kad.start()
   except CatchableError as exc:
     raise newException(CatchableError, "Kad DHT start failed: " & exc.msg)
+
+  defer:
+    try:
+      await noCancel kad.stop()
+    except CatchableError as exc:
+      warn "Kad DHT close error", err = exc.msg
+    await switch.stop()
+    notice "Stopped"
+
+  (await transport.start()).isOkOr:
+    raise newException(CatchableError, "MixTransport start failed: " & error)
+  defer:
+    await noCancel transport.stop()
 
   advertiseServices(switch, disco, conf)
 
@@ -477,17 +494,9 @@ proc runWithDhtProxy(
   notice "DHT bootstrap SPR", spr = nodeSprStr, file = dhtSprPath
   notice "Mix node SPR", spr = nodeSprStr, file = mixNodeSprPath
 
-  try:
-    while not shutdownRequested:
-      await sleepAsync(200.milliseconds)
-  finally:
-    notice "Stopping"
-    try:
-      await noCancel kad.stop()
-    except CatchableError as exc:
-      warn "Kad DHT close error", err = exc.msg
-    await switch.stop()
-    notice "Stopped"
+  while not shutdownRequested:
+    await sleepAsync(200.milliseconds)
+  notice "Stopping"
 
 proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
   let
@@ -557,11 +566,6 @@ proc run(conf: Conf) {.async: (raises: [CatchableError]).} =
     .build()
 
   let mixProto = MixProtocol.new(nodeInfo, switch)
-
-  let maxReplyBytes = getMaxMessageSizeForCodec(DhtProxyCodec, 0).valueOr:
-    raise
-      newException(ValueError, "DhtProxyCodec does not fit Sphinx payload: " & error)
-  mixProto.registerDestReadBehavior(DhtProxyCodec, readLp(maxReplyBytes))
 
   let mixAddr = mixProto.localMixPubInfo.flatMap(toMixAddress).valueOr:
     raise newException(ValueError, "Failed to derive Mix address: " & error)

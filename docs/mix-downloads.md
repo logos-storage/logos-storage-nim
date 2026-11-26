@@ -30,7 +30,7 @@ func parseDownloadTransport*(value: string): Result[DownloadTransport, string] =
     err("transport must be 'direct' or 'mix'")
 ```
 
-An unrecognized value produces HTTP 400. A Mix request fails if Mix is not enabled; the request does not fall back to direct dialing. Existing internal callers that omit the parameter select Direct. The C-library download API does not expose this parameter. Discovery's DHT proxy selection is configured independently.
+An unrecognized value produces HTTP 400. A Mix request fails if Mix is not enabled; the request does not fall back to direct dialing. Existing internal callers that omit the parameter select Direct. The C-library download API does not expose this parameter. Discovery's DHT proxy selection is configured independently. See [DHT proxy lookups](dht-proxy.md) for the MixTransport flow and proxy configuration requirements.
 
 ## From the API to a download
 
