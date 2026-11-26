@@ -184,6 +184,9 @@ proc getFilenameFromContentDisposition(contentDisposition: string): ?string =
     return string.none
 
   let filename = parts[1].strip()
+  if not filename.endsWith('"'):
+    return string.none
+
   return filename[0 ..^ 2].some
 
 proc initDataApi(node: StorageNodeRef, repoStore: RepoStore, router: var RestRouter) =

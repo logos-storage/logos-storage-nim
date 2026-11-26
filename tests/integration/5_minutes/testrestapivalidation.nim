@@ -31,6 +31,12 @@ multinodesuite "Rest API validation":
     check response.status == 422
     check (await response.body) == "The filename is not valid."
 
+  test "upload succeeds if content disposition has an empty filename", config:
+    let headers = @[("Content-Disposition", "attachment; filename=\"")]
+    let response = await client.uploadRaw("some file contents", headers)
+
+    check response.status == 200
+
   test "upload fails if content type is invalid", config:
     let headers = @[("Content-Type", "hello/world")]
     let response = await client.uploadRaw("some file contents", headers)
