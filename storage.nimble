@@ -22,7 +22,7 @@ requires "constantine >= 0.2.0 & < 0.3.0"
 requires "contractabi >= 0.7.3 & < 0.8.0"
 requires "https://github.com/logos-storage/nim-datastore >= 0.2.4 & < 0.3.0"
 requires "leveldbstatic >= 0.2.3 & < 0.3.0"
-requires "json_serialization == 0.4.4"
+requires "json_serialization == 0.5.0"
 requires "https://github.com/status-im/lrucache.nim >= 1.2.2 & < 1.3.0"
 requires "faststreams >= 0.5.0 & < 0.6.0"
 # The C bindings need fixes made after v0.3.1-rc.0, which have no tag yet.
