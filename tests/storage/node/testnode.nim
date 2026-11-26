@@ -1,6 +1,7 @@
 import std/os
 import std/math
 import std/importutils
+import std/strutils
 
 import pkg/chronos
 import pkg/stew/byteutils
@@ -18,6 +19,7 @@ import pkg/storage/chunker
 import pkg/storage/manifest
 import pkg/storage/discovery
 import pkg/storage/blocktype as bt
+import pkg/storage/streams
 
 import pkg/storage/node {.all.}
 
@@ -204,6 +206,26 @@ asyncchecksuite "Test Node - Basic":
       except LPStreamError:
         newSeq[byte]()
     check data.len < md.manifest.datasetSize.int
+
+  test "Should report a failed dataset download as a read error":
+    let
+      blocks = await makeRandomBlocks(datasetSize = 32768, blockSize = 4096'nb)
+      md = await storeDataGetManifest(localStore, blocks)
+
+    check (await localStore.delBlock(md.manifest.treeCid, 0)).isOk
+
+    let stream = (await node.retrieve(md.manifestCid, local = true)).get()
+    defer:
+      await stream.close()
+
+    check eventually(not StoreStream(stream).error.isNil)
+
+    var message = ""
+    try:
+      discard await stream.drain().wait(5.seconds)
+    except LPStreamError as exc:
+      message = exc.msg
+    check "Block not found locally" in message
 
   test "Retrieve One Block":
     let
