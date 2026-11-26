@@ -96,24 +96,25 @@ proc getNameRecords(
 
   var records: seq[SignedNameRecord]
 
-  while not iter.finished:
-    let item = (await iter.next()).valueOr:
-      warn "Cannot read a stored name record", error = error.msg
-      break
+  try:
+    while not iter.finished:
+      let item = (await iter.next()).valueOr:
+        warn "Cannot read a stored name record", error = error.msg
+        break
 
-    if item.key.isNone:
-      continue
+      if item.key.isNone:
+        continue
 
-    let signed = decodeNameRecord(item.data).valueOr:
-      warn "Cannot decode a stored name record", error = error.msg
-      continue
+      let signed = decodeNameRecord(item.data).valueOr:
+        warn "Cannot decode a stored name record", error = error.msg
+        continue
 
-    records.add(signed)
+      records.add(signed)
+  finally:
+    let disposed = await noCancel iter.dispose()
 
-  let disposed = await iter.dispose()
-
-  if disposed.isErr:
-    warn "Cannot dispose the name records query", error = disposed.error.msg
+    if disposed.isErr:
+      warn "Cannot dispose the name records query", error = disposed.error.msg
 
   ok(records)
 
