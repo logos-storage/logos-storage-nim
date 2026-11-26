@@ -312,8 +312,8 @@
       }
     },
     "json_serialization": {
-      "version": "0.4.4",
-      "vcsRevision": "c343b0e243d9e17e2c40f3a8a24340f7c4a71d44",
+      "version": "0.5.0",
+      "vcsRevision": "5bd1d25bf33ad63093dfd949435bc92d6d722a75",
       "url": "https://github.com/status-im/nim-json-serialization",
       "downloadMethod": "git",
       "dependencies": [
@@ -324,7 +324,7 @@
         "results"
       ],
       "checksums": {
-        "sha1": "8b3115354104858a0ac9019356fb29720529c2bd"
+        "sha1": "6f94d86e67f3ede9f3dda2af20ef7fe4d4430bfc"
       }
     },
     "chronicles": {
