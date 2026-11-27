@@ -388,13 +388,13 @@ twonodessuite "Names":
 
     let refreshed = await client1.refreshNameRaw(nameKey, body = record)
 
-    check refreshed.status == 500
+    check refreshed.status == 400
 
     let resolved = await client2.resolveNameRaw(nameKey)
 
     check resolved.status == 404
 
-  test "refresh returns 500 with the message when the name record is not base64url",
+  test "refresh returns 400 with the message when the name record is not base64url",
     namesConfig:
     let
       ciKey = newCiKey()
@@ -402,7 +402,7 @@ twonodessuite "Names":
 
     let response = await client1.refreshNameRaw(nameKey, body = "not base64url!")
 
-    check response.status == 500
+    check response.status == 400
 
     check "not base64url" in (await response.body)
 

@@ -55,8 +55,11 @@ proc storage_name_refresh(
   let name = parseName(nameKey).valueOr:
     return err("Failed to refresh the name: " & error.msg)
 
+  let bytes = parseNameRecord(name, record).valueOr:
+    return err("Failed to refresh the name: " & error.msg)
+
   try:
-    (await self.node.discovery.refreshName(name, record)).isOkOr:
+    (await self.node.discovery.refresh(name, bytes)).isOkOr:
       return err("Failed to refresh the name: " & error.msg)
   except CancelledError:
     return err("Failed to refresh the name: operation cancelled.")

@@ -799,11 +799,11 @@ paths:
         "204":
           description: The name record is advertised
         "400":
-          description: Invalid name key
+          description: Invalid name key, or the name record is not a signed name record of the name key
         "403":
           description: The Origin header is refused
         "500":
-          description: The name record is not valid, or the node can't advertise it
+          description: The DHT refuses the name record, or the node can't advertise it
 
   "/names/{peerId}/{label}":
     get:

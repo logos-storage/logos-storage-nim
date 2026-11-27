@@ -185,7 +185,7 @@ The name API lets you point a DHT key, represented as a CID, to a dataset CID. T
 
 `name_stop_publishing` deletes the persisted name record of the `label`. The node stops advertising it. The name record stays in the DHT until it expires.
 
-`name_refresh` advertises the `record` in the DHT, a signed name record in base64url, without keeping it. The call fails when the `record` is not valid for the `nameKey`.
+`name_refresh` advertises the `record` in the DHT, a signed name record in base64url, without keeping it. The call fails when the `record` is not valid for the `nameKey`, when the node holds a newer one, or when no peer stores it.
 
 `name_resolve` and `name_resolve_key` read the name record in the DHT and return its CID. They return an empty string when the DHT doesn't have a name record.
 

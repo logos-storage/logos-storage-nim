@@ -872,7 +872,10 @@ proc initNamesApi(
       except HttpError as exc:
         return RestApiResponse.error(Http400, exc.msg, headers = headers)
 
-    (await node.discovery.refreshName(name, string.fromBytes(body))).isOkOr:
+    let record = parseNameRecord(name, string.fromBytes(body)).valueOr:
+      return RestApiResponse.error(Http400, error.msg, headers = headers)
+
+    (await node.discovery.refresh(name, record)).isOkOr:
       return RestApiResponse.error(Http500, error.msg, headers = headers)
 
     resp.status = Http204

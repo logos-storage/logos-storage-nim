@@ -9,12 +9,12 @@
 
 {.push raises: [].}
 
-import pkg/chronos
+import std/strutils
+
 import pkg/libp2p
 import pkg/questionable/results
 import pkg/stew/base64
 
-import ../discovery
 import ../naming/dht
 
 proc nameKeyString*(name: Name): string =
@@ -49,16 +49,20 @@ proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
 
   return ok(publicKey)
 
-proc refreshName*(
-    discovery: Discovery, name: Name, record: string
-): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
-  ## Advertises the name in the DHT with the record, a signed name record in
-  ## base64url.
+proc parseNameRecord*(name: Name, record: string): Result[seq[byte], ref CatchableError] =
+  ## The bytes of a signed name record of the name, in base64url. The DHT checks
+  ## the other rules, such as the expiration, when the node advertises it.
   var bytes: seq[byte]
 
   try:
-    bytes = Base64Url.decode(record)
+    bytes = Base64Url.decode(record.strip())
   except Base64Error:
     return failure("The name record is not base64url")
 
-  await discovery.refresh(name, bytes)
+  let signed = decodeNameRecord(bytes).valueOr:
+    return err(error)
+
+  if signed.name() != name:
+    return failure("The name record is not for this name key")
+
+  ok(bytes)

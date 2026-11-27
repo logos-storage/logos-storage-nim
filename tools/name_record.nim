@@ -1,6 +1,6 @@
 ## name_record - signs a name record with a private key, for a CI.
 ##
-## A CI that is not a Storage node publishes a name with its own key: this tool
+## A CI publishes a name with its own key: this tool
 ## signs the name record, then the CI sends it to a node with the refresh call.
 ## The node validates the name record and advertises it in the DHT. It doesn't
 ## keep it and doesn't republish it.
@@ -36,22 +36,18 @@ The output is a JSON object on stdout:
   {"nameKey": "<name key>", "record": "<signed name record in base64url>"}
 
 The <nameKey> of the curl call is the "nameKey" of the output.
-The node validates the name record and advertises it in the DHT. It doesn't
-keep it, so the CI sends it again before it expires.
+The node validates the name record and advertises it in the DHT.
 
 Usage:
   name_record --key-file <path|-> --label <label> --cid <cid> [--seqnum <n>]
 
 Options:
   --key-file <path|->  The private key: one line with the base64url of the
-                       libp2p serialized private key (secp256k1), the content of
-                       the key file of a node. Use - to read it from stdin.
-                       A file that other users can read or write is refused.
+                       libp2p serialized private key (secp256k1). Use - to read
+                       it from stdin.
   --label <label>      The label of the name, from 1 to 256 bytes of UTF-8.
   --cid <cid>          The CID (CIDv1) the name points to.
-  --seqnum <n>         The sequence number of the name record. It must grow with
-                       each new name record of the same name (default: the
-                       current Unix time in seconds).
+  --seqnum <n>         The sequence number of the name record.
   --help, -h           Show this help and exit.
 
 The name record expires 8 hours after it is signed."""
@@ -159,8 +155,8 @@ when isMainModule:
       fail("--cid is not a valid CID: " & $error)
     privateKey = parsePrivateKey(readKeyLine(keyFile))
     now = getTime().toUnix()
-    sequence = seqnum.valueOr:
-      now.uint64
+    # Like the publish API: a missing seqnum or 0 means the current time.
+    sequence = if seqnum.get(0'u64) == 0: now.uint64 else: seqnum.get()
 
   let nameRecord = NameRecord(
     version: NameRecordVersion,

@@ -86,7 +86,7 @@ method isValid*(
   # - codec: storage-name
   # - hash: SHA2-256
   let name = parseNameKey(key.toBytes()).valueOr:
-    debug "Refused a name record", error = error.msg
+    trace "Refused a name record", error = error.msg
 
     return false
 
@@ -102,7 +102,7 @@ method isValid*(
   let validated = validate(name, record.value.toBytes(), self.clock.now())
 
   if validated.isErr:
-    debug "Refused a name record", error = validated.error.msg
+    trace "Refused a name record", error = validated.error.msg
 
     return false
 
@@ -201,7 +201,7 @@ proc refresh*(
   ## Advertises a signed name record of the name in the DHT. The name record
   ## can be signed by another key than the node's key, and the node doesn't
   ## keep it in its metadata store. It fails when the name record is not valid,
-  ## or when the node holds a newer one.
+  ## when the node holds a newer one, or when no peer stores it.
   # `putValue` (libp2p/protocols/kademlia/put.nim):
   # - `isValid` on the name record
   # - `select` on [name record, stored name record]
