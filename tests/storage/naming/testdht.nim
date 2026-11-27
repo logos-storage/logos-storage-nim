@@ -1,5 +1,3 @@
-import std/tables
-
 import pkg/chronos
 import pkg/libp2p except setup
 import pkg/libp2p/protocols/kademlia
@@ -145,7 +143,7 @@ asyncchecksuite "Name refresh with a signed name record":
       recordCid = Cid.example
       bytes = signedBytes(1, currentTime + 3600, recordCid = recordCid)
 
-    check (await refresh(server.disc, catalogName, bytes)).isOk
+    check (await refresh(reader.disc, catalogName, bytes)).isOk
 
     let resolved = (await reader.disc.resolve(catalogName)).tryGet()
 
@@ -157,8 +155,8 @@ asyncchecksuite "Name refresh with a signed name record":
       first = signedBytes(1, currentTime + 3600, recordCid = recordCid)
       second = signedBytes(1, currentTime + 7200, recordCid = recordCid)
 
-    check (await refresh(server.disc, catalogName, first)).isOk
-    check (await refresh(server.disc, catalogName, second)).isOk
+    check (await refresh(reader.disc, catalogName, first)).isOk
+    check (await refresh(reader.disc, catalogName, second)).isOk
 
     let stored = (await server.disc.getValue(key)).tryGet()
 
@@ -167,7 +165,7 @@ asyncchecksuite "Name refresh with a signed name record":
   test "refuses a name record signed by another key than the key of the name":
     let bytes = signedBytes(1, currentTime + 3600, signingKey = PrivateKey.example)
 
-    let res = await refresh(server.disc, catalogName, bytes)
+    let res = await refresh(reader.disc, catalogName, bytes)
 
     check res.isErr
 
@@ -176,9 +174,9 @@ asyncchecksuite "Name refresh with a signed name record":
       newer = signedBytes(2, currentTime + 3600)
       older = signedBytes(1, currentTime + 3600)
 
-    check (await refresh(server.disc, catalogName, newer)).isOk
+    check (await refresh(reader.disc, catalogName, newer)).isOk
 
-    let res = await refresh(server.disc, catalogName, older)
+    let res = await refresh(reader.disc, catalogName, older)
 
     check res.isErr
 
