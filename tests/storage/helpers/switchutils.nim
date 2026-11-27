@@ -7,9 +7,11 @@ proc newStandardSwitch*(
     addrs: MultiAddress =
       MultiAddress.init("/ip4/127.0.0.1/tcp/0").expect("invalid multiaddress"),
     maxConnections = 0,
+    privateKey = Opt.none(PrivateKey),
 ): Switch =
   var builder = SwitchBuilder
     .new()
+    .withPrivateKey(privateKey)
     .withAddresses(@[addrs])
     .withWildcardResolver(true)
     .withSignedPeerRecord(sendSignedPeerRecord)

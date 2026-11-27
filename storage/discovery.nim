@@ -375,25 +375,25 @@ proc getValue*(
 proc getSpr*(d: Discovery): ?!string =
   d.switch.peerInfo.toSpr()
 
-proc updateLocalMultiAddr*(d: Discovery) =
-  ## This is called when the announced addresses change, to update the local Mix
-  ## address once AutoNAT or a relay reservation provides a dialable one.
-  if d.mixProto.isNil:
-    return
+proc mixAddressObserver*(d: Discovery): PeerInfoObserver =
+  ## Apply the signed endpoint to the self hop used by new SURBs.
+  proc(p: PeerInfo) {.gcsafe, raises: [].} =
+    if d.mixProto.isNil:
+      return
 
-  let addrs = d.switch.peerInfo.addrs
-  let mixAddr = pickMixCompatibleMultiAddr(addrs).valueOr:
-    warn "No Mix-compatible address among announced addrs", addrs = addrs
-    mixUnsetMultiAddr()
+    let record = p.signedPeerRecord.data
+    var mixAddr = mixUnsetMultiAddr()
+    for entry in record.addresses:
+      let info = MixPubInfo.fromMixAddress(entry.address, Opt.some(record.peerId)).valueOr:
+        continue
+      mixAddr = info.multiAddr
+      break
 
-  let res = d.mixProto.setLocalMultiAddr(mixAddr)
-  if res.isErr:
-    # This case should not happen.
-    # We checked above that the mix addr is valid,
-    # and setLocalMultiAddr should only fail if the address is invalid.
-    error "Failed to update Mix local address", address = mixAddr, err = res.error
-  else:
-    info "Mix local address updated", address = mixAddr
+    let res = d.mixProto.setLocalMultiAddr(mixAddr)
+    if res.isErr:
+      error "Failed to update Mix local address", address = mixAddr, err = res.error
+    else:
+      info "Mix local address updated", address = mixAddr
 
 proc advertisement(d: Discovery): Result[seq[byte], string] =
   let addrs = d.addressPolicy.dialableAddrs(

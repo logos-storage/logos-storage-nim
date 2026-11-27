@@ -1,6 +1,10 @@
 import std/os
 import std/sequtils
 
+import pkg/libp2p_mix
+import pkg/libp2p_mix_transport/address/parse
+import pkg/libp2p/crypto/crypto
+import ../../storage/rng as storage_rng
 import pkg/chronos
 import pkg/confutils
 import pkg/questionable/results
@@ -44,6 +48,37 @@ suite "StorageServer - extip":
     await server.close()
 
     check announced.deduplicate() == @[@["/ip4/7.7.7.2/tcp/" & $port]]
+
+  test "a startup observer sees the signed extip Mix address already in the live identity":
+    let
+      port = await nextFreePort(40500)
+      config = StorageConf.load(
+        cmdLine = @[
+          "--data-dir=" & dataDir,
+          "--nat=extip:7.7.7.2",
+          "--listen-port=" & $port,
+          "--mix-enabled=true",
+        ],
+        quitOnFailure = false,
+      )
+      key = PrivateKey.random(Secp256k1, storage_rng.Rng.instance().libp2pRng).tryGet()
+      server = StorageServer.new(config, key)
+
+    var published: seq[MultiAddress]
+    server.node.switch.peerInfo.addObserver(
+      proc(p: PeerInfo) {.gcsafe, raises: [].} =
+        for entry in p.signedPeerRecord.data.addresses:
+          if entry.address.isMTAddress():
+            let live =
+              server.node.discovery.mixProto.localMixPubInfo.expect("Mix identity")
+            doAssert entry.address == live.toMixAddress().expect("live Mix address")
+            published.add(live.multiAddr)
+    )
+
+    await server.start()
+    await server.stop()
+    await server.close()
+    check published.mapIt($it).deduplicate() == @["/ip4/7.7.7.2/tcp/" & $port]
 
 suite "StorageServer - Kad address policy":
   let
