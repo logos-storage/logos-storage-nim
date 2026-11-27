@@ -1,9 +1,16 @@
 import std/json
+import std/os
+import std/osproc
 import std/times
+import std/strutils
 import pkg/libp2p/[cid, multicodec, multihash]
+import pkg/libp2p/crypto/crypto
 import pkg/questionable/results
+import pkg/stew/base64
 import pkg/stew/byteutils
 import ../twonodes
+import ../../../storage/naming/record
+import ../../../storage/naming/dht
 
 twonodessuite "Names":
   const
@@ -46,6 +53,46 @@ twonodessuite "Names":
   ): Future[string] {.async: (raises: [CatchableError]).} =
     let info = (await client.info()).get
     info["id"].getStr()
+
+  proc someCid(): Cid =
+    let hash = MultiHash.digest("sha2-256", "some content".toBytes).get
+
+    Cid.init(CIDv1, multiCodec("raw"), hash).get
+
+  proc newCiKey(): PrivateKey =
+    PrivateKey.random(newRng()[]).get
+
+  proc nameKeyOf(ciKey: PrivateKey, label: string): string =
+    let ciName = name(ciKey.getPublicKey().get, label).get
+
+    $Cid.init(nameKey(ciName)).get
+
+  # The binary is built next to build/storage by the testIntegration task.
+  proc runNameRecord(
+      ciKey: PrivateKey, cid: Cid
+  ): tuple[output: string, exitCode: int] =
+    let
+      repoDir = currentSourcePath().parentDir() / ".." / ".." / ".."
+      keyFile = createTempDir("name-record-key-", "") / "ci.key"
+
+    writeFile(keyFile, Base64Url.encode(ciKey.getBytes().get()) & "\n")
+    setFilePermissions(keyFile, {fpUserRead, fpUserWrite})
+
+    result = execCmdEx(
+      "build/name_record --key-file " & quoteShell(keyFile) &
+        " --label catalog --cid " & $cid,
+      options = {},
+      workingDir = repoDir,
+    )
+
+    removeDir(keyFile.parentDir())
+
+  proc signedRecord(ciKey: PrivateKey, cid: Cid): string =
+    let (output, exitCode) = runNameRecord(ciKey, cid)
+
+    check exitCode == 0
+
+    parseJson(output)["record"].getStr()
 
   test "a name published on one node resolves on another node", namesConfig:
     let cid = (await client1.upload("catalog contents")).get
@@ -284,35 +331,80 @@ twonodessuite "Names":
 
     check response.status == 400
 
-  test "any node can refresh a name published by another node", namesConfig:
-    let cid = (await client1.upload("catalog contents")).get
-
-    let published = await client1.publishNameRaw(@{"label": "catalog", "cid": $cid})
-
-    check published.status == 200
-
-    let nameKey = await published.body
-    let refreshed = await client2.refreshNameRaw(nameKey)
-
-    check refreshed.status == 204
-
-  test "refresh returns 404 when the DHT doesn't have a name record for the name key",
-    namesConfig:
-    let response = await client2.refreshNameRaw(unpublishedNameKey())
-
-    check response.status == 404
-
   test "refresh refuses another Origin", namesConfig:
+    let
+      ciKey = newCiKey()
+      record = signedRecord(ciKey, someCid())
+
     let response = await client2.refreshNameRaw(
-      unpublishedNameKey(), headers = @[("Origin", "http://other.example")]
+      nameKeyOf(ciKey, "catalog"),
+      headers = @[("Origin", "http://other.example")],
+      body = record,
     )
 
     check response.status == 403
 
   test "refresh refuses a name key that is not a CID", namesConfig:
-    let response = await client1.refreshNameRaw("not-a-cid")
+    let
+      ciKey = newCiKey()
+      record = signedRecord(ciKey, someCid())
+
+    let response = await client1.refreshNameRaw("not-a-cid", body = record)
 
     check response.status == 400
+
+  test "a node advertises the name record of the name_record tool", namesConfig:
+    let
+      cid = (await client1.upload("catalog contents")).get
+      ciKey = newCiKey()
+      (output, exitCode) = runNameRecord(ciKey, cid)
+
+    check exitCode == 0
+
+    let
+      signed = parseJson(output)
+      nameKey = signed["nameKey"].getStr()
+
+    check nameKey == nameKeyOf(ciKey, "catalog")
+
+    let refreshed =
+      await client1.refreshNameRaw(nameKey, body = signed["record"].getStr())
+
+    check refreshed.status == 204
+
+    let resolved = await client2.resolveNameRaw(nameKey)
+
+    check resolved.status == 200
+
+    check (await resolved.body) == $cid
+
+  test "refresh refuses a name record of the name_record tool signed by another key",
+    namesConfig:
+    let
+      cid = (await client1.upload("catalog contents")).get
+      ciKey = newCiKey()
+      record = signedRecord(newCiKey(), cid)
+      nameKey = nameKeyOf(ciKey, "catalog")
+
+    let refreshed = await client1.refreshNameRaw(nameKey, body = record)
+
+    check refreshed.status == 500
+
+    let resolved = await client2.resolveNameRaw(nameKey)
+
+    check resolved.status == 404
+
+  test "refresh returns 500 with the message when the name record is not base64url",
+    namesConfig:
+    let
+      ciKey = newCiKey()
+      nameKey = nameKeyOf(ciKey, "catalog")
+
+    let response = await client1.refreshNameRaw(nameKey, body = "not base64url!")
+
+    check response.status == 500
+
+    check "not base64url" in (await response.body)
 
   test "resolve by peer ID returns 404 when the DHT doesn't have a name record for the label",
     namesConfig:

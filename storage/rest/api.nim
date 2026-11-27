@@ -20,6 +20,7 @@ import pkg/chronos
 import pkg/presto except toJson
 import pkg/metrics except toJson
 import pkg/stew/base10
+import pkg/stew/byteutils
 import pkg/confutils
 import pkg/serde/json as serde
 
@@ -855,7 +856,7 @@ proc initNamesApi(
   router.api(MethodPost, "/api/storage/v1/names/{nameKey}/refresh") do(
     nameKey: string, resp: HttpResponseRef
   ) -> RestApiResponse:
-    ## Advertise the name record of the name key in the DHT again.
+    ## Advertise the signed name record of the body, in base64url, in the DHT.
     ##
     var headers = buildCorsHeaders("POST", allowedOrigin)
 
@@ -865,14 +866,13 @@ proc initNamesApi(
     let name = parseName(nameKey.get()).valueOr:
       return RestApiResponse.error(Http400, error.msg, headers = headers)
 
-    (await node.discovery.refresh(name)).isOkOr:
-      if error.isNoNameRecordError:
-        return RestApiResponse.error(
-          Http404,
-          "The DHT doesn't have a name record for the name key",
-          headers = headers,
-        )
+    let body =
+      try:
+        await request.getBody()
+      except HttpError as exc:
+        return RestApiResponse.error(Http400, exc.msg, headers = headers)
 
+    (await node.discovery.refreshName(name, string.fromBytes(body))).isOkOr:
       return RestApiResponse.error(Http500, error.msg, headers = headers)
 
     resp.status = Http204

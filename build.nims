@@ -92,6 +92,9 @@ task checkSpr, "build check_spr used for checking bootstrap node health":
     srcDir = "tools/",
     params = "-d:release -d:chronicles_runtime_filtering -d:chronicles_log_level=WARN"
 
+task nameRecord, "build name_record used by a CI to sign a name record":
+  buildBinary "name_record", srcDir = "tools/", params = "-d:release"
+
 task bootstrapHealthCheck, "ping fleet bootstrap nodes; non-zero exit if any are unreachable":
   checkSprTask()
 
@@ -114,6 +117,7 @@ task testIntegration, "Run integration tests":
   buildBinary "storage",
     outName = "storage",
     params = "-d:chronicles_runtime_filtering -d:chronicles_log_level=TRACE"
+  buildBinary "name_record", srcDir = "tools/", params = "-d:release"
   test "testIntegration"
   # use params to enable logging from the integration test executable
   # test "testIntegration", params = "-d:chronicles_sinks=textlines[notimestamps,stdout],textlines[dynamic] " &

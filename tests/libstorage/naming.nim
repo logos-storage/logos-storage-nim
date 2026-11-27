@@ -2,15 +2,20 @@ import std/json
 import std/monotimes
 import std/os
 import std/strutils
+import std/times
 
 import pkg/chronos
-import pkg/libp2p/[cid, multihash]
+import pkg/libp2p/[cid, crypto/crypto, multihash]
 import pkg/results
+import pkg/stew/base64
 
 import ../asynctest
 import ../checktest
+import ../storage/examples
 import ../../library/node_factory
 import ../../library/storage_api/naming_api
+import ../../storage/naming/record
+import ../../storage/naming/dht
 
 from ../../storage/storage import StorageServer, close
 from ../../storage/storagetypes import ManifestCodec
@@ -72,12 +77,44 @@ asyncchecksuite "Libstorage - names":
       check "invalid name" in res.error
 
   test "refresh refuses a name that is not a CID":
-    let res = await storage_name_refresh(node, "not-a-cid")
+    let res = await storage_name_refresh(node, "not-a-cid", "record")
 
     check res.isErr
 
     if res.isErr:
       check "invalid name" in res.error
+
+  test "refresh refuses a name record that is not base64url":
+    let res = await storage_name_refresh(node, datasetCid(), "not base64url!")
+
+    check res.isErr
+
+    if res.isErr:
+      check "Failed to refresh the name: " in res.error
+      check "not base64url" in res.error
+
+  test "refresh refuses a name record that is not valid":
+    let
+      privateKey = PrivateKey.example
+      catalogName = name(privateKey.getPublicKey().get(), "catalog").get()
+      catalogKey = $Cid.init(nameKey(catalogName)).get()
+      # The label of this name record doesn't match the name key.
+      nameRecord = NameRecord(
+        version: NameRecordVersion,
+        label: "release",
+        cid: Cid.init(datasetCid()).get(),
+        seqnum: 1,
+        expiration: getTime().toUnix() + 3600,
+      )
+      signed = SignedNameRecord.init(privateKey, nameRecord).get()
+      record = Base64Url.encode(signed.encode())
+
+    let res = await storage_name_refresh(node, catalogKey, record)
+
+    check res.isErr
+
+    if res.isErr:
+      check "Failed to refresh the name: " in res.error
 
   test "is_key answers true for a name key from a publish":
     let nameKey =

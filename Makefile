@@ -133,6 +133,10 @@ checkSpr: | build
 	echo -e $(BUILD_MSG) "build/check_spr" && \
 		nim checkSpr $(NIM_PARAMS) build.nims
 
+nameRecord: | build
+	echo -e $(BUILD_MSG) "build/name_record" && \
+		nim nameRecord $(NIM_PARAMS) build.nims
+
 # Pings the fleet bootstrap nodes and fails if any are unreachable.
 # Run from OUTSIDE the fleet VPCs (e.g. a GitHub-hosted runner) so nodes that
 # advertise private/cloud-internal IPs are correctly seen as unreachable.

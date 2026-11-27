@@ -106,80 +106,83 @@ asyncchecksuite "Name resolver":
   test "returns an error for an empty label":
     check (await reader.disc.resolve(publicKey, "")).isErr
 
-asyncchecksuite "Name refresh":
+asyncchecksuite "Name refresh with a signed name record":
   var
     clock: MockClock
     server: TestNode
-    publisher: NamePublisherRef
-    refresher: TestNode
+    reader: TestNode
 
   let
     nodes = TestNodes()
-    privateKey = PrivateKey.example
-    publicKey = privateKey.getPublicKey().tryGet()
-    cid = Cid.example
+    # The key of a CI: it is not the key of the node
+    ciKey = PrivateKey.example
+    ciPublicKey = ciKey.getPublicKey().tryGet()
+    catalogName = name(ciPublicKey, "catalog").tryGet()
+    key = nameKey(catalogName)
 
   teardown:
     await nodes.stop()
-
-  # Starts a server node after the publish, then waits until the server of the
-  # publisher knows it.
-  proc startLateNode(): Future[TestNode] {.
-      async: (raises: [CancelledError, LPError, AsyncExceptionError])
-  .} =
-    let late = await nodes.startNode(clock, isServer = true, bootstrap = @[server])
-
-    check eventually(server.disc.routingTable().peers.len >= 1, timeout = 10_000)
-
-    late
 
   setup:
     clock = MockClock.new(currentTime)
 
     server = await nodes.startNode(clock, isServer = true)
-    publisher = NamePublisherRef.new(
-      server.disc, SQLiteDatastore.new(Memory).tryGet(), privateKey, clock
-    )
+    reader = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
 
-    refresher = await nodes.startNode(clock, isServer = false, bootstrap = @[server])
+  proc signedBytes(
+      seqnum: uint64,
+      expiration: int64,
+      label = "catalog",
+      recordCid = Cid.example,
+      signingKey = ciKey,
+  ): seq[byte] =
+    SignedNameRecord.init(signingKey, newRecord(seqnum, expiration, label, recordCid))
+    .tryGet()
+    .encode()
 
-  test "a node that joins after the publish gets the same name record after a refresh":
-    check (await publisher.publish("catalog", cid)).isOk
-
+  test "advertises a name record signed by another key than the key of the node":
     let
-      catalogName = name(publicKey, "catalog").tryGet()
-      key = nameKey(catalogName)
-      recordKey = RecordKey.fromBytes(key).tryGet()
+      recordCid = Cid.example
+      bytes = signedBytes(1, currentTime + 3600, recordCid = recordCid)
 
+    check (await refresh(server.disc, catalogName, bytes)).isOk
+
+    let resolved = (await reader.disc.resolve(catalogName)).tryGet()
+
+    check resolved.get() == recordCid
+
+  test "a name record with the same seqnum and CID that expires later replaces the stored one":
     let
-      published = (await server.disc.getValue(key)).tryGet()
-      late = await startLateNode()
+      recordCid = Cid.example
+      first = signedBytes(1, currentTime + 3600, recordCid = recordCid)
+      second = signedBytes(1, currentTime + 7200, recordCid = recordCid)
 
-    check not late.disc.kad.dataTable.hasKey(recordKey)
+    check (await refresh(server.disc, catalogName, first)).isOk
+    check (await refresh(server.disc, catalogName, second)).isOk
 
-    check (await refresh(refresher.disc, catalogName)).isOk
+    let stored = (await server.disc.getValue(key)).tryGet()
 
-    check late.disc.kad.dataTable.hasKey(recordKey)
-    check late.disc.kad.dataTable[recordKey].value.toBytes() == published
+    check decodeNameRecord(stored).tryGet().data.expiration == currentTime + 7200
 
-  test "returns an error and doesn't advertise anything when the name record has expired":
-    check (await publisher.publish("catalog", cid)).isOk
+  test "refuses a name record signed by another key than the key of the name":
+    let bytes = signedBytes(1, currentTime + 3600, signingKey = PrivateKey.example)
 
+    let res = await refresh(server.disc, catalogName, bytes)
+
+    check res.isErr
+
+  test "refuses an older name record when the node holds a newer one":
     let
-      catalogName = name(publicKey, "catalog").tryGet()
-      recordKey = RecordKey.fromBytes(nameKey(catalogName)).tryGet()
+      newer = signedBytes(2, currentTime + 3600)
+      older = signedBytes(1, currentTime + 3600)
 
-    let late = await startLateNode()
+    check (await refresh(server.disc, catalogName, newer)).isOk
 
-    clock.advance(NameRecordLifetime + 1)
+    let res = await refresh(server.disc, catalogName, older)
 
-    check (await refresh(refresher.disc, catalogName)).isErr
-    check not late.disc.kad.dataTable.hasKey(recordKey)
+    check res.isErr
 
-  test "returns an error when the DHT doesn't have a name record for the name":
-    let unknownName = name(publicKey, "unknown").tryGet()
-
-    check (await refresh(refresher.disc, unknownName)).isErr
+    check (await server.disc.getValue(key)).tryGet() == newer
 
 asyncchecksuite "Name records in the DHT":
   var clock: MockClock

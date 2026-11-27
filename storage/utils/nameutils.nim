@@ -9,9 +9,12 @@
 
 {.push raises: [].}
 
+import pkg/chronos
 import pkg/libp2p
 import pkg/questionable/results
+import pkg/stew/base64
 
+import ../discovery
 import ../naming/dht
 
 proc nameKeyString*(name: Name): string =
@@ -45,3 +48,17 @@ proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
     return failure("the peer ID doesn't have a public key")
 
   return ok(publicKey)
+
+proc refreshName*(
+    discovery: Discovery, name: Name, record: string
+): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
+  ## Advertises the name in the DHT with the record, a signed name record in
+  ## base64url.
+  var bytes: seq[byte]
+
+  try:
+    bytes = Base64Url.decode(record)
+  except Base64Error:
+    return failure("The name record is not base64url")
+
+  await discovery.refresh(name, bytes)

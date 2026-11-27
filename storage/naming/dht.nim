@@ -196,17 +196,21 @@ proc resolve*(
   await discovery.resolve(nameBytes)
 
 proc refresh*(
-    discovery: Discovery, name: Name
+    discovery: Discovery, name: Name, bytes: seq[byte]
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
-  ## Advertises the name record of the name in the DHT again, without changing
-  ## it. It doesn't need the private key of the publisher.
-  ##
-  ## The DHT validator has already checked the name record, so an expired or
-  ## invalid one is never advertised: see [NameRecordValidatorRef] and `getValue` in
-  ## libp2p/protocols/kademlia/get.nim.
-  let key = nameKey(name)
+  ## Advertises a signed name record of the name in the DHT. The name record
+  ## can be signed by another key than the node's key, and the node doesn't
+  ## keep it in its metadata store. It fails when the name record is not valid,
+  ## or when the node holds a newer one.
+  # `putValue` (libp2p/protocols/kademlia/put.nim):
+  # - `isValid` on the name record
+  # - `select` on [name record, stored name record]
+  # - each peer that receives it runs `isValid` and `select` too
+  let advertised = await discovery.putValue(nameKey(name), bytes)
 
-  let bytes = (await discovery.getValue(key)).valueOr:
-    return err(error)
+  if advertised.isErr:
+    warn "Cannot advertise the name record", error = advertised.error.msg
 
-  await discovery.putValue(key, bytes)
+    return err(advertised.error)
+
+  ok()

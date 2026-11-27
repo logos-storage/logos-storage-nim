@@ -779,7 +779,7 @@ paths:
 
   "/names/{nameKey}/refresh":
     post:
-      summary: "Advertise the name record of the name key again."
+      summary: "Advertise a signed name record in the DHT."
       tags: [Names]
       operationId: refreshName
       parameters:
@@ -788,15 +788,22 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/NameKey"
+      requestBody:
+        required: true
+        description: The signed name record, in base64url.
+        content:
+          text/plain:
+            schema:
+              type: string
       responses:
         "204":
-          description: The name record is advertised again
+          description: The name record is advertised
         "400":
           description: Invalid name key
         "403":
           description: The Origin header is refused
-        "404":
-          description: The DHT doesn't have a name record for the name key
+        "500":
+          description: The name record is not valid, or the node can't advertise it
 
   "/names/{peerId}/{label}":
     get:
