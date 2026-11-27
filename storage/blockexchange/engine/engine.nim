@@ -164,6 +164,9 @@ proc stop*(self: BlockExcEngine) {.async: (raises: []).} =
   trace "NetworkStore stopped"
 
 proc searchForNewPeers(self: BlockExcEngine, download: ActiveDownload) =
+  if download.ctx.connectedOnly:
+    # A connected-only download never looks for or dials other peers.
+    return
   let
     cid = download.manifestCid
     transport = download.ctx.transport
@@ -856,6 +859,7 @@ proc toDownloadDesc*(
     isBackground: bool = false,
     fetchLocal: bool = false,
     transport: DownloadTransport = DownloadTransport.Direct,
+    connectedOnly: bool = false,
 ): DownloadDesc =
   DownloadDesc(
     transport: transport,
@@ -865,6 +869,7 @@ proc toDownloadDesc*(
     selectionPolicy: selectionPolicy,
     isBackground: isBackground,
     fetchLocal: fetchLocal,
+    connectedOnly: connectedOnly,
   )
 
 proc startTreeDownloadGeneric[T: Block | void](
@@ -874,6 +879,7 @@ proc startTreeDownloadGeneric[T: Block | void](
     isBackground: bool = false,
     fetchLocal: bool = false,
     transport: DownloadTransport = DownloadTransport.Direct,
+    connectedOnly: bool = false,
 ): ?!DownloadHandleGeneric[T] =
   ## - T = Block: Returns actual block data (for streaming)
   ## - T = void: Returns success/failure only (for prefetching)
@@ -888,6 +894,7 @@ proc startTreeDownloadGeneric[T: Block | void](
       isBackground = isBackground,
       fetchLocal = fetchLocal,
       transport = transport,
+      connectedOnly = connectedOnly,
     )
     activeDownload = self.startDownload(desc)
     treeCid = md.manifest.treeCid
@@ -976,6 +983,7 @@ proc startTreeDownloadOpaque*(
     isBackground: bool = false,
     fetchLocal: bool = false,
     transport: DownloadTransport = DownloadTransport.Direct,
+    connectedOnly: bool = false,
 ): ?!DownloadHandleOpaque =
   startTreeDownloadGeneric[void](
     self,
@@ -984,7 +992,36 @@ proc startTreeDownloadOpaque*(
     isBackground = isBackground,
     fetchLocal = fetchLocal,
     transport = transport,
+    connectedOnly = connectedOnly,
   )
+
+proc waitForPeerAvailability*[T](
+    self: BlockExcEngine, handle: DownloadHandleGeneric[T], timeout: Duration
+): Future[bool] {.async: (raises: [CancelledError]).} =
+  ## Waits until a swarm peer of the download reports that it holds blocks of
+  ## the tree, or the download completes. False when neither happens within
+  ## `timeout`, or when the download fails or is released.
+  let deadline = Moment.now() + timeout
+  while true:
+    let downloadOpt =
+      self.downloadManager.getDownload(handle.downloadId, handle.treeCid)
+    if downloadOpt.isNone:
+      return false
+    let download = downloadOpt.get()
+    if download.completionFuture.finished:
+      if not download.completionFuture.completed:
+        return false
+      return (await download.completionFuture).isOk
+    if download.isDownloadComplete():
+      return true
+    let swarm = download.ctx.swarm
+    for peerId in swarm.members():
+      let peer = swarm.getPeer(peerId)
+      if peer.isSome and peer.get().availability.kind != bakUnknown:
+        return true
+    if Moment.now() >= deadline:
+      return false
+    await sleepAsync(chronos.milliseconds(50))
 
 proc releaseDownload*[T](self: BlockExcEngine, handle: DownloadHandleGeneric[T]) =
   self.downloadManager.releaseDownload(handle.downloadId, handle.treeCid)

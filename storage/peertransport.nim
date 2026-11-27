@@ -76,8 +76,11 @@ method stop*(self: PeerTransport) {.base, gcsafe.} =
 
 method connectedPeers*(self: PeerTransport): seq[PeerRecord] {.base, gcsafe.} =
   ## The peers this transport is connected to, which can be asked for content
-  ## that discovery did not find. None by default, and so for Mix: asking peers
-  ## outside a Mix path would reveal the reader.
+  ## that discovery did not find. None by default, and so for Mix: a Mix lookup
+  ## must not spread the request to peers outside a Mix path. A private fetch
+  ## asks the peers the user connected to over the direct transport before it
+  ## falls back to Mix (see `StorageNodeRef.fetchManifest`); those peers learn
+  ## nothing the user did not choose to tell them.
   @[]
 
 method kind*(self: DirectPeerTransport): DownloadTransport =

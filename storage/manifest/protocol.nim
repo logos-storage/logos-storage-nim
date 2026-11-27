@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[deques, random, sets]
+import std/[deques, random, sequtils, sets]
 
 import pkg/chronos
 import pkg/libp2p
@@ -200,6 +200,79 @@ proc connectedPeersToAsk(
     shuffle(peers)
     peers.setLen(self.maxConnectedPeers)
   peers
+
+proc fetchManifestFromPeers*(
+    self: ManifestProtocol,
+    cid: Cid,
+    advertise: bool,
+    transport: PeerTransport,
+    peers: seq[PeerRecord],
+    timeout: Duration,
+): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
+  ## Asks only `peers`, all at once, for the manifest, without discovery. The
+  ## first valid answer is stored and returned. A private fetch uses this to ask
+  ## the peers the user connected to before it falls back to a Mix lookup.
+  if err =? cid.isManifest.errorOption:
+    return failure "CID has invalid content type for manifest {$cid}"
+
+  without localBlk =? await self.localStore.getBlock(cid), err:
+    if not (err of BlockNotFoundError):
+      return failure err
+
+    if peers.len == 0:
+      return failure(newException(BlockNotFoundError, "No peers to ask"))
+
+    var pending: seq[Future[?!bt.Block].Raising([CancelledError])]
+    for peer in peers:
+      pending.add(self.fetchManifestFromPeer(peer, cid, transport))
+
+    let deadline = sleepAsync(timeout)
+    var lastErr: ref CatchableError =
+      newException(BlockNotFoundError, "Manifest not found on the peers asked")
+    try:
+      while pending.len > 0:
+        var racing: seq[FutureBase]
+        for fut in pending:
+          racing.add(FutureBase(fut))
+        racing.add(FutureBase(deadline))
+        let done =
+          try:
+            await race(racing)
+          except ValueError:
+            raiseAssert "race() cannot raise ValueError on a non-empty list"
+        if done == FutureBase(deadline):
+          trace "Connected peers did not answer in time", cid, timeout
+          break
+
+        var stillPending: seq[Future[?!bt.Block].Raising([CancelledError])]
+        for fut in pending:
+          if not fut.finished:
+            stillPending.add(fut)
+            continue
+          if fut.cancelled:
+            continue
+          without blk =? (await fut), fetchErr:
+            trace "Connected peer did not have the manifest", cid, err = fetchErr.msg
+            lastErr = fetchErr
+            continue
+          without manifest =? Manifest.decode(blk), decodeErr:
+            return failure("Unable to decode manifest: " & decodeErr.msg)
+          without stored =?
+            await self.localStore.storeDecodedManifestBlock(blk, manifest, advertise),
+            storeErr:
+            return failure("Unable to store manifest: " & storeErr.msg)
+          return success stored
+        pending = stillPending
+    finally:
+      await noCancel allFutures(pending.mapIt(it.cancelAndWait()))
+      await noCancel deadline.cancelAndWait()
+
+    return failure(lastErr)
+
+  without manifest =? Manifest.decode(localBlk), err:
+    return failure("Unable to decode manifest: " & err.msg)
+
+  return success manifest
 
 proc fetchManifest*(
     self: ManifestProtocol, cid: Cid, advertise: bool, transport: PeerTransport

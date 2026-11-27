@@ -48,6 +48,10 @@ export logutils
 logScope:
   topics = "storage node"
 
+const PrivateConnectedPeersTimeout* = chronos.seconds(5)
+  ## How long a private fetch waits for the peers the user connected to before
+  ## it falls back to a Mix lookup.
+
 type
   StorageNode* = object
     switch: Switch
@@ -98,6 +102,28 @@ proc storeManifest*(
 
   success blk
 
+proc userConnectedPeers(self: StorageNodeRef): seq[PeerId] =
+  ## Peers the user connected to (`connect`) that are still connected.
+  let direct = self.engine.contextFor(DownloadTransport.Direct)
+  if direct.isNil or self.switch.isNil:
+    return @[]
+  direct.userConnected().filterIt(self.switch.isConnected(it))
+
+proc fetchManifestFromUserPeers(
+    self: StorageNodeRef, cid: Cid, advertise: bool
+): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
+  ## Asks only the peers the user connected to, over the direct transport,
+  ## without any lookup.
+  let direct = self.engine.contextFor(DownloadTransport.Direct)
+  if direct.isNil:
+    return failure("Direct transport is not enabled")
+  let peers = self.userConnectedPeers().mapIt(
+      PeerRecord.init(it, self.switch.peerStore[AddressBook][it], seqNo = 0)
+    )
+  await self.manifestProto.fetchManifestFromPeers(
+    cid, advertise, direct.network.transport, peers, PrivateConnectedPeersTimeout
+  )
+
 proc fetchManifest*(
     self: StorageNodeRef,
     cid: Cid,
@@ -105,6 +131,17 @@ proc fetchManifest*(
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
   ## Fetch and decode a manifest
+  ##
+  ## A private (Mix) fetch first asks the peers the user connected to, over the
+  ## direct transport and without a lookup, and uses Mix only when none of
+  ## them has the manifest.
+  if transport == DownloadTransport.Mix and self.userConnectedPeers().len > 0:
+    let fromPeers = await self.fetchManifestFromUserPeers(cid, advertise)
+    if fromPeers.isOk:
+      return fromPeers
+    trace "No connected peer had the manifest, falling back to Mix",
+      cid, err = fromPeers.error.msg
+
   let blockExc = self.engine.contextFor(transport)
   if blockExc.isNil:
     return failure($transport & " transport is not enabled")
@@ -190,6 +227,45 @@ proc updateExpiry*(
 
   return success()
 
+proc startDownload(
+    self: StorageNodeRef,
+    md: ManifestDescriptor,
+    selectionPolicy: SelectionPolicy = spSequential,
+    isBackground: bool = false,
+    fetchLocal: bool = false,
+    transport: DownloadTransport = DownloadTransport.Direct,
+): Future[?!DownloadHandleOpaque] {.async: (raises: [CancelledError]).} =
+  ## Starts a tree download. A private (Mix) download first tries the peers the
+  ## user connected to, over the direct transport with no lookup and no new
+  ## dials. It keeps that download when one of them reports blocks of the tree
+  ## within `PrivateConnectedPeersTimeout`, and otherwise starts the Mix one.
+  if transport == DownloadTransport.Mix and not fetchLocal and
+      self.userConnectedPeers().len > 0:
+    let connected = self.engine.startTreeDownloadOpaque(
+      md,
+      selectionPolicy = selectionPolicy,
+      isBackground = isBackground,
+      transport = DownloadTransport.Direct,
+      connectedOnly = true,
+    )
+    if connected.isOk:
+      let handle = connected.get()
+      if await self.engine.waitForPeerAvailability(handle, PrivateConnectedPeersTimeout):
+        trace "Private download served by a connected peer",
+          treeCid = md.manifest.treeCid
+        return success handle
+      trace "No connected peer has the tree, falling back to Mix",
+        treeCid = md.manifest.treeCid
+      self.engine.releaseDownload(handle)
+
+  self.engine.startTreeDownloadOpaque(
+    md,
+    selectionPolicy = selectionPolicy,
+    isBackground = isBackground,
+    fetchLocal = fetchLocal,
+    transport = transport,
+  )
+
 proc fetchDatasetAsync*(
     self: StorageNodeRef,
     md: ManifestDescriptor,
@@ -197,7 +273,7 @@ proc fetchDatasetAsync*(
     selectionPolicy: SelectionPolicy = spSequential,
     transport: DownloadTransport = DownloadTransport.Direct,
 ): Future[?!void] {.async: (raises: [CancelledError]).} =
-  let download = ?self.engine.startTreeDownloadOpaque(
+  let download = ?await self.startDownload(
     md,
     selectionPolicy = selectionPolicy,
     fetchLocal = fetchLocal,
@@ -233,8 +309,16 @@ proc startBackgroundDownload*(
   if existing.isSome:
     return success(existing.get().id)
 
+  if transport == DownloadTransport.Mix:
+    # A private download may be running over the connected peers.
+    let connected = self.engine.downloadManager.getBackgroundDownload(
+      treeCid, DownloadTransport.Direct, connectedOnly = true
+    )
+    if connected.isSome:
+      return success(connected.get().id)
+
   let
-    download = ?self.engine.startTreeDownloadOpaque(
+    download = ?await self.startDownload(
       md, selectionPolicy = selectionPolicy, isBackground = true, transport = transport
     )
     downloadId = download.downloadId
@@ -303,9 +387,8 @@ proc streamEntireDataset(
 
   let
     treeCid = md.manifest.treeCid
-    download = ?self.engine.startTreeDownloadOpaque(
-      md, fetchLocal = fetchLocal, transport = transport
-    )
+    download =
+      ?await self.startDownload(md, fetchLocal = fetchLocal, transport = transport)
     downloadStore = NetworkStore.new(
       self.engine, self.networkStore.localStore, downloadId = some(download.downloadId)
     )
