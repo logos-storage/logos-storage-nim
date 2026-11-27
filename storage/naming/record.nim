@@ -242,6 +242,13 @@ proc validate*(
 ): Result[SignedNameRecord, ref CatchableError] =
   ## Decodes the bytes stored under the `expected` name in the DHT and checks
   ## every rule of a valid name record. `now` is in Unix seconds.
+
+  # Decoding checks:
+  # - signature: valid, domain logos-name-record
+  # - payload type: 0xCD05
+  # - fields: CBOR types
+  # - label: 1 to 256 bytes, UTF-8
+  # - cid: CIDv1, 128 bytes at most
   let signed = decodeNameRecord(bytes).valueOr:
     return err(error)
 

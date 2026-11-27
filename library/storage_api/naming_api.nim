@@ -49,14 +49,17 @@ proc storage_name_stop_publishing(
   return ok("")
 
 proc storage_name_refresh(
-    self: Storage, nameKey: string
+    self: Storage, nameKey: string, record: string
 ): Future[Result[string, string]] {.ffi.} =
-  ## Advertises the name record of the name key in the DHT again.
+  ## Advertises the signed name record, in base64url, in the DHT.
   let name = parseName(nameKey).valueOr:
     return err("Failed to refresh the name: " & error.msg)
 
+  let bytes = parseNameRecord(name, record).valueOr:
+    return err("Failed to refresh the name: " & error.msg)
+
   try:
-    (await self.node.discovery.refresh(name)).isOkOr:
+    (await self.node.discovery.refresh(name, bytes)).isOkOr:
       return err("Failed to refresh the name: " & error.msg)
   except CancelledError:
     return err("Failed to refresh the name: operation cancelled.")

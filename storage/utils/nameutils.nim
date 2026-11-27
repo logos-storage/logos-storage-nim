@@ -9,8 +9,11 @@
 
 {.push raises: [].}
 
+import std/strutils
+
 import pkg/libp2p
 import pkg/questionable/results
+import pkg/stew/base64
 
 import ../naming/dht
 
@@ -29,10 +32,10 @@ proc parseName*(nameKey: string): Result[Name, ref CatchableError] =
   let cid = Cid.init(nameKey).valueOr:
     return failure("invalid name key: " & $error)
 
-  let parsed = nameFromNameKey(cid.data.buffer).valueOr:
+  let name = parseNameKey(cid.data.buffer).valueOr:
     return failure("invalid name key: " & error.msg)
 
-  return ok(parsed)
+  return ok(name)
 
 proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
   ## The public key of a peer ID string.
@@ -45,3 +48,21 @@ proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
     return failure("the peer ID doesn't have a public key")
 
   return ok(publicKey)
+
+proc parseNameRecord*(name: Name, record: string): Result[seq[byte], ref CatchableError] =
+  ## The bytes of a signed name record of the name, in base64url. The DHT checks
+  ## the other rules, such as the expiration, when the node advertises it.
+  var bytes: seq[byte]
+
+  try:
+    bytes = Base64Url.decode(record.strip())
+  except Base64Error:
+    return failure("The name record is not base64url")
+
+  let signed = decodeNameRecord(bytes).valueOr:
+    return err(error)
+
+  if signed.name() != name:
+    return failure("The name record is not for this name key")
+
+  ok(bytes)

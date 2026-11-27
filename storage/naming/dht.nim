@@ -19,10 +19,14 @@ import pkg/stew/arrayops
 
 import ../clock
 import ../discovery
+import ../logutils
 import ../utils/digest
 import ./record
 
 export record
+
+logScope:
+  topics = "storage naming"
 
 const NameHashCodec* = multiCodec("sha2-256")
 
@@ -49,9 +53,13 @@ proc nameKey*(name: Name): seq[byte] =
 
   cid.data.buffer
 
-proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
-  ## The name of a DHT key, the reverse of `nameKey`. Refuses a key with another
-  ## CID version, codec or hash function.
+proc parseNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
+  ## The name of a DHT key, the reverse of `nameKey`.
+  ## Checks:
+  ## - CID: valid (`Cid.init`: digest of 32 bytes, nothing after the CID)
+  ## - version: CIDv1
+  ## - codec: storage-name
+  ## - hash: SHA2-256
   let
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
@@ -69,10 +77,36 @@ proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
 method isValid*(
     self: NameRecordValidatorRef, key: RecordKey, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
-  let name = nameFromNameKey(key.toBytes()).valueOr:
+  ## The DHT validator of the name records: checks the key with `parseNameKey`,
+  ## then the name record with `validate`.
+
+  # The key:
+  # - CID: valid (`Cid.init`: digest of 32 bytes, nothing after the CID)
+  # - version: CIDv1
+  # - codec: storage-name
+  # - hash: SHA2-256
+  let name = parseNameKey(key.toBytes()).valueOr:
+    trace "Refused a name record", error = error.msg
+
     return false
 
-  validate(name, record.value.toBytes(), self.clock.now()).isOk
+  # The name record:
+  # - signature: valid, domain logos-name-record
+  # - payload type: 0xCD05
+  # - fields: CBOR types
+  # - label: 1 to 256 bytes, UTF-8
+  # - cid: CIDv1, 128 bytes at most
+  # - version: 1
+  # - expiration: not before now
+  # - name: SHA2-256(public key, label), equal to the name of the key
+  let validated = validate(name, record.value.toBytes(), self.clock.now())
+
+  if validated.isErr:
+    trace "Refused a name record", error = validated.error.msg
+
+    return false
+
+  true
 
 method select*(
     self: NameRecordSelectorRef, key: RecordKey, records: seq[EntryRecord]
@@ -137,8 +171,10 @@ proc resolve*(
   ## return a CID when the DHT doesn't have a name record for the name.
   ##
   ## The DHT validator has already checked the name record, so it is only
-  ## decoded here: see [NameRecordValidatorRef] and `getValue` in
-  ## libp2p/protocols/kademlia/get.nim.
+  ## decoded here.
+  # `getValue` (libp2p/protocols/kademlia/get.nim):
+  # - `isValid` on the stored name record and each reply
+  # - `select` on the valid ones
   let bytes = (await discovery.getValue(nameKey(name))).valueOr:
     if error.isNoNameRecordError:
       return ok(Opt.none(Cid))
@@ -160,17 +196,21 @@ proc resolve*(
   await discovery.resolve(nameBytes)
 
 proc refresh*(
-    discovery: Discovery, name: Name
+    discovery: Discovery, name: Name, bytes: seq[byte]
 ): Future[Result[void, ref CatchableError]] {.async: (raises: [CancelledError]).} =
-  ## Advertises the name record of the name in the DHT again, without changing
-  ## it. It doesn't need the private key of the publisher.
-  ##
-  ## The DHT validator has already checked the name record, so an expired or
-  ## invalid one is never advertised: see [NameRecordValidatorRef] and `getValue` in
-  ## libp2p/protocols/kademlia/get.nim.
-  let key = nameKey(name)
+  ## Advertises a signed name record of the name in the DHT. The name record
+  ## can be signed by another key than the node's key, and the node doesn't
+  ## keep it in its metadata store. It fails when the name record is not valid,
+  ## when the node holds a newer one, or when no peer stores it.
+  # `putValue` (libp2p/protocols/kademlia/put.nim):
+  # - `isValid` on the name record
+  # - `select` on [name record, stored name record]
+  # - each peer that receives it runs `isValid` and `select` too
+  let advertised = await discovery.putValue(nameKey(name), bytes)
 
-  let bytes = (await discovery.getValue(key)).valueOr:
-    return err(error)
+  if advertised.isErr:
+    warn "Cannot advertise the name record", error = advertised.error.msg
 
-  await discovery.putValue(key, bytes)
+    return err(advertised.error)
+
+  ok()

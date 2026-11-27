@@ -3,6 +3,7 @@ import std/strutils
 import pkg/unittest2
 import pkg/libp2p
 import pkg/questionable/results
+import pkg/stew/base64
 import pkg/storage/naming/record
 import pkg/storage/utils/nameutils
 
@@ -56,3 +57,35 @@ suite "Nameutils":
 
     if res.isErr:
       check "doesn't have a public key" in res.error.msg
+
+  proc signedRecord(label = "catalog"): seq[byte] =
+    let record = NameRecord(
+      version: NameRecordVersion,
+      label: label,
+      cid: Cid.example,
+      seqnum: 1'u64,
+      expiration: 1794477600'i64,
+    )
+
+    record.sign(privateKey).tryGet().encode()
+
+  test "parseNameRecord gives back the bytes of a name record, even with a trailing newline":
+    let bytes = signedRecord()
+
+    check parseNameRecord(catalogName, Base64Url.encode(bytes) & "\n").tryGet() == bytes
+
+  test "parseNameRecord refuses a name record that is not base64url":
+    let res = parseNameRecord(catalogName, "not base64url!")
+
+    check res.isErr
+
+    if res.isErr:
+      check "not base64url" in res.error.msg
+
+  test "parseNameRecord refuses a name record of another name":
+    let res = parseNameRecord(catalogName, Base64Url.encode(signedRecord("release")))
+
+    check res.isErr
+
+    if res.isErr:
+      check "not for this name key" in res.error.msg
