@@ -1,4 +1,4 @@
-version = "0.5.3"
+version = "0.6.0"
 author = "Logos Storage Team"
 description = "privacy-preserving p2p file sharing"
 license = "MIT"
