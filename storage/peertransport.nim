@@ -74,6 +74,12 @@ method setPeerEventHandler*(
 method stop*(self: PeerTransport) {.base, gcsafe.} =
   raiseAssert "stop is not implemented"
 
+method connectedPeers*(self: PeerTransport): seq[PeerRecord] {.base, gcsafe.} =
+  ## The peers this transport is connected to, which can be asked for content
+  ## that discovery did not find. None by default, and so for Mix: asking peers
+  ## outside a Mix path would reveal the reader.
+  @[]
+
 method kind*(self: DirectPeerTransport): DownloadTransport =
   DownloadTransport.Direct
 
@@ -131,6 +137,20 @@ method setPeerEventHandler*(
 
 method stop*(self: DirectPeerTransport) =
   discard
+
+method connectedPeers*(self: DirectPeerTransport): seq[PeerRecord] =
+  if self.switch.isNil:
+    return @[]
+
+  let localPeerId = self.switch.peerInfo.peerId
+  var peers: seq[PeerRecord]
+  for peerId in self.switch.connectedPeers():
+    if peerId == localPeerId:
+      continue
+    peers.add(
+      PeerRecord.init(peerId, self.switch.peerStore[AddressBook][peerId], seqNo = 0)
+    )
+  peers
 
 method kind*(self: MixPeerTransport): DownloadTransport =
   DownloadTransport.Mix

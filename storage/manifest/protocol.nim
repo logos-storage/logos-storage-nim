@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[deques, sets]
+import std/[deques, random, sets]
 
 import pkg/chronos
 import pkg/libp2p
@@ -41,6 +41,7 @@ const
   DefaultManifestRetries* = 10
   DefaultManifestRetryDelay* = 3.seconds
   DefaultManifestFetchTimeout* = 30.seconds
+  DefaultMaxConnectedManifestPeers* = 8
 
 type
   ManifestProtocol* = ref object of LPProtocol
@@ -49,6 +50,8 @@ type
     retries*: int
     retryDelay*: Duration
     fetchTimeout*: Duration
+    maxConnectedPeers*: int
+      ## How many connected peers to ask when the providers found do not have it.
 
   ManifestFetchStatus* = enum
     Found = 0
@@ -180,6 +183,24 @@ proc fetchManifestFromPeer(
     if not conn.isNil:
       await conn.close()
 
+proc connectedPeersToAsk(
+    self: ManifestProtocol, transport: PeerTransport, exclude: HashSet[PeerId]
+): seq[PeerRecord] =
+  ## Up to `maxConnectedPeers` peers the transport is connected to, chosen at
+  ## random, leaving out the `exclude` ones.
+  if self.maxConnectedPeers <= 0:
+    return @[]
+
+  var peers: seq[PeerRecord]
+  for peer in transport.connectedPeers():
+    if peer.peerId notin exclude:
+      peers.add(peer)
+
+  if peers.len > self.maxConnectedPeers:
+    shuffle(peers)
+    peers.setLen(self.maxConnectedPeers)
+  peers
+
 proc fetchManifest*(
     self: ManifestProtocol, cid: Cid, advertise: bool, transport: PeerTransport
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
@@ -194,7 +215,9 @@ proc fetchManifest*(
 
     trace "Manifest not in local store, starting discovery loop", cid
 
-    var lastErr = err
+    var
+      lastErr = err
+      asked = initHashSet[PeerId]()
     for attempt in 0 ..< self.retries:
       trace "Manifest fetch attempt", cid, attempt, maxRetries = self.retries
 
@@ -203,6 +226,7 @@ proc fetchManifest*(
         queued: Deque[PeerRecord]
         seen: HashSet[PeerId]
         available = newFuture[void]("ManifestProtocol.providerAvailable")
+        connectedQueued = false
 
       proc receive(batch: seq[PeerRecord]) =
         for peer in batch:
@@ -217,8 +241,20 @@ proc fetchManifest*(
         while true:
           if queued.len == 0:
             if lookup.finished:
-              if err =? (await lookup).errorOption:
-                lastErr = err
+              if not connectedQueued:
+                connectedQueued = true
+                if err =? (await lookup).errorOption:
+                  lastErr = err
+                # Discovery can miss a holder the node is connected to, for
+                # example one it was told to connect to. Once the providers
+                # are done, ask a few connected peers it has not asked yet.
+                let connected = self.connectedPeersToAsk(transport, asked)
+                if connected.len > 0:
+                  trace "Also asking connected peers for the manifest",
+                    cid, connected = connected.len
+                  for peer in connected:
+                    queued.addLast(peer)
+                  continue
               break
             if available.finished:
               available = newFuture[void]("ManifestProtocol.providerAvailable")
@@ -228,6 +264,7 @@ proc fetchManifest*(
           let
             provider = queued.popFirst()
             fetch = self.fetchManifestFromPeer(provider, cid, transport)
+          asked.incl(provider.peerId)
           if not await fetch.withTimeout(self.fetchTimeout):
             await fetch.cancelAndWait()
             trace "Manifest fetch from peer timed out", cid, peer = provider.peerId
@@ -274,6 +311,7 @@ proc new*(
     retries: int = DefaultManifestRetries,
     retryDelay: Duration = DefaultManifestRetryDelay,
     fetchTimeout: Duration = DefaultManifestFetchTimeout,
+    maxConnectedPeers: int = DefaultMaxConnectedManifestPeers,
 ): ManifestProtocol =
   let self = ManifestProtocol(
     localStore: localStore,
@@ -281,6 +319,7 @@ proc new*(
     retries: retries,
     retryDelay: retryDelay,
     fetchTimeout: fetchTimeout,
+    maxConnectedPeers: maxConnectedPeers,
   )
 
   proc handler(
