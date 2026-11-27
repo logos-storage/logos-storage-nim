@@ -19,10 +19,14 @@ import pkg/stew/arrayops
 
 import ../clock
 import ../discovery
+import ../logutils
 import ../utils/digest
 import ./record
 
 export record
+
+logScope:
+  topics = "storage naming"
 
 const NameHashCodec* = multiCodec("sha2-256")
 
@@ -49,9 +53,13 @@ proc nameKey*(name: Name): seq[byte] =
 
   cid.data.buffer
 
-proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
-  ## The name of a DHT key, the reverse of `nameKey`. Refuses a key with another
-  ## CID version, codec or hash function.
+proc parseNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
+  ## The name of a DHT key, the reverse of `nameKey`.
+  ## Checks:
+  ## - CID: valid (`Cid.init`: digest of 32 bytes, nothing after the CID)
+  ## - version: CIDv1
+  ## - codec: storage-name
+  ## - hash: SHA2-256
   let
     cid = Cid.init(key).valueOr:
       return failure("The key is not a CID: " & $error)
@@ -69,10 +77,36 @@ proc nameFromNameKey*(key: seq[byte]): Result[Name, ref CatchableError] =
 method isValid*(
     self: NameRecordValidatorRef, key: RecordKey, record: EntryRecord
 ): bool {.raises: [], gcsafe.} =
-  let name = nameFromNameKey(key.toBytes()).valueOr:
+  ## The DHT validator of the name records: checks the key with `parseNameKey`,
+  ## then the name record with `validate`.
+
+  # The key:
+  # - CID: valid (`Cid.init`: digest of 32 bytes, nothing after the CID)
+  # - version: CIDv1
+  # - codec: storage-name
+  # - hash: SHA2-256
+  let name = parseNameKey(key.toBytes()).valueOr:
+    debug "Refused a name record", error = error.msg
+
     return false
 
-  validate(name, record.value.toBytes(), self.clock.now()).isOk
+  # The name record:
+  # - signature: valid, domain logos-name-record
+  # - payload type: 0xCD05
+  # - fields: CBOR types
+  # - label: 1 to 256 bytes, UTF-8
+  # - cid: CIDv1, 128 bytes at most
+  # - version: 1
+  # - expiration: not before now
+  # - name: SHA2-256(public key, label), equal to the name of the key
+  let validated = validate(name, record.value.toBytes(), self.clock.now())
+
+  if validated.isErr:
+    debug "Refused a name record", error = validated.error.msg
+
+    return false
+
+  true
 
 method select*(
     self: NameRecordSelectorRef, key: RecordKey, records: seq[EntryRecord]
@@ -137,8 +171,10 @@ proc resolve*(
   ## return a CID when the DHT doesn't have a name record for the name.
   ##
   ## The DHT validator has already checked the name record, so it is only
-  ## decoded here: see [NameRecordValidatorRef] and `getValue` in
-  ## libp2p/protocols/kademlia/get.nim.
+  ## decoded here.
+  # `getValue` (libp2p/protocols/kademlia/get.nim):
+  # - `isValid` on the stored name record and each reply
+  # - `select` on the valid ones
   let bytes = (await discovery.getValue(nameKey(name))).valueOr:
     if error.isNoNameRecordError:
       return ok(Opt.none(Cid))

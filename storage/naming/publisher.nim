@@ -176,6 +176,10 @@ proc publish*(
   if stored.isErr:
     return failure("Cannot store the name record: " & stored.error.msg)
 
+  # `putValue` (libp2p/protocols/kademlia/put.nim):
+  # - `isValid` on the name record
+  # - `select` on [name record, stored name record]
+  # - each peer that receives it runs `isValid` and `select` too
   let advertised = await self.discovery.putValue(nameKey, bytes)
 
   # The name record is stored, so the next republish advertises it again.
@@ -210,6 +214,10 @@ proc republish(
       return err(error)
     nameKey = nameKey(signed.name())
 
+  # `putValue` (libp2p/protocols/kademlia/put.nim):
+  # - `isValid` on the name record
+  # - `select` on [name record, stored name record]
+  # - each peer that receives it runs `isValid` and `select` too
   await self.discovery.putValue(nameKey, signed.encode())
 
 proc republishAll(self: NamePublisherRef) {.async: (raises: [CancelledError]).} =

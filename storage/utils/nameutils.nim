@@ -29,10 +29,10 @@ proc parseName*(nameKey: string): Result[Name, ref CatchableError] =
   let cid = Cid.init(nameKey).valueOr:
     return failure("invalid name key: " & $error)
 
-  let parsed = nameFromNameKey(cid.data.buffer).valueOr:
+  let name = parseNameKey(cid.data.buffer).valueOr:
     return failure("invalid name key: " & error.msg)
 
-  return ok(parsed)
+  return ok(name)
 
 proc parsePublicKey*(peerId: string): Result[PublicKey, ref CatchableError] =
   ## The public key of a peer ID string.
