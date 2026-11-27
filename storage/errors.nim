@@ -39,6 +39,8 @@ type
     ProofCreationFailed
     ProofPathTooLarge
     ProofDecodeFailed
+    MissingProof
+    TreeCidMismatch
     TooManyBlocks
     NoConnection
     ConnectionClosed

@@ -309,7 +309,7 @@ proc streamEntireDataset(
     downloadStore = NetworkStore.new(
       self.engine, self.networkStore.localStore, downloadId = some(download.downloadId)
     )
-    stream = LPStream(StoreStream.new(downloadStore, md.manifest, pad = false))
+    stream = StoreStream.new(downloadStore, md.manifest, pad = false)
 
   var jobs: seq[Future[void]]
 
@@ -320,6 +320,7 @@ proc streamEntireDataset(
       if err =? (await download.waitForComplete()).errorOption:
         error "Dataset fetch failed during streaming",
           manifestCid = md.manifestCid, err = err.msg
+        stream.error = err
         await stream.close()
     except CancelledError:
       trace "Dataset fetch cancelled during streaming", manifestCid = md.manifestCid
@@ -342,7 +343,7 @@ proc streamEntireDataset(
   # Retrieve all blocks of the dataset sequentially from the local store or network
   trace "Creating store stream for manifest", manifestCid = md.manifestCid
 
-  stream.success
+  LPStream(stream).success
 
 proc retrieve*(
     self: StorageNodeRef,
@@ -364,7 +365,9 @@ proc retrieve*(
     return await self.streamSingleBlock(cid)
 
   await self.streamEntireDataset(
-    ManifestDescriptor(manifest: manifest, manifestCid: cid), transport = transport
+    ManifestDescriptor(manifest: manifest, manifestCid: cid),
+    fetchLocal = local,
+    transport = transport,
   )
 
 proc deleteSingleBlock(self: StorageNodeRef, cid: Cid): Future[?!void] {.async.} =
@@ -526,11 +529,11 @@ proc iterateManifests*(self: StorageNodeRef, onManifest: OnManifest) {.async.} =
     if cid =? await c:
       without blk =? await self.networkStore.getBlock(cid):
         warn "Failed to get manifest block by cid", cid
-        return
+        continue
 
       without manifest =? Manifest.decode(blk):
         warn "Failed to decode manifest", cid
-        return
+        continue
 
       onManifest(cid, manifest)
 

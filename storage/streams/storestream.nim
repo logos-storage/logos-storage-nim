@@ -35,6 +35,7 @@ type
   StoreStream* = ref object of SeekableStream
     store*: BlockStore # Store where to lookup block contents
     manifest*: Manifest # List of block CIDs
+    error*: ref CatchableError
 
 method initStream*(s: StoreStream) =
   if s.objName.len == 0:
@@ -65,7 +66,7 @@ method atEof*(self: StoreStream): bool =
 type LPStreamReadError* = object of LPStreamError
 
 proc newLPStreamReadError*(p: ref CatchableError): ref LPStreamReadError =
-  newException(LPStreamReadError, "Read stream failed", p)
+  newException(LPStreamReadError, "Read stream failed: " & p.msg, p)
 
 method readOnce*(
     self: StoreStream, pbytes: pointer, nbytes: int
@@ -74,6 +75,9 @@ method readOnce*(
   ## Return how many bytes were actually read before EOF was encountered.
   ## Raise exception if we are already at EOF.
   ##
+
+  if not self.error.isNil:
+    raise newLPStreamReadError(self.error)
 
   if self.atEof:
     raise newLPStreamEOFError()
@@ -130,5 +134,6 @@ method readOnce*(
 
 method closeImpl*(self: StoreStream) {.async: (raises: []).} =
   trace "Closing StoreStream"
-  self.offset = self.size # set Eof
+  if self.error.isNil:
+    self.offset = self.size # set Eof
   await procCall LPStream(self).closeImpl()

@@ -1,6 +1,7 @@
 import std/[sequtils, options, importutils]
 
 import pkg/chronos
+import pkg/libp2p/cid
 import pkg/libp2p/routing_record
 
 import pkg/storage/rng
@@ -177,6 +178,26 @@ asyncchecksuite "NetworkStore engine handlers":
       let secondRequest = discovery.discoveryQueue.getNoWait()
       check secondRequest.cid == secondCid
       check secondRequest.transport == secondTransport
+
+  test "Should reject a block delivery whose CID is not a block":
+    let
+      tree = StorageMerkleTree.init(blocks.mapIt(it.cid)).get()
+      address = BlockAddress(treeCid: tree.rootCid.get(), index: 1)
+      sharedBuf = SharedBlocksBuffer(data: blocks[1].data[])
+      manifestCid = Cid.init(CIDv1, ManifestCodec, blocks[1].cid.mhash.get()).get()
+
+    proc deliveryView(cid: Cid): BlockDeliveryView =
+      BlockDeliveryView(
+        cid: cid,
+        address: address,
+        proof: some(tree.getProof(1).get()),
+        sharedBuf: sharedBuf,
+        dataOffset: 0,
+        dataLen: sharedBuf.data.len,
+      )
+
+    check engine.validateBlockDeliveryView(deliveryView(blocks[1].cid)).isOk
+    check engine.validateBlockDeliveryView(deliveryView(manifestCid)).isErr
 
   test "Should handle want list":
     let

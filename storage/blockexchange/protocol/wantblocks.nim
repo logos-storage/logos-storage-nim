@@ -102,16 +102,23 @@ proc decodeProofBinary*(data: openArray[byte]): WantBlocksResult[StorageMerklePr
 
   let
     mcodecVal = uint64.fromBytes(data.toOpenArray(offset, offset + 7), littleEndian)
-    mcodec = MultiCodec.codec(mcodecVal.int)
+    indexVal = uint64.fromBytes(data.toOpenArray(offset + 8, offset + 15), littleEndian)
+    nleavesVal =
+      uint64.fromBytes(data.toOpenArray(offset + 16, offset + 23), littleEndian)
 
+  if mcodecVal > high(int).uint64 or indexVal > high(int).uint64 or
+      nleavesVal > high(int).uint64:
+    return err(wantBlocksError(ProofDecodeFailed, "Proof field exceeds int range"))
+
+  let mcodec = MultiCodec.codec(mcodecVal.int)
   if mcodec == InvalidMultiCodec:
     return err(wantBlocksError(InvalidCodec, "Invalid MultiCodec: " & $mcodecVal))
   offset += 8
 
-  let index = uint64.fromBytes(data.toOpenArray(offset, offset + 7), littleEndian).int
+  let index = indexVal.int
   offset += 8
 
-  let nleaves = uint64.fromBytes(data.toOpenArray(offset, offset + 7), littleEndian).int
+  let nleaves = nleavesVal.int
   offset += 8
 
   let pathCount =
@@ -570,15 +577,14 @@ proc readWantBlocksResponse*(
     for i, bm in blocksMeta:
       let blockDataLen = bm.dataLen.int
 
-      var proof: StorageMerkleProof
-      if bm.proof.isSome:
-        proof = bm.proof.get
+      if bm.proof.isNone:
+        return err(wantBlocksError(MissingProof, "Missing proof at block " & $i))
       response.blocks[i] = BlockEntry(
         index: bm.index,
         cid: bm.cid,
         dataOffset: offset,
         dataLen: blockDataLen,
-        proof: proof,
+        proof: bm.proof.get,
       )
       offset += blockDataLen
 

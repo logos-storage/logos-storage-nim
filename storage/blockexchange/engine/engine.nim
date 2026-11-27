@@ -240,6 +240,9 @@ proc banAndDropPeer(
     await blockExc.network.dropPeer(peerId)
 
 proc validateBlockDeliveryView(self: BlockExcEngine, view: BlockDeliveryView): ?!void =
+  if view.cid.mcodec != BlockCodec:
+    return failure("Block CID codec " & $view.cid.mcodec & " is not " & $BlockCodec)
+
   without proof =? view.proof:
     return failure("Missing proof")
 
@@ -329,6 +332,12 @@ proc sendWantBlocksRequest(
     return
 
   if requestResult.isErr:
+    if requestResult.error.kind == TreeCidMismatch:
+      warn "Peer answered with another tree - banning peer",
+        peer = peer.id, error = requestResult.error.msg
+      await self.banAndDropPeer(download, peer.id)
+      return
+
     warn "Batch request failed", peer = peer.id, error = requestResult.error.msg
     let swarm = download.ctx.swarm
     if swarm.recordPeerFailure(peer.id):
@@ -346,6 +355,17 @@ proc sendWantBlocksRequest(
 
   if allBlockViews.len == 0:
     trace "Peer responded with zero blocks", peer = peer.id, treeCid = treeCid
+    let
+      swarm = download.ctx.swarm
+      swarmPeer = swarm.getPeer(peer.id)
+    if swarmPeer.isSome and
+        missingIndices.anyIt(swarmPeer.get().availability.hasBlock(it)):
+      warn "Peer sent none of the blocks it claimed - banning it from the swarm",
+        peer = peer.id, treeCid = treeCid
+      swarm.banPeer(peer.id)
+      download.handlePeerFailure(peer.id)
+      return
+
     download.requeueBatch(start, count, front = false)
     return
 
@@ -372,6 +392,14 @@ proc sendWantBlocksRequest(
       warn "Received block with out-of-bounds index - banning peer",
         index = view.address.index,
         totalBlocks = download.ctx.totalBlocks,
+        peer = peer.id
+      await self.banAndDropPeer(download, peer.id)
+      return
+
+    if view.proof.get.nleaves != download.ctx.md.manifest.blocksCount:
+      warn "Proof leaf count doesn't match the dataset's block count - banning peer",
+        nleaves = view.proof.get.nleaves,
+        blocksCount = download.ctx.md.manifest.blocksCount,
         peer = peer.id
       await self.banAndDropPeer(download, peer.id)
       return
@@ -987,6 +1015,15 @@ proc requestWantBlocks(
       )
     )
   let response = ?await blockExc.network.sendWantBlocksRequest(peer, blockRange)
+  if response.treeCid != blockRange.treeCid:
+    return err(
+      wantBlocksError(
+        TreeCidMismatch,
+        "Response tree " & $response.treeCid & " doesn't match requested tree " &
+          $blockRange.treeCid,
+      )
+    )
+
   var blockViews: seq[BlockDeliveryView]
 
   for btBlock in response.blocks:
