@@ -51,6 +51,11 @@ const
   ProvideTimeout = 1.minutes
   LookupTimeout* = 1.minutes
   MaxConcurrentMixProxies = 5
+  ProviderGracePeriod* = 2.seconds
+    ## How long a provider lookup keeps waiting for other replies once it
+    ## has found a remote provider.
+  EarlyStopProviders* = 8
+    ## A provider lookup stops once it has found this many remote providers.
   ServiceLookupTimeout = 1.minutes
   PutValueTimeout = 1.minutes
   ValueQuorum = 5
@@ -90,6 +95,8 @@ type
     staticAutonatServers: seq[PeerRecord]
     staticCircuitRelayServers: seq[PeerRecord]
     mixPeerTransport*: PeerTransport
+    lookupTimeout*: Duration
+    providerGracePeriod*: Duration
 
   RoutingPeer* = object
     record*: PeerRecord
@@ -263,15 +270,80 @@ method findViaMix*(
 method findDirect*(
     d: Discovery, cid: Cid
 ): Future[?!seq[PeerRecord]] {.base, async: (raises: [CancelledError]).} =
+  ## Find the providers of `cid` in the DHT.
+  ##
+  ## `KadDHT.getProviders` only returns once it has `replication` providers or
+  ## the lookup has ended, so with a timeout around it the providers found
+  ## before the timeout are lost. This runs the same lookup, keeps every
+  ## provider as it arrives and returns them when the time is up. Once a
+  ## remote provider is known, it waits `providerGracePeriod` for more and
+  ## then returns, or as soon as it has `EarlyStopProviders` of them.
+  let
+    key = cid.toKey()
+    timeout = if d.lookupTimeout > ZeroDuration: d.lookupTimeout else: LookupTimeout
+    earlyStopTarget = max(1, min(EarlyStopProviders, d.kad.config.replication))
+    firstProvider = newAsyncEvent()
+
+  var
+    providers = initHashSet[Provider]()
+    remoteProviders = initHashSet[PeerId]()
+
+  # Include ourselves if we already provide the key, as getProviders does.
+  if d.kad.providerManager.providedKeys.provided.hasKey(key):
+    providers.incl(d.kad.switch.peerInfo.toPeer())
+
+  let onReply = proc(
+      peerId: PeerId, msgOpt: Opt[Message], state: LookupState
+  ): Future[void] {.async: (raises: []), gcsafe.} =
+    let reply = msgOpt.valueOr:
+      return
+
+    for provider in reply.providerPeers:
+      let idraw = provider.id.valueOr:
+        continue
+      let providerId = PeerId.init(idraw).valueOr:
+        trace "Invalid peer id received", peerId = provider.id
+        continue
+      providers.incl(provider)
+      if providerId != d.peerId:
+        remoteProviders.incl(providerId)
+        firstProvider.fire()
+
+  let enoughProviders = proc(state: LookupState): bool {.raises: [], gcsafe.} =
+    remoteProviders.len >= earlyStopTarget
+
+  let
+    lookupFut =
+      d.kad.iterativeLookup(key, dispatchGetProviders, onReply, enoughProviders)
+    timeoutFut = sleepAsync(timeout)
+    firstProviderFut = firstProvider.wait()
+
   try:
-    let providers = await d.kad.getProviders(cid.toKey()).wait(LookupTimeout)
+    discard await race(lookupFut, timeoutFut, firstProviderFut)
+
+    if not lookupFut.finished and not timeoutFut.finished and
+        d.providerGracePeriod > ZeroDuration:
+      let graceFut = sleepAsync(d.providerGracePeriod)
+      try:
+        discard await race(lookupFut, timeoutFut, graceFut)
+      finally:
+        await noCancel graceFut.cancelAndWait()
+  finally:
+    await noCancel allFutures(
+      timeoutFut.cancelAndWait(),
+      firstProviderFut.cancelAndWait(),
+      lookupFut.cancelAndWait(),
+    )
+
+  if providers.len > 0:
     var records = providers.toRecords()
     shuffle(records)
     return success records
-  except CancelledError as exc:
-    raise exc
-  except CatchableError as exc:
-    return failure("Error finding providers for block " & $cid & ": " & exc.msg)
+
+  if lookupFut.completed:
+    return success newSeq[PeerRecord]()
+
+  return failure("Error finding providers for block " & $cid & ": Timeout exceeded!")
 
 method find*(
     d: Discovery, cid: Cid, useMix: bool = false
@@ -627,6 +699,8 @@ proc new*(
     providedServices: @providedServices,
     addressPolicy: addressPolicy,
     serviceLookupInterval: serviceLookupInterval,
+    lookupTimeout: LookupTimeout,
+    providerGracePeriod: ProviderGracePeriod,
   )
 
   self.kad = KadDHT.new(

@@ -9,7 +9,7 @@
 
 {.push raises: [].}
 
-import std/[deques, sets]
+import std/[deques, random, sequtils, sets]
 
 import pkg/chronos
 import pkg/libp2p
@@ -41,6 +41,7 @@ const
   DefaultManifestRetries* = 10
   DefaultManifestRetryDelay* = 3.seconds
   DefaultManifestFetchTimeout* = 30.seconds
+  DefaultMaxConnectedManifestPeers* = 8
 
 type
   ManifestProtocol* = ref object of LPProtocol
@@ -49,6 +50,8 @@ type
     retries*: int
     retryDelay*: Duration
     fetchTimeout*: Duration
+    maxConnectedPeers*: int
+      ## How many connected peers to ask when the providers found do not have it.
 
   ManifestFetchStatus* = enum
     Found = 0
@@ -180,6 +183,97 @@ proc fetchManifestFromPeer(
     if not conn.isNil:
       await conn.close()
 
+proc connectedPeersToAsk(
+    self: ManifestProtocol, transport: PeerTransport, exclude: HashSet[PeerId]
+): seq[PeerRecord] =
+  ## Up to `maxConnectedPeers` peers the transport is connected to, chosen at
+  ## random, leaving out the `exclude` ones.
+  if self.maxConnectedPeers <= 0:
+    return @[]
+
+  var peers: seq[PeerRecord]
+  for peer in transport.connectedPeers():
+    if peer.peerId notin exclude:
+      peers.add(peer)
+
+  if peers.len > self.maxConnectedPeers:
+    shuffle(peers)
+    peers.setLen(self.maxConnectedPeers)
+  peers
+
+proc fetchManifestFromPeers*(
+    self: ManifestProtocol,
+    cid: Cid,
+    advertise: bool,
+    transport: PeerTransport,
+    peers: seq[PeerRecord],
+    timeout: Duration,
+): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
+  ## Asks only `peers`, all at once, for the manifest, without discovery. The
+  ## first valid answer is stored and returned. A private fetch uses this to ask
+  ## the peers the user connected to before it falls back to a Mix lookup.
+  if err =? cid.isManifest.errorOption:
+    return failure "CID has invalid content type for manifest {$cid}"
+
+  without localBlk =? await self.localStore.getBlock(cid), err:
+    if not (err of BlockNotFoundError):
+      return failure err
+
+    if peers.len == 0:
+      return failure(newException(BlockNotFoundError, "No peers to ask"))
+
+    var pending: seq[Future[?!bt.Block].Raising([CancelledError])]
+    for peer in peers:
+      pending.add(self.fetchManifestFromPeer(peer, cid, transport))
+
+    let deadline = sleepAsync(timeout)
+    var lastErr: ref CatchableError =
+      newException(BlockNotFoundError, "Manifest not found on the peers asked")
+    try:
+      while pending.len > 0:
+        var racing: seq[FutureBase]
+        for fut in pending:
+          racing.add(FutureBase(fut))
+        racing.add(FutureBase(deadline))
+        let done =
+          try:
+            await race(racing)
+          except ValueError:
+            raiseAssert "race() cannot raise ValueError on a non-empty list"
+        if done == FutureBase(deadline):
+          trace "Connected peers did not answer in time", cid, timeout
+          break
+
+        var stillPending: seq[Future[?!bt.Block].Raising([CancelledError])]
+        for fut in pending:
+          if not fut.finished:
+            stillPending.add(fut)
+            continue
+          if fut.cancelled:
+            continue
+          without blk =? (await fut), fetchErr:
+            trace "Connected peer did not have the manifest", cid, err = fetchErr.msg
+            lastErr = fetchErr
+            continue
+          without manifest =? Manifest.decode(blk), decodeErr:
+            return failure("Unable to decode manifest: " & decodeErr.msg)
+          without stored =?
+            await self.localStore.storeDecodedManifestBlock(blk, manifest, advertise),
+            storeErr:
+            return failure("Unable to store manifest: " & storeErr.msg)
+          return success stored
+        pending = stillPending
+    finally:
+      await noCancel allFutures(pending.mapIt(it.cancelAndWait()))
+      await noCancel deadline.cancelAndWait()
+
+    return failure(lastErr)
+
+  without manifest =? Manifest.decode(localBlk), err:
+    return failure("Unable to decode manifest: " & err.msg)
+
+  return success manifest
+
 proc fetchManifest*(
     self: ManifestProtocol, cid: Cid, advertise: bool, transport: PeerTransport
 ): Future[?!Manifest] {.async: (raises: [CancelledError]).} =
@@ -194,7 +288,9 @@ proc fetchManifest*(
 
     trace "Manifest not in local store, starting discovery loop", cid
 
-    var lastErr = err
+    var
+      lastErr = err
+      asked = initHashSet[PeerId]()
     for attempt in 0 ..< self.retries:
       trace "Manifest fetch attempt", cid, attempt, maxRetries = self.retries
 
@@ -203,6 +299,7 @@ proc fetchManifest*(
         queued: Deque[PeerRecord]
         seen: HashSet[PeerId]
         available = newFuture[void]("ManifestProtocol.providerAvailable")
+        connectedQueued = false
 
       proc receive(batch: seq[PeerRecord]) =
         for peer in batch:
@@ -217,8 +314,20 @@ proc fetchManifest*(
         while true:
           if queued.len == 0:
             if lookup.finished:
-              if err =? (await lookup).errorOption:
-                lastErr = err
+              if not connectedQueued:
+                connectedQueued = true
+                if err =? (await lookup).errorOption:
+                  lastErr = err
+                # Discovery can miss a holder the node is connected to, for
+                # example one it was told to connect to. Once the providers
+                # are done, ask a few connected peers it has not asked yet.
+                let connected = self.connectedPeersToAsk(transport, asked)
+                if connected.len > 0:
+                  trace "Also asking connected peers for the manifest",
+                    cid, connected = connected.len
+                  for peer in connected:
+                    queued.addLast(peer)
+                  continue
               break
             if available.finished:
               available = newFuture[void]("ManifestProtocol.providerAvailable")
@@ -228,6 +337,7 @@ proc fetchManifest*(
           let
             provider = queued.popFirst()
             fetch = self.fetchManifestFromPeer(provider, cid, transport)
+          asked.incl(provider.peerId)
           if not await fetch.withTimeout(self.fetchTimeout):
             await fetch.cancelAndWait()
             trace "Manifest fetch from peer timed out", cid, peer = provider.peerId
@@ -274,6 +384,7 @@ proc new*(
     retries: int = DefaultManifestRetries,
     retryDelay: Duration = DefaultManifestRetryDelay,
     fetchTimeout: Duration = DefaultManifestFetchTimeout,
+    maxConnectedPeers: int = DefaultMaxConnectedManifestPeers,
 ): ManifestProtocol =
   let self = ManifestProtocol(
     localStore: localStore,
@@ -281,6 +392,7 @@ proc new*(
     retries: retries,
     retryDelay: retryDelay,
     fetchTimeout: fetchTimeout,
+    maxConnectedPeers: maxConnectedPeers,
   )
 
   proc handler(

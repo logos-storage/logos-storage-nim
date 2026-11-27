@@ -1,3 +1,5 @@
+import std/sequtils
+
 import pkg/chronos
 import pkg/questionable/results
 
@@ -281,3 +283,79 @@ asyncchecksuite "Manifest protocol":
         batches.stopped
     finally:
       await emptyPeer.stop()
+
+type CountingStore = ref object of BlockStore
+  ## Counts manifest requests and holds nothing.
+  requests: int
+
+method isAdvertised*(
+    self: CountingStore, cid: Cid
+): Future[?!bool] {.async: (raises: [CancelledError]), gcsafe.} =
+  inc self.requests
+  success false
+
+proc startPeerServing(store: BlockStore, client: Switch): Future[Switch] {.async.} =
+  ## A peer that serves the manifests of `store`, connected to `client` and
+  ## unknown to discovery.
+  let switch = newStandardSwitch()
+  switch.mount(ManifestProtocol.new(store, nullDiscovery()))
+  await switch.start()
+  await client.connect(switch.peerInfo.peerId, switch.peerInfo.addrs)
+  switch
+
+asyncchecksuite "Manifest protocol - connected peers":
+  let
+    manifest = Manifest.new(
+      treeCid = Cid.example, blockSize = 4096.NBytes, datasetSize = 8000.NBytes
+    )
+    manifestBlk =
+      bt.Block.new(data = manifest.encode().tryGet(), codec = ManifestCodec).tryGet()
+
+  var
+    clientSwitch: Switch
+    clientTransport: PeerTransport
+    remoteSwitches: seq[Switch]
+
+  setup:
+    clientSwitch = newStandardSwitch()
+    clientTransport = DirectPeerTransport.new(clientSwitch)
+    remoteSwitches = @[]
+    await clientSwitch.start()
+
+  teardown:
+    await clientSwitch.stop()
+    for switch in remoteSwitches:
+      await switch.stop()
+
+  test "Should fetch a manifest from a connected peer that discovery did not find":
+    let serverStore = CacheStore.new()
+    (await serverStore.putBlock(manifestBlk)).tryGet()
+    remoteSwitches.add(await startPeerServing(serverStore, clientSwitch))
+
+    let
+      clientProto = ManifestProtocol.new(CacheStore.new(), nullDiscovery(), retries = 1)
+      fetched = (
+        await clientProto.fetchManifest(
+          manifestBlk.cid, advertise = true, transport = clientTransport
+        )
+      ).tryGet()
+
+    check fetched.treeCid == manifest.treeCid
+
+  test "Should ask at most maxConnectedPeers connected peers":
+    var stores: seq[CountingStore]
+    for _ in 0 ..< 5:
+      let store = CountingStore()
+      stores.add(store)
+      remoteSwitches.add(await startPeerServing(store, clientSwitch))
+
+    let clientProto = ManifestProtocol.new(
+      CacheStore.new(), nullDiscovery(), retries = 1, maxConnectedPeers = 2
+    )
+
+    check (
+      await clientProto.fetchManifest(
+        manifestBlk.cid, advertise = true, transport = clientTransport
+      )
+    ).isErr
+    check stores.mapIt(it.requests).foldl(a + b) == 2

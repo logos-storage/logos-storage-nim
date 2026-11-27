@@ -84,6 +84,10 @@ proc evictPeer*(self: BlockExcContext, peer: PeerId) =
 proc addUserConnectedPeer*(self: BlockExcContext, peerId: PeerId) =
   self.userConnectedPeers.incl(peerId)
 
+func userConnected*(self: BlockExcContext): seq[PeerId] =
+  ## The peers the user connected to (node.connect) that are still connected.
+  self.userConnectedPeers.toSeq()
+
 proc admitUserConnectedPeers*(self: BlockExcContext, swarm: Swarm) =
   var candidates = self.userConnectedPeers.toSeq().filterIt(swarm.getPeer(it).isNone)
   shuffle(candidates)

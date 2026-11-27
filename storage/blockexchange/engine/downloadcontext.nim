@@ -60,6 +60,9 @@ type
     selectionPolicy*: SelectionPolicy
     isBackground*: bool
     fetchLocal*: bool
+    connectedOnly*: bool
+      ## Ask only the peers the user connected to: no discovery lookup and no
+      ## new dials. Used for the connected-peer phase of a private fetch.
 
   BroadcastAvailabilityTracker = object
     case policy: SelectionPolicy
@@ -81,6 +84,7 @@ type
     bytesReceived*: uint64
     scheduler*: Scheduler
     swarm*: Swarm
+    connectedOnly*: bool
     availabilityTracker: BroadcastAvailabilityTracker
 
 proc computeWindowSize*(blockSize: uint32): uint64 =
@@ -199,6 +203,7 @@ proc new*(
     totalBlocks: totalBlocks,
     scheduler: Scheduler.new(),
     swarm: Swarm.new(),
+    connectedOnly: desc.connectedOnly,
   )
 
   case desc.selectionPolicy
