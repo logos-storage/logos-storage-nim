@@ -29,52 +29,55 @@ suite "Discovery - Mix local address":
       )
       .expect("valid")
 
-  setup:
-    switch = newStandardSwitch()
-    disc = Discovery.new(switch)
+  proc publish(addrs: seq[MultiAddress]) =
+    let p = switch.peerInfo
+    p.signedPeerRecord = SignedPeerRecord
+      .init(
+        p.privateKey,
+        PeerRecord.init(p.peerId, addrs.withMixAddress(mixProto, p.addressPolicy)),
+      )
+      .tryGet()
+    p.notifyObservers()
 
+  setup:
     # Mirror the node startup: no dialable address known yet.
     var nodeInfo = MixNodeInfo.generateRandom(0, Rng.instance().libp2pRng)
     nodeInfo.multiAddr = mixUnsetMultiAddr()
-    mixProto = MixProtocol.new(nodeInfo, newStandardSwitch())
+    let key = PrivateKey(scheme: Secp256k1, skkey: nodeInfo.libp2pPrivKey)
+    switch = newStandardSwitch(privateKey = Opt.some(key))
+    disc = Discovery.new(switch)
+    mixProto = MixProtocol.new(nodeInfo, switch)
     disc.mixProto = mixProto
+    switch.peerInfo.addObserver(disc.mixAddressObserver())
 
   test "a dialable address sets the Mix local address":
-    switch.peerInfo.addrs = @[directAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[directAddr])
 
     check $mixProto.localMixPubInfo.tryGet().multiAddr == $directAddr
 
   test "a relay circuit address sets the Mix local address":
-    switch.peerInfo.addrs = @[circuitAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[circuitAddr])
 
     check $mixProto.localMixPubInfo.tryGet().multiAddr == $circuitAddr
 
   test "a new address replaces the Mix local address":
-    switch.peerInfo.addrs = @[directAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[directAddr])
 
-    switch.peerInfo.addrs = @[otherAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[otherAddr])
 
     check $mixProto.localMixPubInfo.tryGet().multiAddr == $otherAddr
 
   test "clearing the addresses resets the Mix local address":
-    switch.peerInfo.addrs = @[directAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[directAddr])
 
-    switch.peerInfo.addrs = @[]
-    disc.updateLocalMultiAddr()
+    publish(@[])
 
     check $mixProto.localMixPubInfo.tryGet().multiAddr == $mixUnsetMultiAddr()
 
   test "no Mix-compatible address resets the Mix local address":
-    switch.peerInfo.addrs = @[directAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[directAddr])
 
-    switch.peerInfo.addrs = @[udpAddr]
-    disc.updateLocalMultiAddr()
+    publish(@[udpAddr])
 
     check $mixProto.localMixPubInfo.tryGet().multiAddr == $mixUnsetMultiAddr()
 

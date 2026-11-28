@@ -544,7 +544,6 @@ proc onExpiryUpdate(
 
 proc start*(self: StorageNodeRef) {.async.} =
   self.addrObserver = proc(p: PeerInfo) {.gcsafe, raises: [].} =
-    self.discovery.updateLocalMultiAddr()
     self.engine.advertiser.onAddrChange()
 
     let spr = self.discovery.getSpr()
@@ -558,9 +557,6 @@ proc start*(self: StorageNodeRef) {.async.} =
 
   if not self.engine.isNil:
     await self.engine.start()
-
-  if not self.discovery.isNil:
-    self.discovery.updateLocalMultiAddr()
 
   if not self.clock.isNil:
     await self.clock.start()

@@ -27,7 +27,6 @@ import pkg/libp2p/services/autorelayservice
 import pkg/libp2p/transports/tcptransport
 import pkg/libp2p_mix
 import pkg/libp2p_mix/pool
-import pkg/libp2p_mix_transport/address/parse
 import pkg/presto
 import pkg/taskpools
 
@@ -78,6 +77,8 @@ type
     serviceProviders: Option[ServiceProviders]
     holePunchHandler: Option[connmanager.PeerEventHandler]
     bootstrapDials: Future[void].Raising([CancelledError])
+    mixAddressObserver: PeerInfoObserver
+    mixMapper: AddressMapper
     mixTransport: MixTransport
     isStarted: bool
 
@@ -108,7 +109,7 @@ proc enableMix(
       raise
         newException(StorageError, "Failed to load or generate Mix keys: " & error.msg)
     # We define a placeholder here.
-    # For nat:extip, the address will be updated by `updateLocalMultiAddr` on node start.
+    # The signed Mix address supplies the endpoint once the node publishes it.
     # For nat:auto, the node waits for AutoNAT to provide a reachable address or a relay address.
     # The Mix lookup will not be performed while the mixAddr value is mixUnsetMultiAddr().
     mixAddr = mixUnsetMultiAddr()
@@ -133,7 +134,6 @@ proc enableMix(
   await mixProto.start()
   switch.mount(mixProto)
 
-  switch.peerInfo.addressMappers.add(mixProto.addressMapper())
   (mixProto, relayPool)
 
 proc startMixTransport*(
@@ -162,6 +162,12 @@ proc startMixTransport*(
     )
     s.storageNode.discovery.mixPeerTransport = mixPeerTransport
 
+proc removeMixMapper(self: StorageServer) =
+  let p = self.storageNode.switch.peerInfo
+  if not self.mixMapper.isNil:
+    p.addressMappers.keepItIf(it != self.mixMapper)
+    self.mixMapper = nil
+
 proc start*(self: StorageServer) {.async.} =
   if self.isStarted:
     warn "Storage server already started, skipping"
@@ -184,6 +190,10 @@ proc start*(self: StorageServer) {.async.} =
   if self.config.nat.hasExtIp and self.config.listenPort != Port(0):
     self.storageNode.switch.peerInfo.announcedAddrs =
       @[getMultiAddrWithIpAndTcpPort(self.config.nat.extIp, self.config.listenPort)]
+
+  defer:
+    if not self.isStarted:
+      self.removeMixMapper()
 
   await self.storageNode.switch.start()
 
@@ -230,6 +240,13 @@ proc start*(self: StorageServer) {.async.} =
       relayPool.keys.toSeq
     )
 
+    if self.config.nat.hasExtIp:
+      peerInfo.announcedAddrs =
+        peerInfo.announcedAddrs.withMixAddress(mixProto, peerInfo.addressPolicy)
+    else:
+      self.mixMapper = mixProto.addressMapper(peerInfo.addressPolicy)
+      peerInfo.addressMappers.add(self.mixMapper)
+    await peerInfo.update()
     await self.startMixTransport(mixProto)
 
   if self.natMapper.isSome:
@@ -240,21 +257,6 @@ proc start*(self: StorageServer) {.async.} =
     self.natMapper.get.tcpPort = realPort
 
   await self.storageNode.start()
-
-  # Address mapping chains are skipped when we use extip, so
-  # we need to derive the mix address manually. We need to wait
-  # until AFTER storageNode.start as otherwise we'll see an
-  # uninitialized mix address.
-  if not self.storageNode.discovery.mixProto.isNil and self.config.nat.hasExtIp:
-    let
-      mixProto = self.storageNode.discovery.mixProto
-      mixAddress = mixProto.localMixPubInfo.flatMap(toMixAddress)
-    if mixAddress.isErr:
-      error "Failed to derive mix address", err = mixAddress.error
-    else:
-      peerInfo.announcedAddrs.add(mixAddress.get)
-      # Refresh peerInfo to reflect the newly announced mix address.
-      await peerInfo.update()
 
   if self.config.nat.hasExtIp:
     self.storageNode.discovery.startAdvertisingServices()
@@ -362,6 +364,7 @@ proc stop*(s: StorageServer) {.async.} =
 
   let res = await noCancel allDone[void](futures)
 
+  s.removeMixMapper()
   s.isStarted = false
 
   if res.failed.len > 0:
@@ -380,6 +383,9 @@ proc stop*(s: StorageServer) {.async.} =
     )
 
 proc close*(s: StorageServer) {.async.} =
+  if not s.mixAddressObserver.isNil:
+    s.storageNode.switch.peerInfo.removeObserver(s.mixAddressObserver)
+    s.mixAddressObserver = nil
   var futures = @[s.storageNode.close(), s.repoStore.close()]
 
   let res = await noCancel allDone[void](futures)
@@ -764,7 +770,7 @@ proc new*(
       )
       .expect("Should create rest server!")
 
-  StorageServer(
+  result = StorageServer(
     config: config,
     storageNode: storageNode,
     restServer: restServer,
@@ -785,3 +791,9 @@ proc new*(
     bootstrapDials: Future[void].Raising([CancelledError])(),
     mixTransport: nil,
   )
+
+  # PeerInfo calls observers synchronously in registration order after signing.
+  # Register before callers or switch services can subscribe to address changes.
+  if config.mixEnabled or config.dhtProxyServer:
+    result.mixAddressObserver = discovery.mixAddressObserver()
+    switch.peerInfo.addObserver(result.mixAddressObserver)

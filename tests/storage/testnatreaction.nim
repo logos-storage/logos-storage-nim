@@ -76,17 +76,20 @@ asyncchecksuite "NAT reaction - port mapping":
     if autoRelay.isRunning:
       await autoRelay.stop(sw)
 
-  test "handleNatStatus keeps relay off when NotReachable and mapping succeeds":
-    let dialBack = MultiAddress.init("/ip4/1.2.3.4/tcp/8080").expect("valid")
-    let mapper =
-      MockNatPortMapper(mappedPorts: some((Port(9000), MappingProtocol.UPnP)))
+  test "a new mapping keeps the relay running until direct reachability is confirmed":
+    let mapper = MockMapNatPortMapper(tcpResult: mappingOk(cint(1), 9000))
 
-    await mapper.handleNatStatus(NotReachable, Opt.some(dialBack), disc, sw, autoRelay)
-
-    # A mapping doesn't guarantee reachability, so the relay stays off until
-    # AutoNAT confirms Reachable.
-    check not autoRelay.isRunning
+    await mapper.handleNatStatus(
+      NotReachable, Opt.none(MultiAddress), disc, sw, autoRelay
+    )
+    check mapper.portMapping.isSome
+    check autoRelay.isRunning
     check not disc.isServerMode()
+
+    await mapper.handleNatStatus(Reachable, Opt.none(MultiAddress), disc, sw, autoRelay)
+    check mapper.portMapping.isSome
+    check not autoRelay.isRunning
+    check disc.isServerMode()
 
   test "handleNatStatus starts autoRelay when NotReachable with no mapped ports":
     let mapper = MockNatPortMapper(mappedPorts: none((Port, MappingProtocol)))
@@ -133,7 +136,7 @@ asyncchecksuite "NAT reaction - port mapping":
 
     check mapper.destroyed == @[cint(1)] # the dead mapping is torn down
     check mapper.portMapping.isSome # replaced by a fresh one
-    check not autoRelay.isRunning # direct path kept, no relay
+    check autoRelay.isRunning
 
   test "handleNatStatus stops relay and exits client mode when mapping is created and node is Reachable":
     let dialBack = MultiAddress.init("/ip4/1.2.3.4/tcp/8080").expect("valid")
