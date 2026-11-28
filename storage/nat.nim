@@ -169,35 +169,20 @@ method handleNatStatus*(
   of NotReachable:
     await discovery.setServerMode(isServer = false)
 
-    if m.hasLivePortMapping():
-      # The mapping is still live but the node is not reachable: keep it and let
-      # the relay take over. A dead mapping falls through to be recreated.
-      debug "Not Reachable with live port mapping, keeping it and starting relay if not started"
-    else:
-      debug "Node is not reachable trying port mapping now"
-
+    if not m.hasLivePortMapping():
       let maybePorts = await m.mapNatPorts()
-
       if m.stopped:
-        # Double check in case the node is stopping
         return
 
       if maybePorts.isSome:
         let (tcpPort, protocol) = maybePorts.get()
-
         info "Port mapping created successfully", tcpPort, protocol
-
-        # The announce happens once AutoNAT confirms Reachable.
-
-        return
       else:
-        # In case of failure, close the port mapping in order to rerun discover
-        # on the next iteration
         m.close()
 
+    # A mapping can succeed while the firewall still blocks incoming dials.
+    # Keep the relay available until AutoNAT confirms direct reachability.
     if not autoRelayService.isRunning:
-      debug "No port mapping found let's start autorelay"
-
       try:
         await autoRelayService.start(switch)
         debug "AutoRelayService started"
